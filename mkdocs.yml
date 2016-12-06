@@ -1,3 +1,4 @@
+site_name: RNA Framework
 pages:
     - 'Introduction': 'index.md'
     - 'User Guide': 'README1.md'
