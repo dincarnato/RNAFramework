@@ -69,5 +69,5 @@ To add RNA Framework executables to your PATH, simply type:
 export PATH=$PATH:/path/to/RNAFramework
 ```
 
-!!! tip 'Tip'
-	This is a tip
+!!! note "Note"
+    This __only__ the docs for the DATA. The Docs for the analysis should be located in th
