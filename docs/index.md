@@ -69,8 +69,5 @@ To add RNA Framework executables to your PATH, simply type:
 export PATH=$PATH:/path/to/RNAFramework
 ```
 
-.. tip:: ``computeMatrix`` can use multiple threads (``-p`` option), which significantly decreases the time for calculating the values.
-
-@alert tip
-This is a tip! It will be displayed in a tip alert box!
-@end
+!!! tip 'Tip'
+	This is a tip
