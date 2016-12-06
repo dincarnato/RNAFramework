@@ -55,11 +55,14 @@ Please see http://www.gnu.org/licenses/ for more informations.
 ## Installation
 
 Clone RSF git repository:
+
 ```bash
 git clone https://github.com/dincarnato/RNAFramework
 ```
 This will create the RNAFramework folder.
+
 To add RNA Framework executables to your PATH, simply type:
+
 ```bash
 export PATH=$PATH:/path/to/RNAFramework
 ```
