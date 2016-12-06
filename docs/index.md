@@ -1,7 +1,8 @@
-# Test README2
-
+![RNAFramework logo](http://www.rnaframework.com/images/logo_black.png)
+<br />  
+<br />  
 The recent advent of Next Generation Sequencing techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
-Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (\Psi, m^1A, m^6A, m^5C, hm^5C) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
+Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (&Psi;, m<sup>1</sup>A, m<sup>6</sup>A, m<sup>5</sup>C, hm<sup>5</sup>C, 2'-OMe) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
 
 The RNA Framework is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
 Its main features are: 
