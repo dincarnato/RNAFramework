@@ -15,10 +15,20 @@ __rf-combine__    | Content Cell
 
 
 <table>
+<tr>
 <td style="width: 20%">
 rf-index
 </td>
 <td>
 Automatically queries UCSC genome database and builds the transcriptome Bowtie reference index for the RF Count module
 </td>
+</tr>
+<tr>
+<td style="width: 20%">
+rf-index
+</td>
+<td>
+Automatically queries UCSC genome database and builds the transcriptome Bowtie reference index for the RF Count module
+</td>
+</tr>
 </table>
