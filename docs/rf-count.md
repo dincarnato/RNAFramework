@@ -1,69 +1,56 @@
-# Test README2
+# rf-count
 
-The recent advent of Next Generation Sequencing techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
-Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (\Psi, m^1A, m^6A, m^5C, hm^5C) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
+The RF Count module is the core component of the framework. It can process any number of both FastQ and/or SAM/BAM files. In case FastQ files are passed, reads are pre-processed (trimmed andclipped), and mapped to the reference transcriptome.<br/>Each SAM/BAM file is then processed to calculate per-base RT-stops/mutations and reads coverage on each transcript.<br /><br />
+To list the required parameters, simply type:
 
-The RNA Framework is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
-Its main features are: 
-
-- Automatic reference transcriptome creation
-- Automatic reads preprocessing (adapter clipping and trimming) and mapping
-- Scoring and data normalization
-- Accurate RNA folding prediction by incorporating structural probing data
-
-For updates, please visit: http://www.rnaframework.com  
-For support requests, please post your questions to: https://groups.google.com/forum/#!forum/rsftoolkit
-
-
-## Author
-
-Danny Incarnato (dincarnato[at]rnaframework.com)  
-Epigenetics Unit @ HuGeF [Human Genetics Foundation]  
-
-
-## Citation
-
-Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data.
-
-
-## License
-
-This program is free software, and can be redistribute and/or modified under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
-
-Please see http://www.gnu.org/licenses/ for more informations.
-
-
-## Prerequisites
-
-- Linux/Mac system
-- Bowtie v1.0.0 (http://bowtie-bio.sourceforge.net/index.shtml)
-- SAMTools v1.2 or greater (http://www.htslib.org/)
-- BEDTools v2.0 or greater (https://github.com/arq5x/bedtools2/)
-- Cutadapt v1.10 or greater (http://cutadapt.readthedocs.io/en/stable/index.html)
-- ViennaRNA Package v2.2.0 or greater (http://www.tbi.univie.ac.at/RNA/)
-- RNAstructure v5.6 or greater (http://rna.urmc.rochester.edu/RNAstructure.html)
-- Perl v5.12 (or greater), with ithreads support
-- Perl non-CORE modules (http://search.cpan.org/):
-
-    1. DBD::MySQL  
-    2. LWP::UserAgent  
-    3. RNA (part of the ViennaRNA package)  
-    4. XML::LibXML  
-
-
-## Installation
-
-Clone RSF git repository:
 ```bash
-git clone https://github.com/dincarnato/RNAFramework
-```
-This will create the RNAFramework folder.
-To add RNA Framework executables to your PATH, simply type:
-```bash
-export PATH=$PATH:/path/to/RNAFramework
+$ rf-count -h
 ```
 
-## Usage
+Parameter         | Type | Description
+----------------: | :--: |:------------
+__-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
+__-wt__ *or* __--working-threads__ | int | Number of working threads to use for each instance of SAMTools/Bowtie (Default: __1__).<br/>__Note:__ RT Counter executes 1 instance of SAMTools/Bowtie for each processor specified by ``-p``. At least ``-p <processors>`` * ``-wt <threads>`` processors are required.
+__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
+__-o__ *or* __--output-dir__ | string | Output directory for writing counts in RC (RNA Count) format (Default: rf_count/)
+__-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-k__ *or* __--keep__ | | Keeps SAM/BAM files after reads mapping (in case FastQ files are passed).<br/>__Note:__ If unsorted SAM/BAM files are passed, this option will cause RF Count to keep the sorted SAM/BAM file.
+__-nb__ *or* __--no-bam__ | | Disables conversion of SAM files to BAM format (requires ``-k``)
+__-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads on files provided in SAM/BAM format<br/>__Note:__ This option should be avoided when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
+__-b__ *or* __--bowtie__ | string | Path to ``bowtie`` v1 executable (Default: assumes bowtie is in PATH)
+__-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes cutadapt is in PATH)
+__-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes samtools is in PATH)
+__-r__ *or* __--sorted__ | | In case SAM/BAM files are passed, assumes that they are already sorted lexicographically by transcript ID, and numerically by position
+__-t5__ *or* __--trim-5prime__ | int[,int] | In case SAM/BAM files are passed, allows to specify a comma separated list (no spaces) of values indicating the number of bases trimmed from the 5'-end of reads in the respective sample SAM/BAM files (Default: __0__)<br/>__Note #1:__ Values must be provided in the same order as the input files (e.g. rf-count -t5 0,5 file1.bam file2.bam, will consider 0 bases trimmed from file1 reads, and 5 bases trimmed from file2 reads)<br/>__Note #2:__ If a single value is specified along with multiple SAM/BAM files, it will be used for all files
+__-f__ *or* __--fasta__ | string | Path to a FASTA file containing the reference transcripts<br/>__Note #1:__ Transcripts in this file must match transcripts in SAM/BAM file headers<br/>__Note #2:__ This can be omitted if a Bowtie index is specified by ``-bi`` (or ``--bowtie-index``)
+__-i__ *or* __--include-clipped__ | | Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops<br/>__Note:__ The default behavior is to exclude soft/hard-clipped reads. When this option is active, the RT-stop position is considered to be the position preceding the clipped bases. This option has no effect when ``-m`` (or ``--count-mutations``) is enabled.
+__-m__ *or* __--count-mutations__ | | Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+__-nd__ *or* __--no-deletions__ | | Disables counting unambiguously mapped deletions as mutations (requires ``-m``)
+__-co__ *or* __--coverage-only__ | | Only calculates per-base coverage (disables RT-stops/mutations count)
+  | | __FASTX Clipper options__
+__-ca__ *or* __--cutadapt-adapter__ | string | Sequence of 3' adapter for clipping (Default: __TGGAATTCTCGGGTGCCAAGG__, Illumina TruSeq Small RNA 3’ Adapter)
+__-cl__ *or* __--cutadapt-len__ | int | Minimum length to keep reads after clipping (&ge;10, Default: __25__)
+__-cm__ *or* __--cutadapt-min-align__ | int | Minimum alignment in nt to adapter’s sequence (&gt;0, Default: __1__)
+__-cp__ *or* __--clipped__ | | Assumes that reads have been already clipped
+  | | __Bowtie options__
+__-bn__ *or* __--bowtie-n__ | int | Use Bowtie mapper in -n mode (0-3 mismatches, Default: __2__)
+__-bv__ *or* __--bowtie-v__ | int | Use Bowtie mapper in -v mode (0-3 mismatches, Default: __disabled__).<br/>__Note:__ If both ``--bowtie-v`` and ``--bowtie-n`` parameters are passed, the ``--bowtie-n`` mode will be overriden by the ``--bowtie-v`` mode.
+__-bm__ *or* __--bowtie-max__ | int |Discard alignment if more than this number of alignments exist (Default: __1__)
+__-bk__ *or* __--bowtie-multimap__ | int | Report up to this number of equally scoring positions for multi-mapping reads (Default: __1__)
+__-ba__ *or* __--bowtie-all__ | | Report all equally scoring positions for multi-mapping reads (Default: __disabled__, reports only uniquely mapped reads)
+__-bc__ *or* __--bowtie-chunkmbs__ | int | Maximum MB of RAM for best-first search frames (Default: __128__)
+__-bi__ *or* __--bowtie-index__ | string | Path to transcriptome reference index (see ``rf-index``)
 
-Please refer to the RNA Framework manual.  
-To obtain parameters list, simply call the required program with the "-h" (or "--help") parameter.
+
+## RC (RNA Count) format
+
+RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base reads coverage. These files can be indexed for fast random access.<br/>Each entry in a RTC file is structured as follows:
+
+Field             | Description    |  Type
+----------------: | :------------: | :----------
+__len\_transcript\_id__ | Length of the transcript ID (plus 1, including NULL) | uint32\_t
+__transcript\_id__ | Transcript ID (NULL terminated) | char[len\_transcript\_id]
+__len\_seq__ | Length of sequence | uint32\_t
+__seq__ | 4-bit encoded sequence: 'ACGTN' -> \[0,4] (High nybble first) | uint8\_t\[(len_seq+1)/2]
+__counts__ | Transcript's per base RT-stops (or mutations) | uint32\_t[len\_seq]
+__counts__ | Transcript's per base coverage | uint32\_t[len\_seq]
