@@ -1,6 +1,6 @@
-# rf-count
-
 The RF Count module is the core component of the framework. It can process any number of both FastQ and/or SAM/BAM files. In case FastQ files are passed, reads are pre-processed (trimmed andclipped), and mapped to the reference transcriptome.<br/>Each SAM/BAM file is then processed to calculate per-base RT-stops/mutations and reads coverage on each transcript.<br /><br />
+
+# Usage
 To list the required parameters, simply type:
 
 ```bash
