@@ -9,14 +9,14 @@ $ rf-index -h
 
 Parameter         | Type | Description
 ----------------: | :--: |:------------
-__-o__ *or* __--output-dir__ | string | Bowtie index output directory (Default: &lt;assembly&gt;\_&lt;annotation&gt;, e.g. “mm9_refFlat/”)
+__-o__ *or* __--output-dir__ | string | Bowtie index output directory (Default: __&lt;assembly&gt;\_&lt;annotation&gt;__, e.g. “mm9_refFlat/”)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-g__ *or* __--genome-assembly__ | string |Genome assembly for the species of interest (Default: __mm9__).<br /> For a complete list of UCSC available assemblies, please refer to the UCSC website (<https://genome.ucsc.edu/FAQ/FAQreleases.html>)
 __-a__ *or* __--annotation__ | string | Name of the UCSC table containing the genes annotation (Default: __refFlat__).<br />For a complete list of tables available for the chosen assembly, please refer to the UCSC website (<https://genome.ucsc.edu/cgi-bin/hgTables>)
 __-n__ *or* __--gene-name__ | | When possible, gene names will be used instead of gene IDs/accessions
 __-t__ *or* __--timeout__ | int | Connection’s timeout in seconds (Default: __180__)
 __-r__ *or* __--reference__ | string | Path to a FASTA file containing chromosome (or scaffold) sequences for the chosen genome assembly.<br/>__Note:__ if no file is specified, RF Index will try to obtain sequences from the UCSC DAS server. This process may take up to hours, depending on your connection's speed.
-__-b__ *or* __--bowtie-build__ | string | Path to ``bowtie-build`` executable (Default: assumes bowtie-build is in PATH)
+__-b__ *or* __--bowtie-build__ | string | Path to ``bowtie-build`` executable (Default: assumes ``bowtie-build`` is in PATH)
 __-e__ *or* __--bedtools__ | string | Path to ``bedtools`` executable (Default: assumes ``bedtools`` is in PATH)
 
 !!! note "Note"

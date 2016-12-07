@@ -17,9 +17,9 @@ __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exis
 __-k__ *or* __--keep__ | | Keeps SAM/BAM files after reads mapping (in case FastQ files are passed).<br/>__Note:__ If unsorted SAM/BAM files are passed, this option will cause RF Count to keep the sorted SAM/BAM file.
 __-nb__ *or* __--no-bam__ | | Disables conversion of SAM files to BAM format (requires ``-k``)
 __-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads on files provided in SAM/BAM format<br/>__Note:__ This option should be avoided when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
-__-b__ *or* __--bowtie__ | string | Path to ``bowtie`` v1 executable (Default: assumes bowtie is in PATH)
-__-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes cutadapt is in PATH)
-__-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes samtools is in PATH)
+__-b__ *or* __--bowtie__ | string | Path to ``bowtie`` v1 executable (Default: assumes ``bowtie`` is in PATH)
+__-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes ``cutadapt`` is in PATH)
+__-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes ``samtools`` is in PATH)
 __-r__ *or* __--sorted__ | | In case SAM/BAM files are passed, assumes that they are already sorted lexicographically by transcript ID, and numerically by position
 __-t5__ *or* __--trim-5prime__ | int[,int] | In case SAM/BAM files are passed, allows to specify a comma separated list (no spaces) of values indicating the number of bases trimmed from the 5'-end of reads in the respective sample SAM/BAM files (Default: __0__)<br/>__Note #1:__ Values must be provided in the same order as the input files (e.g. rf-count -t5 0,5 file1.bam file2.bam, will consider 0 bases trimmed from file1 reads, and 5 bases trimmed from file2 reads)<br/>__Note #2:__ If a single value is specified along with multiple SAM/BAM files, it will be used for all files
 __-f__ *or* __--fasta__ | string | Path to a FASTA file containing the reference transcripts<br/>__Note #1:__ Transcripts in this file must match transcripts in SAM/BAM file headers<br/>__Note #2:__ This can be omitted if a Bowtie index is specified by ``-bi`` (or ``--bowtie-index``)
