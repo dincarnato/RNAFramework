@@ -30,7 +30,7 @@ The untreated sample is not considered. Per-base raw signal is calculated as:<br
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></math>
 <br/>
 where *n<sub>Ti</sub>*, and *c<sub>Ti</sub>* are respectively the mutations count and the reads coverage at position *i* of the transcript.
-<br/>
+<br/><br/>
 ## Normalization of raw reactivities
 Raw reactivity scores can be normalized using 3 different approaches:<br/><br/>
 
@@ -39,6 +39,7 @@ Method         | Description
 __2-8% Normalization__ | From the top 10% of values, the top 2% is ignored, then any reactivity value along the entire transcript is divided by the average of the remaining 8%
 __90% Winsorising__ | Each reactivity value above the 95<sup>th</sup> percentile is set to the 95<sup>th</sup> percentile, and the reactivity at each position of the transcript is divided by the value of the 95<sup>th</sup> percentile
 __Box-plot Normalization__ | Values greater than 1.5x the interquartile range (numerical distance between the 25<sup>th</sup> and 75<sup>th</sup> percentiles) above the 75<sup>th</sup> percentile are removed. After excluding these outliers, the next 10% of reactivities are averaged, and all reactivities (including outliers) are divided by this value.
+
 <br/>
 Normalized reactivities can be further remapped to values ranging from 0 to 1 according to Zarringhalam *et al.*, 2012. In this approach, values < 0.25 are linearly mapped to [0-0.35[, values &ge; 0.25 and < 0.3 are linearly mapped to [0.35-0.55[, values &ge; 0.3 and < 0.7 are linearly mapped to [0.55-0.85[, and values &ge; 0.7 are linearly mapped to [0.85-1].<br /><br />
 
@@ -51,4 +52,27 @@ $ rf-norm -h
 
 Parameter         | Type | Description
 ----------------: | :--: |:------------
+__-u__ *or* __--untreated__ | string | Path to the RC file for the non-treated (or RNase V1) sample <br/>(required by Ding/Siegfried scoring methods)
+__-t__ *or* __--treated__ | string | Path to the RC file for the treated (or Nuclease S1) sample
+__-d__ *or* __--denatured__ | string | Path to the RC file for the denatured sample <br/>(required by Siegfried scoring method)
+__-i__ *or* __--index__ | string[,string] | A comma separated (no spaces) list of RCI index files for the provided RC files<br/>__Note #1:__ RCI files must be provided in the order 1. Untreated, 2. Denatured, 3. Treated<br/>__Note #2:__ If a single RTI file is specified, it will be used for all RC files<br/>__Note #3:__ If no RCI index is provided, it will be generated at runtime, and stored in the same folder of the untreated/denatured/treated samples
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
+__-o__ *or* __--output-dir__ | string | Output directory for writing normalized data in XML format (Default: __&lt;treated&gt;\_vs\_&lt;untreated&gt;\_norm/__ for Ding method, __&lt;treated&gt;\_norm/__ for Rouskin/Zubradt methods, __&lt;treated&gt;\_vs\_&lt;untreated&gt;\_&lt;denatured&gt;\_norm/__ for Siegfried method)
+__-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-c__ *or* __--config-file__ | string | Path to a configuration file with normalization parameters (see *Configuration files* paragraph)<br/>__Note #1:__ If the provided file exists, the loaded configuration will override any command-line specified parameter<br/>__Note #2:__ If the provided file doesn’t exist, it will be generated using the specified command line (or default) parameters
+__-sm__ *or* __--scoring-method__ | int | Method for score calculation (1-4, Default: __1__):<br/>__1.__ Ding *et al.*, 2014 <br/>__2.__ Rouskin *et al.*, 2014 <br/>__3.__ Siegfried *et al.*, 2014 <br/>__4.__ Zubradt *et al.*, 2016
+__-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Default: __1__):<br/>__1.__ 2-8% Normalization <br/>__2.__ 90% Winsorising <br/>__3.__ Box-plot Normalization
+__-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
+__-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combinations (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
+__-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be normalized independently (e.g. -rb AC -ni will independently normalize A and C residues)
+__-mc__ *or* __--mean-coverage__ | int | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
+__-ec__ *or* __--median-coverage__ | int | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
+__-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ \[Ding\|Siegfried\], __50__ \[Rouskin\|Zubradt\])
+__-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ \[Ding\|Siegfried\], __50__ (non-overlapping windows) \[Rouskin\|Zubradt\])
+__-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
+__-n__ *or* __--nan__ | int | Positions of transcript with reads coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __1__)
+ | | __Scoring method #1 options (Ding *et al*., 2014)__
+__-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to avoid division by 0 (&gt;0, Default: __1__)
+__-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;1, Default: __10__)
+ | | __Scoring method #3 options (Siegfried *et al*., 2014)__
+__-mu__ *or* __--max-untreated-mut__ | float | Maximum per-base mutation rate in untreated sample (&le;1, Default: __0.05__ [5%])
