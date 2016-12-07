@@ -30,3 +30,25 @@ The untreated sample is not considered. Per-base raw signal is calculated as:<br
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></math>
 <br/>
 where *n<sub>Ti</sub>*, and *c<sub>Ti</sub>* are respectively the mutations count and the reads coverage at position *i* of the transcript.
+<br/>
+## Normalization of raw reactivities
+Raw reactivity scores can be normalized using 3 different approaches:<br/><br/>
+
+Method         | Description
+-------------: | :------------
+__2-8% Normalization__ | From the top 10% of values, the top 2% is ignored, then any reactivity value along the entire transcript is divided by the average of the remaining 8%
+__90% Winsorising__ | Each reactivity value above the 95<sup>th</sup> percentile is set to the 95<sup>th</sup> percentile, and the reactivity at each position of the transcript is divided by the value of the 95<sup>th</sup> percentile
+__Box-plot Normalization__ | Values greater than 1.5x the interquartile range (numerical distance between the 25<sup>th</sup> and 75<sup>th</sup> percentiles) above the 75<sup>th</sup> percentile are removed. After excluding these outliers, the next 10% of reactivities are averaged, and all reactivities (including outliers) are divided by this value.
+<br/>
+Normalized reactivities can be further remapped to values ranging from 0 to 1 according to Zarringhalam *et al.*, 2012. In this approach, values < 0.25 are linearly mapped to [0-0.35[, values &ge; 0.25 and < 0.3 are linearly mapped to [0.35-0.55[, values &ge; 0.3 and < 0.7 are linearly mapped to [0.55-0.85[, and values &ge; 0.7 are linearly mapped to [0.85-1].<br /><br />
+
+# Usage
+To list the required parameters, simply type:
+
+```bash
+$ rf-norm -h
+```
+
+Parameter         | Type | Description
+----------------: | :--: |:------------
+__-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)

@@ -1,5 +1,3 @@
-# Framework components
-
 Tool              | Description
 ----------------: | :------------
 __rf-index__      | Automatically queries UCSC genome database and builds the transcriptome Bowtie reference index for the RF Count module
