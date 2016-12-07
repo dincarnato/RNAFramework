@@ -6,13 +6,12 @@ To list the required parameters, simply type:
 ```
 $ rf-index -h
 ```
-<br />
 
 Parameter         | Description
 ----------------: | :------------
-__-o__ *or* __--output-dir__ | Bowtie index output directory (Default: \<assembly\>\_\<annotation\>, e.g. “mm9_refFlat/”)
+__-o__ *or* __--output-dir__ | Bowtie index output directory (Default: <assembly>\_<annotation>, e.g. “mm9_refFlat/”)
 __-ow__ *or* __--overwrite__ | Overwrites the output directory if already exists
-__-g__ *or* __--genome-assembly__ | Genome assembly for the species of interest (Default: mm9). For a complete list of UCSC available assemblies, please refer to the UCSC website (<https://genome.ucsc.edu/FAQ/FAQreleases.html>)
+__-g__ *or* <br />__--genome-assembly__ | Genome assembly for the species of interest (Default: mm9). For a complete list of UCSC available assemblies, please refer to the UCSC website (<https://genome.ucsc.edu/FAQ/FAQreleases.html>)
 
 
 ## Author
