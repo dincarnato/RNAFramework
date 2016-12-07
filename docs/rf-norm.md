@@ -99,7 +99,6 @@ __pseudoCount__ | Positive integer &gt; 0 | __1__
  | __Scoring method #3 options__ | 
 __maxUntreatedMut__ | Positive integer &le; 1 | __0.05__
 
-<br/>
 
 ```bash
 # A sample configuration file
