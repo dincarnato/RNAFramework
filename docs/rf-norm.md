@@ -59,7 +59,7 @@ __-i__ *or* __--index__ | string[,string] | A comma separated (no spaces) list o
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
 __-o__ *or* __--output-dir__ | string | Output directory for writing normalized data in XML format (Default: __&lt;treated&gt;\_vs\_&lt;untreated&gt;\_norm/__ for Ding method, __&lt;treated&gt;\_norm/__ for Rouskin/Zubradt methods, __&lt;treated&gt;\_vs\_&lt;untreated&gt;\_&lt;denatured&gt;\_norm/__ for Siegfried method)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
-__-c__ *or* __--config-file__ | string | Path to a configuration file with normalization parameters (see *Configuration files* paragraph)<br/>__Note #1:__ If the provided file exists, the loaded configuration will override any command-line specified parameter<br/>__Note #2:__ If the provided file doesn’t exist, it will be generated using the specified command line (or default) parameters
+__-c__ *or* __--config-file__ | string | Path to a configuration file with normalization parameters (see *Configuration files* paragraph)<br/>__Note #1:__ If the provided file exists, the loaded configuration will override any command-line specified parameter<br/>__Note #2:__ If the provided file doesn’t exist, it will be generated using the specified command-line (or default) parameters
 __-sm__ *or* __--scoring-method__ | int | Method for score calculation (1-4, Default: __1__):<br/>__1.__ Ding *et al.*, 2014 <br/>__2.__ Rouskin *et al.*, 2014 <br/>__3.__ Siegfried *et al.*, 2014 <br/>__4.__ Zubradt *et al.*, 2016
 __-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Default: __1__):<br/>__1.__ 2-8% Normalization <br/>__2.__ 90% Winsorising <br/>__3.__ Box-plot Normalization
 __-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
@@ -76,3 +76,41 @@ __-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to av
 __-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;1, Default: __10__)
  | | __Scoring method #3 options (Siegfried *et al*., 2014)__
 __-mu__ *or* __--max-untreated-mut__ | float | Maximum per-base mutation rate in untreated sample (&le;1, Default: __0.05__ [5%])
+
+<br/>
+## Configuration files
+RF Norm configuration files are used to provide normalization parameters for the analysis, without the need to manually specify them from the command-line.<br/>Configuration files are composed of a list of key/value pairs, separated by the equal sign (=), or by the colon punctuation mark (:). Keys and values are case-insensitive.<br/>
+Accepted key/value pairs are:<br/><br/>
+
+Parameters     | Accepted values | Default value
+-------------: | :------------:  | :------------
+__scoreMethod__ | "Ding" (or 1); "Rouskin" (or 2); "Siegfried" (or 3); "Zubradt" (or 4) | __Ding__
+__normMethod__ | "2-8%" (or 1); "90% Winsorising" (or 2); "Box-plot" (or 3) | __2-8%__
+__reactiveBases__ | \[ACGTURYSWKMBDHVN\] (or "all") | __all__
+__normIndependent__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
+__normWindow__ | Positive integer &ge; 3 | __1e9__ \[Ding\|Siegfried\]<br/>__50__ \[Rouskin\|Zubradt\]
+__windowOffset__ | Positive integer &gt; 0 | __1e9__ \[Ding\|Siegfried\]<br/>__50__ \[Rouskin\|Zubradt\]
+__meanCoverage__ | Positive integer &ge; 0 | __0__
+__medianCoverage__ | Positive integer &ge; 0 | __0__
+__remapReactivities__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
+ | __Scoring method #1 options__ | 
+__maxScore__ | Positive integer &ge; 1 | __10__
+__pseudoCount__ | Positive integer &gt; 0 | __1__
+ | __Scoring method #3 options__ | 
+__maxUntreatedMut__ | Positive integer &le; 1 | __0.05__
+
+<br/>
+
+```bash
+# A sample configuration file
+
+scoreMethod=Ding
+normMethod=2-8%
+maxScore=10
+pseudoCount=1
+reactiveBases=N
+normIndependent=FALSE
+normWindow=1e9
+windowOffset=1e9
+meanCoverage=1
+```
