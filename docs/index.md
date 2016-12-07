@@ -4,10 +4,10 @@
 
 ## Introduction
 
-The recent advent of Next Generation Sequencing techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
-Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (&Psi;, m<sup>1</sup>A, m<sup>6</sup>A, m<sup>5</sup>C, hm<sup>5</sup>C, 2'-OMe) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
+The recent advent of Next Generation Sequencing (NGS) techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
+Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (&Psi;, m<sup>1</sup>A, m<sup>6</sup>A, m<sup>5</sup>C, hm<sup>5</sup>C, 2'-OMe) on a transcriptome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of this data.
 
-The RNA Framework is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
+The __RNA Framework__ is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
 Its main features are: 
 
 - Automatic reference transcriptome creation
@@ -25,7 +25,7 @@ Danny Incarnato (dincarnato[at]rnaframework.com)
 Epigenetics Unit @ HuGeF [Human Genetics Foundation]  
 
 
-## Citation
+## Reference
 
 Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data ([PMID: 26487736](https://www.ncbi.nlm.nih.gov/pubmed/26487736)).
 
@@ -49,25 +49,22 @@ Please see <http://www.gnu.org/licenses/> for more informations.
 - Perl v5.12 (or greater), with ithreads support
 - Perl non-CORE modules (<http://search.cpan.org/>):
 
-    1. DBD::MySQL  
+    1. DBD::mysql  
     2. LWP::UserAgent  
-    3. RNA (part of the ViennaRNA package)  
+    3. RNA (installed by the __ViennaRNA__ package)  
     4. XML::LibXML  
 
 
 ## Installation
 
-Clone RSF git repository:
+Clone the RNA Framework git repository:
 
 ```bash
 git clone https://github.com/dincarnato/RNAFramework
 ```
-This will create the RNAFramework folder.<br />
+This will create a "RNAFramework" folder.<br />
 To add RNA Framework executables to your PATH, simply type:
 
 ```bash
 export PATH=$PATH:/path/to/RNAFramework
 ```
-
-!!! note "Note"
-    This __only__ the docs for the DATA. The Docs for the analysis should be located in th
