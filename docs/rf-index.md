@@ -1,18 +1,18 @@
-# RF - RNA Framework (v2.2.0b)
+# rf-index
 
-The recent advent of Next Generation Sequencing techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
-Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (\Psi, m^1A, m^6A, m^5C, hm^5C) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
+The RF Index tool is designed to automatically generate a Bowtie reference index, that will be used by the RT Count module for reads mapping.<br />This tool requires an internet connection, since it relies on querying the UCSC Genome database to obtain transcripts annotation and reference genome’s sequence.<br /><br />
+To list the required parameters, simply type:
 
-The RNA Framework is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
-Its main features are: 
+```
+$ rf-index -h
+```
+<br />
 
-- Automatic reference transcriptome creation
-- Automatic reads preprocessing (adapter clipping and trimming) and mapping
-- Scoring and data normalization
-- Accurate RNA folding prediction by incorporating structural probing data
-
-For updates, please visit: http://www.rnaframework.com  
-For support requests, please post your questions to: https://groups.google.com/forum/#!forum/rsftoolkit
+Parameter         | Description
+----------------: | :------------
+__-o__ *or* __--output-dir__ | Bowtie index output directory (Default: \<assembly\>\_\<annotation\>, e.g. “mm9_refFlat/”)
+__-ow__ *or* __--overwrite__ | Overwrites the output directory if already exists
+__-g__ *or* __--genome-assembly__ | Genome assembly for the species of interest (Default: mm9). For a complete list of UCSC available assemblies, please refer to the UCSC website (<https://genome.ucsc.edu/FAQ/FAQreleases.html>)
 
 
 ## Author
