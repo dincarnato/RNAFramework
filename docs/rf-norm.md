@@ -2,7 +2,7 @@ The RF Norm module takes one (Rouskin and Zubradt methods), two (Ding method), o
 <br/><br/>
 ## Scoring of RT-stops/nuclease cuts-based methods
 __[1] Ding *et al*., 2014__<br/><br/>
-Per-base signal is calculated as the natural log (ln) of the ratio between the raw count of RT-stops/nuclease cuts at a given position of a transcript, and the average of the ln of RT-stops/nuclease cuts along the whole transcript:<br/><br/>
+Per-base signal is calculated as the natural log (ln) of the ratio between the raw count of RT-stops/nuclease cuts at a given position of a transcript, and the average of the ln of RT-stops/nuclease cuts along the whole transcript:<br/>
 
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>U</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>1</mn><mi>i</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mfenced><mrow><munderover><mo>&#x2211;</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mi>l</mi></munderover><mstyle displaystyle="true"><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>1</mn><mi>j</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mi>l</mi></mfrac></mstyle></mrow></mfenced></mfrac></math>
 <br/>
