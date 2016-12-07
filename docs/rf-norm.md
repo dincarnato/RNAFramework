@@ -67,8 +67,8 @@ __-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for sign
 __-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be normalized independently (e.g. -rb AC -ni will independently normalize A and C residues)
 __-mc__ *or* __--mean-coverage__ | int | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | int | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
-__-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding|Siegfried], __50__ [Rouskin|Zubradt])
-__-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding|Siegfried], __50__ [Rouskin|Zubradt])
+__-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
+__-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
 __-n__ *or* __--nan__ | int | Positions of transcript with reads coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __1__)
  | | __Scoring method #1 options (Ding *et al*., 2014)__
@@ -88,8 +88,8 @@ __scoreMethod__ | "Ding" (or 1); "Rouskin" (or 2); "Siegfried" (or 3); "Zubradt"
 __normMethod__ | "2-8%" (or 1); "90% Winsorising" (or 2); "Box-plot" (or 3) | __2-8%__
 __reactiveBases__ | \[ACGTURYSWKMBDHVN\] (or "all") | __all__
 __normIndependent__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
-__normWindow__ | Positive integer &ge; 3 | __1e9__ [Ding|Siegfried]<br/>__50__ [Rouskin|Zubradt]
-__windowOffset__ | Positive integer &gt; 0 | __1e9__ [Ding|Siegfried]<br/>__50__ [Rouskin|Zubradt]
+__normWindow__ | Positive integer &ge; 3 | __1e9__ [Ding; Siegfried]<br/>__50__ [Rouskin; Zubradt]
+__windowOffset__ | Positive integer &gt; 0 | __1e9__ [Ding; Siegfried]<br/>__50__ [Rouskin; Zubradt]
 __meanCoverage__ | Positive integer &ge; 0 | __0__
 __medianCoverage__ | Positive integer &ge; 0 | __0__
 __remapReactivities__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
