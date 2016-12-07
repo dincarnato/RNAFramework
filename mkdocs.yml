@@ -4,7 +4,7 @@ pages:
     - 'Framework components': 'components.md'
     - 'rf-index': 'rf-index.md'
     - 'rf-count': 'rf-count.md'
-    - '': 'rf-norm.md'
+    - 'rf-norm': 'rf-norm.md'
     - 'rf-fold': 'rf-fold.md'
     - 'rf-compare': 'rf-compare.md'
     - 'rf-silico': 'rf-silico.md'
