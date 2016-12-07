@@ -41,10 +41,10 @@ __-ba__ *or* __--bowtie-all__ | | Report all equally scoring positions for multi
 __-bc__ *or* __--bowtie-chunkmbs__ | int | Maximum MB of RAM for best-first search frames (Default: __128__)
 __-bi__ *or* __--bowtie-index__ | string | Path to transcriptome reference index (see ``rf-index``)
 
-
+<br/>
 ## RC (RNA Count) format
 
-RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base reads coverage. These files can be indexed for fast random access.<br/>Each entry in a RTC file is structured as follows:
+RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base reads coverage. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
 
 Field             | Description    |  Type
 ----------------: | :------------: | :----------
@@ -54,3 +54,12 @@ __len\_seq__ | Length of sequence | uint32\_t
 __seq__ | 4-bit encoded sequence: 'ACGTN' -> \[0,4] (High nybble first) | uint8\_t\[(len_seq+1)/2]
 __counts__ | Transcript's per base RT-stops (or mutations) | uint32\_t[len\_seq]
 __counts__ | Transcript's per base coverage | uint32\_t[len\_seq]
+
+RC files EOF stores the number of total experiment mapped reads (uint64\_t packed as 2 x uint32\_t), and is structured as follows:
+
+Field             | Description    |  Type
+----------------: | :------------: | :----------
+__n<sub>1</sub>__ | Total experiment mapped reads &gt;&gt; 32 | uint32\_t
+__n<sub>2</sub>__ | Total experiment mapped reads \& 0xFFFFFFFF | uint32\_t
+__marker__ | EOF marker (\\x5b\\x65\\x66\\x72\\x74\\x63\\x5d) | char[7]
+
