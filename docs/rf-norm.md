@@ -80,7 +80,7 @@ __-mu__ *or* __--max-untreated-mut__ | float | Maximum per-base mutation rate in
 <br/>
 ## Configuration files
 RF Norm configuration files are used to provide normalization parameters for the analysis, without the need to manually specify them from the command-line.<br/>Configuration files are composed of a list of key/value pairs, separated by the equal sign (=), or by the colon punctuation mark (:). Keys and values are case-insensitive.<br/>
-Accepted key/value pairs are:<br/><br/>
+Accepted key/value pairs are:<br/>
 
 Parameters     | Accepted values | Default value
 -------------: | :------------:  | :------------
