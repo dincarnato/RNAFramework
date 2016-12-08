@@ -23,7 +23,7 @@ This method takes into account both an untreated sample, and a denatured control
 
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>S</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mstyle displaystyle="true"><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></mstyle><mo>-</mo><mstyle displaystyle="true"><mfrac><msub><mi>n</mi><mrow><mi>U</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>U</mi><mi>i</mi></mrow></msub></mfrac></mstyle></mrow><mstyle displaystyle="true"><mfrac><msub><mi>n</mi><mrow><mi>D</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>D</mi><mi>i</mi></mrow></msub></mfrac></mstyle></mfrac></math>
 <br/>
-where *n<sub>Ti</sub>*, *n<sub>Ui</sub>*, *n<sub>Di</sub>* are respectively the mutation counts in the treated, untreated, and denatured samples at position *i* of the transcript, while *c<sub>Ti</sub>*, *c<sub>Ui</sub>*, *c<sub>Di</sub>* are respectively the reads covering position *i* of the transcript in the treated, untreated, and denatured samples.
+where *n<sub>Ti</sub>*, *n<sub>Ui</sub>*, and *n<sub>Di</sub>* are respectively the mutation counts in the treated, untreated, and denatured samples at position *i* of the transcript, while *c<sub>Ti</sub>*, *c<sub>Ui</sub>*, and *c<sub>Di</sub>* are respectively the reads covering position *i* of the transcript in the treated, untreated, and denatured samples.
 <br/><br/>
 __[4] Zubradt *et al*., 2016__<br/><br/>
 The untreated sample is not considered. Per-base raw signal is calculated as:<br/><br/>
