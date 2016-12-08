@@ -65,8 +65,8 @@ __-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Def
 __-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
 __-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combinations (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
 __-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be normalized independently (e.g. -rb AC -ni will independently normalize A and C residues)
-__-mc__ *or* __--mean-coverage__ | int | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
-__-ec__ *or* __--median-coverage__ | int | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
+__-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
+__-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
 __-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
@@ -90,14 +90,14 @@ __reactiveBases__ | \[ACGTURYSWKMBDHVN\] (or "all") | __all__
 __normIndependent__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
 __normWindow__ | Positive integer &ge; 3 | __1e9__ [Ding; Siegfried]<br/>__50__ [Rouskin; Zubradt]
 __windowOffset__ | Positive integer &gt; 0 | __1e9__ [Ding; Siegfried]<br/>__50__ [Rouskin; Zubradt]
-__meanCoverage__ | Positive integer &ge; 0 | __0__
-__medianCoverage__ | Positive integer &ge; 0 | __0__
+__meanCoverage__ | Positive float &ge; 0 | __0__
+__medianCoverage__ | Positive float &ge; 0 | __0__
 __remapReactivities__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
  | __Scoring method #1 options__ | 
-__maxScore__ | Positive integer &ge; 1 | __10__
-__pseudoCount__ | Positive integer &gt; 0 | __1__
+__maxScore__ | Positive float &ge; 1 | __10__
+__pseudoCount__ | Positive float &gt; 0 | __1__
  | __Scoring method #3 options__ | 
-__maxUntreatedMut__ | Positive integer &le; 1 | __0.05__
+__maxUntreatedMut__ | Positive float &le; 1 | __0.05__
 
 
 ```bash

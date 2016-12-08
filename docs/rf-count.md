@@ -16,7 +16,7 @@ __-o__ *or* __--output-dir__ | string | Output directory for writing counts in R
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-k__ *or* __--keep__ | | Keeps SAM/BAM files after reads mapping (in case FastQ files are passed).<br/>__Note:__ If unsorted SAM/BAM files are passed, this option will cause RF Count to keep the sorted SAM/BAM file.
 __-nb__ *or* __--no-bam__ | | Disables conversion of SAM files to BAM format (requires ``-k``)
-__-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads on files provided in SAM/BAM format<br/>__Note:__ This option should be avoided when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
+__-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads on files provided in SAM/BAM format<br/>__Note:__ This option __must be avoided__ when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
 __-b__ *or* __--bowtie__ | string | Path to ``bowtie`` v1 executable (Default: assumes ``bowtie`` is in PATH)
 __-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes ``cutadapt`` is in PATH)
 __-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes ``samtools`` is in PATH)
@@ -60,6 +60,14 @@ RC files EOF stores the number of total experiment mapped reads (uint64\_t packe
 Field             | Description    |  Type
 ----------------: | :------------: | :----------
 __n<sub>1</sub>__ | Total experiment mapped reads &gt;&gt; 32 | uint32\_t
-__n<sub>2</sub>__ | Total experiment mapped reads \& 0xFFFFFFFF | uint32\_t
+__n<sub>2</sub>__ | Total experiment mapped reads & 0xFFFFFFFF | uint32\_t
 __marker__ | EOF marker (\\x5b\\x65\\x66\\x72\\x74\\x63\\x5d) | char[7]
 
+RCI (RC Index) files enable random access to transcript data within RC files.<br/>
+The RCI index is structured as follows:
+
+Field             | Description    |  Type
+----------------: | :------------: | :----------
+__len\_transcript\_id__ | Length of the transcript ID (plus 1, including NULL) | uint32\_t
+__transcript\_id__ | Transcript ID (NULL terminated) | char[len\_transcript\_id]
+__offset__ | Offset of transcript in the RC file | uint32\_t

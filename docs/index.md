@@ -27,14 +27,14 @@ Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 
 ## Reference
 
-Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data ([PMID: 26487736](https://www.ncbi.nlm.nih.gov/pubmed/26487736)).
+Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data (PMID: [26487736](https://www.ncbi.nlm.nih.gov/pubmed/26487736)).
 
 
 ## License
 
 This program is free software, and can be redistribute and/or modified under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
 
-Please see <http://www.gnu.org/licenses/> for more informations.
+Please see <http://www.gnu.org/licenses/> for more information.
 
 
 ## Prerequisites
