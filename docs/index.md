@@ -7,7 +7,7 @@
 The recent advent of Next Generation Sequencing (NGS) techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
 Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (&Psi;, m<sup>1</sup>A, m<sup>6</sup>A, m<sup>5</sup>C, hm<sup>5</sup>C, 2'-OMe) on a transcriptome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of this data.
 
-The __RNA Framework__ is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
+__RNA Framework__ is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
 Its main features are: 
 
 - Automatic reference transcriptome creation

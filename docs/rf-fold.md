@@ -17,6 +17,7 @@ __-m__ *or* __--folding-method__ | int | Folding method (1-2, Default: __1__):<b
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
 __-g__ *or* __--img__ | | Enables generation of structure representations (Default: __Postscript format__)
 __-s__ *or* __--svg__ | | Structure representations are generated in SVG format (requires ``-g``)
+__-t__ *or* __--temperature__ | float | Temperature in Celsius degrees (Default: __37.0__)
 __-sl__ *or* __--slope__ | float | Sets the slope used with structure probing data restraints (Default: __1.8__ [kcal/mol])
 __-in__ *or* __--intercept__ | float | Sets the intercept used with structure probing data restraints (Default: __-0.6__ [kcal/mol])
 __-md__ *or* __--maximum-distance__ | int | Maximum pairing distance (in nt) between transcript's residues (Default: __0__ [no limit])

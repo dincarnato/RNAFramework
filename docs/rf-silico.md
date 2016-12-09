@@ -1,69 +1,30 @@
-# Test README2
+RF Silico calculates partition function folding for a given set of RNAs, using either ViennaRNA, RNAstructure, or their combination. The probability of each base of being unpaired is then reported in the form of a XML file.<br/>
 
-The recent advent of Next Generation Sequencing techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
-Despite the establishment of several methods for querying RNA secondary structures (CIRS-seq, SHAPE-seq, Structure-seq, DMS-seq, PARS, SHAPE-MaP, DMS-MaPseq), and RNA post-transcriptional modifications (\Psi, m^1A, m^6A, m^5C, hm^5C) on a genome-wide scale, no tool has been developed to date to enable the rapid analysis and interpretation of these data.
+# Usage
+To list the required parameters, simply type:
 
-The RNA Framework is a modular toolkit developed to deal with RNA structure probing and post-transcriptional modifications mapping high-throughput data.  
-Its main features are: 
-
-- Automatic reference transcriptome creation
-- Automatic reads preprocessing (adapter clipping and trimming) and mapping
-- Scoring and data normalization
-- Accurate RNA folding prediction by incorporating structural probing data
-
-For updates, please visit: http://www.rnaframework.com  
-For support requests, please post your questions to: https://groups.google.com/forum/#!forum/rsftoolkit
-
-
-## Author
-
-Danny Incarnato (dincarnato[at]rnaframework.com)  
-Epigenetics Unit @ HuGeF [Human Genetics Foundation]  
-
-
-## Citation
-
-Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data.
-
-
-## License
-
-This program is free software, and can be redistribute and/or modified under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
-
-Please see http://www.gnu.org/licenses/ for more informations.
-
-
-## Prerequisites
-
-- Linux/Mac system
-- Bowtie v1.0.0 (http://bowtie-bio.sourceforge.net/index.shtml)
-- SAMTools v1.2 or greater (http://www.htslib.org/)
-- BEDTools v2.0 or greater (https://github.com/arq5x/bedtools2/)
-- Cutadapt v1.10 or greater (http://cutadapt.readthedocs.io/en/stable/index.html)
-- ViennaRNA Package v2.2.0 or greater (http://www.tbi.univie.ac.at/RNA/)
-- RNAstructure v5.6 or greater (http://rna.urmc.rochester.edu/RNAstructure.html)
-- Perl v5.12 (or greater), with ithreads support
-- Perl non-CORE modules (http://search.cpan.org/):
-
-    1. DBD::MySQL  
-    2. LWP::UserAgent  
-    3. RNA (part of the ViennaRNA package)  
-    4. XML::LibXML  
-
-
-## Installation
-
-Clone RSF git repository:
 ```bash
-git clone https://github.com/dincarnato/RNAFramework
-```
-This will create the RNAFramework folder.
-To add RNA Framework executables to your PATH, simply type:
-```bash
-export PATH=$PATH:/path/to/RNAFramework
+$ rf-silico -h
 ```
 
-## Usage
+Parameter         | Type | Description
+----------------: | :--: |:------------
+__-f__ *or* __--fasta__ | string | Path to a multi-FASTA file containing transcript sequences
+__-o__ *or* __--output-dir__ | string | Output directory for writing probability data in XML format (Default: __rf_silico/__)
+__-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
+__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
+__-m__ *or* __--method__ | int | Partition function calculation method (1-3, Default: __1__):<br/>__1.__ ViennaRNA <br/>__2.__ RNAstructure <br/>__3.__ Combined<br/>__Note:__ method #3 calculates base-pair probabilities using both ViennaRNA and RNAstructure, and produces a XML file containing the per-base average of the two algorithms
+__-e__ *or* __--temperature__ | float | Temperature in Celsius degrees (Default: __37.0__)
+__-md__ *or* __--maximum-distance__ | int | Maximum pairing distance (in nt) between transcript's residues (Default: __0__ [no limit])
+__-v__ *or* __--viennarna__ | string | Path to ViennaRNA ``RNAfold`` executable (Default: assumes ``RNAfold`` is in PATH)
+__-pr__ *or* __--partition__ | string | Path to RNAstructure ``partition`` executable (Default: assumes ``partition`` is in PATH)
+__-pp__ *or* __--probability-plot__ | string | Path to RNAstructure ``ProbabilityPlot`` executable (Default: assumes ``ProbabilityPlot`` is in PATH)
+__-dp__ *or* __--data-path__ | string | Path to RNAstructure data tables (Default: assumes __DATAPATH__ environment variable is already set)
+__-w__ *or* __--window-size__ | int | Window's size (in nt) for base-pair probability calculation (&ge;3, Default: __full transcript__)
+__-wo__ *or* __--window-offset__ | int | Offset for window sliding (&ge;1, Default: __none__)
+__-kb__ *or* __--keep-bases__ | string | Bases to report in the XML file (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combinations (e.g. ``-kb M``, or ``-kb AC``). Any other base will be reported as NaN
+__-d__ *or* __--decimals__ | int | Number of decimals for reporting base probabilities (1-10, Default: __3__)
 
-Please refer to the RNA Framework manual.  
-To obtain parameters list, simply call the required program with the "-h" (or "--help") parameter.
+!!! note "Note"
+    When using methods #2 or #3, if possible, RF Silico uses RNAstructure ``partition-smp`` instead of ``partition`` to speed-up execution
