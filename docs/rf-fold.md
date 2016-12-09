@@ -20,6 +20,7 @@ __-s__ *or* __--svg__ | | Structure representations are generated in SVG format 
 __-sl__ *or* __--slope__ | float | Sets the slope used with structure probing data restraints (Default: __1.8__ [kcal/mol])
 __-in__ *or* __--intercept__ | float | Sets the intercept used with structure probing data restraints (Default: __-0.6__ [kcal/mol])
 __-md__ *or* __--maximum-distance__ | int | Maximum pairing distance (in nt) between transcript's residues (Default: __0__ [no limit])
+__-i__ *or* __--ignore-reactivity__ | | Do not use ``rf-norm`` reactivity data to guide folding (MFE unconstrained prediction)
  | | __Folding method #1 options (ViennaRNA)__
 __-v__ *or* __--viennarna__ | string | Path to ViennaRNA ``RNAfold`` executable (Default: assumes ``RNAfold`` is in PATH)
 __-nlp__ *or* __--no-lonely-pairs__ | | Disallows lonely base-pairs
@@ -35,5 +36,5 @@ __-mi__ *or* __--model-intercept__ | float | Sets the intercept used by the line
 __-r__ *or* __--rnastructure__ | string | Path to RNAstructure ``Fold`` executable (Default: assumes ``Fold`` is in PATH)
 __-dp__ *or* __--data-path__ | string | Path to RNAstructure data tables (Default: assumes __DATAPATH__ environment variable is already set)
 
-!!! info "Information"
+!!! note "Information"
     For additional details relatively to ViennaRNA soft-constraint prediction methods, please refer to the ViennaRNA manual, or to Lorenz *et al*., 2016.
