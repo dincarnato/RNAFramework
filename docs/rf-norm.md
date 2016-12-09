@@ -29,7 +29,7 @@ __[4] Zubradt *et al*., 2016__<br/><br/>
 The untreated sample is not considered. Per-base raw signal is calculated as:<br/><br/>
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>S</mi><mi>i</mi></msub><mo>=</mo><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></math>
 <br/>
-where *n<sub>Ti</sub>*, and *c<sub>Ti</sub>* are respectively the mutations count and the reads coverage at position *i* of the transcript.
+where *n<sub>Ti</sub>*, and *c<sub>Ti</sub>* are respectively the mutations count and the read coverage at position *i* of the transcript.
 <br/><br/>
 ## Normalization of raw reactivities
 Raw reactivity scores can be normalized using 3 different approaches:<br/><br/>
@@ -70,7 +70,7 @@ __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median
 __-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
-__-n__ *or* __--nan__ | int | Positions of transcript with reads coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __1__)
+__-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __1__)
  | | __Scoring method #1 options (Ding *et al*., 2014)__
 __-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to avoid division by 0 (&gt;0, Default: __1__)
 __-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;1, Default: __10__)

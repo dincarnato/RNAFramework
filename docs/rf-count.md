@@ -1,4 +1,4 @@
-The RF Count module is the core component of the framework. It can process any number of both FastQ and/or SAM/BAM files. In case FastQ files are passed, reads are pre-processed (trimmed andclipped), and mapped to the reference transcriptome.<br/>Each SAM/BAM file is then processed to calculate per-base RT-stops/mutations and reads coverage on each transcript.<br /><br />
+The RF Count module is the core component of the framework. It can process any number of both FastQ and/or SAM/BAM files. In case FastQ files are passed, reads are pre-processed (trimmed andclipped), and mapped to the reference transcriptome.<br/>Each SAM/BAM file is then processed to calculate per-base RT-stops/mutations and read coverage on each transcript.<br /><br />
 
 # Usage
 To list the required parameters, simply type:
@@ -44,7 +44,7 @@ __-bi__ *or* __--bowtie-index__ | string | Path to transcriptome reference index
 <br/>
 ## RC (RNA Count) format
 
-RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base reads coverage. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
+RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base read coverage. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
 
 Field             | Description    |  Type
 ----------------: | :------------: | :----------
