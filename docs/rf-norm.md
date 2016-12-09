@@ -63,7 +63,7 @@ __-c__ *or* __--config-file__ | string | Path to a configuration file with norma
 __-sm__ *or* __--scoring-method__ | int | Method for score calculation (1-4, Default: __1__):<br/>__1.__ Ding *et al.*, 2014 <br/>__2.__ Rouskin *et al.*, 2014 <br/>__3.__ Siegfried *et al.*, 2014 <br/>__4.__ Zubradt *et al.*, 2016
 __-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Default: __1__):<br/>__1.__ 2-8% Normalization <br/>__2.__ 90% Winsorising <br/>__3.__ Box-plot Normalization
 __-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
-__-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combinations (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
+__-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combination (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
 __-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be normalized independently (e.g. -rb AC -ni will independently normalize A and C residues)
 __-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)

@@ -23,7 +23,7 @@ __-pp__ *or* __--probability-plot__ | string | Path to RNAstructure ``Probabilit
 __-dp__ *or* __--data-path__ | string | Path to RNAstructure data tables (Default: assumes __DATAPATH__ environment variable is already set)
 __-w__ *or* __--window-size__ | int | Window's size (in nt) for base-pair probability calculation (&ge;3, Default: __full transcript__)
 __-wo__ *or* __--window-offset__ | int | Offset for window sliding (&ge;1, Default: __none__)
-__-kb__ *or* __--keep-bases__ | string | Bases to report in the XML file (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combinations (e.g. ``-kb M``, or ``-kb AC``). Any other base will be reported as NaN
+__-kb__ *or* __--keep-bases__ | string | Bases to report in the XML file (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combination (e.g. ``-kb M``, or ``-kb AC``). Any other base will be reported as NaN
 __-d__ *or* __--decimals__ | int | Number of decimals for reporting base probabilities (1-10, Default: __3__)
 
 !!! note "Note"
