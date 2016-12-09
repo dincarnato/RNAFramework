@@ -27,7 +27,7 @@ where *n<sub>Ti</sub>*, *n<sub>Ui</sub>*, and *n<sub>Di</sub>* are respectively 
 <br/><br/>
 __[4] Zubradt *et al*., 2016__<br/><br/>
 The untreated sample is not considered. Per-base raw signal is calculated as:<br/><br/>
-<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></math>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>S</mi><mi>i</mi></msub><mo>=</mo><mfrac><msub><mi>n</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub><msub><mi>c</mi><mrow><mi>T</mi><mi>i</mi></mrow></msub></mfrac></math>
 <br/>
 where *n<sub>Ti</sub>*, and *c<sub>Ti</sub>* are respectively the mutations count and the reads coverage at position *i* of the transcript.
 <br/><br/>
