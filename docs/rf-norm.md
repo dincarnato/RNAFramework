@@ -70,7 +70,7 @@ __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median
 __-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
-__-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __1__)
+__-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __10__)
  | | __Scoring method #1 options (Ding *et al*., 2014)__
 __-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to avoid division by 0 (&gt;0, Default: __1__)
 __-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;1, Default: __10__)

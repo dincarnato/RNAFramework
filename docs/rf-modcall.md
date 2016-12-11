@@ -12,3 +12,25 @@ where *S<sub>i</sub>* and *R<sub>i</sub>* are respectively the score and the rat
 
 !!! warning "Warning"
     When processing SAM/BAM files from with RF Count &Psi;-seq/Pseudo-seq or 2OMe-seq experiments, use of the ``--no-mapped-count`` parameter must be avoided, otherwise RF ModCall will not be able to perform library size scaling.
+    
+# Usage
+To list the required parameters, simply type:
+
+```bash
+$ rf-modcall -h
+```
+
+Parameter         | Type | Description
+----------------: | :--: |:------------
+__-u__ *or* __--untreated__ | string | Path to the RC file for the CMCT untreated (or high dNTP)
+__-t__ *or* __--treated__ | string | Path to the RC file for the CMCT treated (or low dNTP) sample
+__-i__ *or* __--index__ | string[,string] | A comma separated (no spaces) list of RCI index files for the provided RC files<br/>__Note #1:__ RCI files must be provided in the order 1. Untreated, 2. Treated<br/>__Note #2:__ If a single RTI file is specified, it will be used for all RC files<br/>__Note #3:__ If no RCI index is provided, it will be generated at runtime, and stored in the same folder of the untreated/treated samples
+__-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
+__-o__ *or* __--output-dir__ | string | Output directory for writing site scores and ratios in XML format (Default: __&lt;treated&gt;\_vs\_&lt;untreated&gt;/__)
+__-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-w__ *or* __--window__ | int | Window size (in nt) for score calculation (&ge;3, Default: __150__)
+__-ts__ *or* __--to-smaller__ | | The bigger sample will be scaled toward the smaller one (Default: __scale smaller sample to the bigger__)
+__-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
+__-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
+__-D__ *or* __--decimals__ | int | Number of decimals for reporting scores/ratios (1-10, Default: __3__)
+__-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __10__)
