@@ -7,10 +7,10 @@ where *i* and *i+w* are the start and end position of the window, *&#x3BC;<sub>I
 
 A p-value is then calculated for each window with detected enrichment above a defined cutoff, using a __Fisher's exact test__. Thus, the following 2x2 contingency matrix is defined for each cutoff-passing window:<br/>
 
- &nbsp; | Mean | Median
+ &nbsp; | n<sub>11</sub> | n<sub>12</sub>
 -------------: | :------------:  | :------------:
-__IP__ | *&#x3BC;<sub>IP(i..i+w)</sub>* | *Md<sub>IP</sub>*
-__Control__ | *&#x3BC;<sub>Ctrl(i..i+w)</sub>* | *Md<sub>Ctrl</sub>*
+__n<sub>21</sub>__ | *&#x3BC;<sub>IP(i..i+w)</sub>* | *Md<sub>IP</sub>*
+__n<sub>22</sub>__ | *&#x3BC;<sub>Ctrl(i..i+w)</sub>* | *Md<sub>Ctrl</sub>*
 
 P-values are then subjected to Benjamini-Hochberg correction. Consecutive significantly enriched windows are then merged together, and p-values are combined using Stouffer's method.<br/>
 
