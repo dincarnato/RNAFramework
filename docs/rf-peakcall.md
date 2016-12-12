@@ -4,11 +4,13 @@ Analysis is performed by sliding a window of length *w* along the transcript, an
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>E</mi><mrow><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>=</mo><mfrac><mstyle displaystyle="true"><mfrac bevelled="true"><mfenced><mrow><msub><mi>&#x3BC;</mi><mrow><mi>I</mi><mi>P</mi><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced><mfenced><mrow><mi>M</mi><msub><mi>d</mi><mrow><mi>I</mi><mi>P</mi></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced></mfrac></mstyle><mstyle displaystyle="true"><mfrac bevelled="true"><mfenced><mrow><msub><mi>&#x3BC;</mi><mrow><mi>C</mi><mi>t</mi><mi>r</mi><mi>l</mi><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced><mfenced><mrow><mi>M</mi><msub><mi>d</mi><mrow><mi>C</mi><mi>t</mi><mi>r</mi><mi>l</mi></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced></mfrac></mstyle></mfrac></math>
 <br/>
 where *i* and *i+w* are the start and end position of the window, *&#x3BC;<sub>IP(i..i+w)</sub>* and *&#x3BC;<sub>Ctrl(i..i+w)</sub>* are respectively the mean coverage within the analyzed window in the IP and control samples, *Md<sub>IP</sub>* and *Md<sub>Ctrl</sub>* are respectively the median coverage on the whole transcript in the IP and control samples, and *p* is a pseudocount added to deal with non-covered regions.<br/>
+
 A p-value is then calculated for each window with detected enrichment above a defined cutoff, using a __Fisher's exact test__. Thus, the following 2x2 contingency matrix is defined for each cutoff-passing window:<br/>
 
  | Mean | Median
 -------------: | :------------:  | :------------
 __IP__ | *&#x3BC;<sub>IP(i..i+w)</sub>* | *Md<sub>IP</sub>*
 __Control__ | *&#x3BC;<sub>Ctrl(i..i+w)</sub>* | *Md<sub>Ctrl</sub>*
+
 <br/>
 P-values are then subjected to Benjamini-Hochberg correction. Consecutive significantly enriched windows are then merged together, and p-values are combined using the Stouffer's method.
