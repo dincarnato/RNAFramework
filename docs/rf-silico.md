@@ -28,8 +28,8 @@ __-d__ *or* __--decimals__ | int | Number of decimals for reporting base probabi
 
 !!! note "Note"
     When using methods #2 or #3, if possible, RF Silico uses RNAstructure ``partition-smp`` instead of ``partition`` to speed-up execution
-    
-<br/>
+
+
 ## Output XML files
 RF Silico produces a XML file for each transcript being analyzed, with the following structure:<br/>
 

@@ -38,4 +38,4 @@ __-r__ *or* __--rnastructure__ | string | Path to RNAstructure ``Fold`` executab
 __-dp__ *or* __--data-path__ | string | Path to RNAstructure data tables (Default: assumes __DATAPATH__ environment variable is already set)
 
 !!! note "Information"
-    For additional details relatively to ViennaRNA soft-constraint prediction methods, please refer to the ViennaRNA manual, or to Lorenz *et al*., 2016.
+    For additional details relatively to ViennaRNA soft-constraint prediction methods, please refer to the [ViennaRNA documentation](http://www.tbi.univie.ac.at/RNA/documentation.html), or to Lorenz *et al*., 2016 (PMID: [26353838](https://www.ncbi.nlm.nih.gov/pubmed/26353838).
