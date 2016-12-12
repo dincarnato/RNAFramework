@@ -113,3 +113,15 @@ normWindow=1e9
 windowOffset=1e9
 meanCoverage=1
 ```
+
+<br/>
+## Output XML files
+RF Norm produces a XML file for each transcript being analyzed, with the following structure:<br/>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?><data [attributes]>	<transcript id=”Transcript ID” length=”Transcript length”>		<sequence>			Transcript sequence		</sequence>		<reactivity>			Comma-separated list of reactivity values		</reactivity>	</transcript></data>
+```
+
+Attribute     | Description
+-------------: | :------------ 
+__scoreMethod__ | "Ding" (or 1);
