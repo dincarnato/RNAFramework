@@ -1,5 +1,39 @@
 The RF Count module is the core component of the framework. It can process any number of both FastQ and/or SAM/BAM files. In case FastQ files are passed, reads are pre-processed (trimmed andclipped), and mapped to the reference transcriptome.<br/>Each SAM/BAM file is then processed to calculate per-base RT-stops/mutations and read coverage on each transcript.<br /><br />
 
+## Deletions re-alignment in mutational profiling-based methods
+Mutational profiling (MaP) methods for RNA structure analysis are based on the ability of certain reverse transcriptase enzymes to read-through the sites of SHAPE/DMS modification under specific reaction conditions. Some of them (e.g. SuperScript II) can introduce deletions when encountering a SHAPE/DMS-modified residue. When performing reads mapping, the aligner often reports a single possible alignment of the deletion, although many equally-scoring alignments are possible.<br/>
+To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and discard these ambiguously aligned deletions:
+
+```bash
+ATTACGCGGATCTACGAAAGCTTTACGGACGGTAC		# Reference
+ATTACGCGGATCTACGA-AGCTTTACGGACGGTAC		# Alignment
+
+ATTACGCGGATCTACGA|AGCTTTACGGACGGTAC		# Surrounding sequence
+
+# Slide the deletion along sequence		# Extract surrounding sequence
+ATTACGCGGATC-ACGAAAGCTTTACGGACGGTAC		ATTACGCGGATC|ACGAAAGCTTTACGGACGGTAC	#1
+ATTACGCGGATCT-CGAAAGCTTTACGGACGGTAC		ATTACGCGGATCT|CGAAAGCTTTACGGACGGTAC	#2
+ATTACGCGGATCTA-GAAAGCTTTACGGACGGTAC		ATTACGCGGATCTA|GAAAGCTTTACGGACGGTAC	#3
+ATTACGCGGATCTAC-AAAGCTTTACGGACGGTAC		ATTACGCGGATCTAC|AAAGCTTTACGGACGGTAC	#4
+ATTACGCGGATCTACG-AAGCTTTACGGACGGTAC		ATTACGCGGATCTACG|AAGCTTTACGGACGGTAC	#5
+ATTACGCGGATCTACGAA-GCTTTACGGACGGTAC		ATTACGCGGATCTACGAA|GCTTTACGGACGGTAC	#6
+ATTACGCGGATCTACGAAA-CTTTACGGACGGTAC		ATTACGCGGATCTACGAAA|CTTTACGGACGGTAC	#7
+ATTACGCGGATCTACGAAAG-TTTACGGACGGTAC		ATTACGCGGATCTACGAAAG|TTTACGGACGGTAC	#8
+
+# Compare surrounding sequence from sled deletion to original alignment
+ATTACGCGGATCTACGA|AGCTTTACGGACGGTAC		# Original alignment
+ATTACGCGGATCTACG|AAGCTTTACGGACGGTAC		# 5
+ATTACGCGGATCTACGAA|GCTTTACGGACGGTAC		# 6
+
+# Concatenate surrounding sequences
+ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# Original alignment
+ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# 5
+ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# 6
+
+# Deletion is discarded because it is NOT unambiguously aligned
+```
+For more information, please refer to Smola *et al*., 2015 (PMID: [26426499](https://www.ncbi.nlm.nih.gov/pubmed/26426499)).
+<br/><br/>
 # Usage
 To list the required parameters, simply type:
 
