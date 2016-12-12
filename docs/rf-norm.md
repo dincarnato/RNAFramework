@@ -131,8 +131,8 @@ __reactive__ | \[ACGT\] | Reactive bases
 __win__ | Positive integer &ge; 3 | Normalization window's size (in nt)
 __offset__ | Positive integer &ge; 1 | Offset for normalization window sliding
 __remap__ | TRUE/FALSE | Whether normalized reactivities have been remapped according to Zarringhalam *et al*., 2012
- | | __Scoring method #1 (Ding *et al*., 2014)__
+ | __Scoring method #1 (Ding *et al*., 2014)__ | 
 __max__ | Positive float &ge; 1 | Score threshold for capping raw reactivities
 __pseudo__ | Positive float &gt; 0 | Pseudocount added to avoid division by 0 during reactivity calculation
- | | __Scoring method #3 (Siegfried *et al*., 2014)__
+ | __Scoring method #3 (Siegfried *et al*., 2014)__ | 
 __maxumut__ | Positive float &le; 1 | Maximum per-base mutation rate in untreated sample
