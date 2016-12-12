@@ -29,8 +29,23 @@ __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Defa
 __-o__ *or* __--output-dir__ | string | Output directory for writing site scores and ratios in XML format (Default: __&lt;treated&gt;\_vs\_&lt;untreated&gt;/__)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-w__ *or* __--window__ | int | Window size (in nt) for score calculation (&ge;3, Default: __150__)
-__-ts__ *or* __--to-smaller__ | | The bigger sample will be scaled toward the smaller one (Default: __scale smaller sample to the bigger one__)
+__-ts__ *or* __--to-smaller__ | | The larger sample will be scaled toward the smaller one (Default: __scale smaller sample to the larger one__)
 __-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting scores/ratios (1-10, Default: __3__)
 __-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __10__)
+
+<br/>
+## Output XML files
+RF ModCall produces a XML file for each transcript being analyzed, with the following structure:<br/>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?><data [attributes]>	<transcript id=”Transcript ID” length=”Transcript length”>		<sequence>			Transcript sequence		</sequence>		<score>			Comma-separated list of scores		</score>
+		<ratio>			Comma-separated list of ratios		</ratio>	</transcript></data>
+```
+The __data__ tag’s attributes allow keeping track of the analysis performed:<br/>
+
+Attribute     | Possible values | Description
+-------------: | :------------: | :----------
+__win__ | Positive integer &ge; 3 | Window's size (in nt) for score calculation
+__tosmaller__ | TRUE/FALSE | Whether the larger dataset has been scaled to the size of the smaller one

@@ -28,3 +28,21 @@ __-d__ *or* __--decimals__ | int | Number of decimals for reporting base probabi
 
 !!! note "Note"
     When using methods #2 or #3, if possible, RF Silico uses RNAstructure ``partition-smp`` instead of ``partition`` to speed-up execution
+    
+<br/>
+## Output XML files
+RF Silico produces a XML file for each transcript being analyzed, with the following structure:<br/>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?><data [attributes]>	<transcript id=”Transcript ID” length=”Transcript length”>		<sequence>			Transcript sequence		</sequence>		<probability>			Comma-separated list of probability values		</probability>	</transcript></data>
+```
+The __data__ tag’s attributes allow keeping track of the analysis performed:<br/>
+
+Attribute     | Possible values | Description
+-------------: | :------------: | :----------
+__tool__ | rf-silico | The tool that generated this XML file
+__algorithm__ | ViennaRNA, RNAstructure, or Combined | Algorithm used for partition function calculation
+__keep__ | \[ACGT\] | Kept bases
+__win__ | Positive integer &ge; 3 | Window's size (in nt) for partition function calculation
+__offset__ | Positive integer &ge; 1 | Offset for window sliding
+__maxdist__ | Positive integer &ge; 0 | Maximum distance (in nt) between base-paired residues

@@ -73,7 +73,7 @@ __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities
 __-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __10__)
  | | __Scoring method #1 options (Ding *et al*., 2014)__
 __-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to avoid division by 0 (&gt;0, Default: __1__)
-__-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;1, Default: __10__)
+__-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;0, Default: __10__)
  | | __Scoring method #3 options (Siegfried *et al*., 2014)__
 __-mu__ *or* __--max-untreated-mut__ | float | Maximum per-base mutation rate in untreated sample (&le;1, Default: __0.05__ [5%])
 
@@ -94,7 +94,7 @@ __meanCoverage__ | Positive float &ge; 0 | __0__
 __medianCoverage__ | Positive float &ge; 0 | __0__
 __remapReactivities__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
  | __Scoring method #1 options__ | 
-__maxScore__ | Positive float &ge; 1 | __10__
+__maxScore__ | Positive float &gt; 0 | __10__
 __pseudoCount__ | Positive float &gt; 0 | __1__
  | __Scoring method #3 options__ | 
 __maxUntreatedMut__ | Positive float &le; 1 | __0.05__
@@ -124,15 +124,16 @@ RF Norm produces a XML file for each transcript being analyzed, with the followi
 The __data__ tag’s attributes allow keeping track of the analysis performed:<br/>
 
 Attribute     | Possible values | Description
--------------: | :------------: | :---------- 
+-------------: | :------------: | :----------
+__tool__ | rf-norm | The tool that generated this XML file
 __scoring__ | Ding, Rouskin, Siegfried, or Zubradt | Scoring method
 __norm__ | 2-8%, Winsorising 90%, Box-plot | Normalization method
 __reactive__ | \[ACGT\] | Reactive bases
 __win__ | Positive integer &ge; 3 | Normalization window's size (in nt)
 __offset__ | Positive integer &ge; 1 | Offset for normalization window sliding
 __remap__ | TRUE/FALSE | Whether normalized reactivities have been remapped according to Zarringhalam *et al*., 2012
- | __Scoring method #1 (Ding *et al*., 2014)__ | 
-__max__ | Positive float &ge; 1 | Score threshold for capping raw reactivities
+ | | __Scoring method #1 (Ding *et al*., 2014)__
+__max__ | Positive float &gt; 0 | Score threshold for capping raw reactivities
 __pseudo__ | Positive float &gt; 0 | Pseudocount added to avoid division by 0 during reactivity calculation
- | __Scoring method #3 (Siegfried *et al*., 2014)__ | 
+ | | __Scoring method #3 (Siegfried *et al*., 2014)__
 __maxumut__ | Positive float &le; 1 | Maximum per-base mutation rate in untreated sample

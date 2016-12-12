@@ -38,3 +38,16 @@ __-pc__ *or* __--pseudocount__ | float | Pseudocount added to read counts to avo
 __-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting enrichment/p-value (1-10, Default: __3__)
+
+<br/>
+## Output BED-like files
+RF PeakCall produces a BED-like file with 5 tab-delimited fields:<br/>
+
+
+Field    | Description
+-------------: | :----------
+__Transcript ID__ | ID of the transcript
+__Start__ | Start coordinate of the peak (0-based)
+__End__ | End coordinate of the peak (0-based)
+__Enrichment__ | Fold enrichment of the IP signal versus Control signal
+__p-value__ | Benjamini-Hochberg adjusted p-value 
