@@ -121,7 +121,18 @@ RF Norm produces a XML file for each transcript being analyzed, with the followi
 ```xml
 <?xml version="1.0" encoding="UTF-8"?><data [attributes]>	<transcript id=”Transcript ID” length=”Transcript length”>		<sequence>			Transcript sequence		</sequence>		<reactivity>			Comma-separated list of reactivity values		</reactivity>	</transcript></data>
 ```
+The __data__ tag’s attributes allow keeping track of the analysis performed:<br/>
 
-Attribute     | Description
--------------: | :------------ 
-__scoreMethod__ | "Ding" (or 1);
+Attribute     | Possible values | Description
+-------------: | :------------: | :---------- 
+__scoring__ | Ding, Rouskin, Siegfried, or Zubradt | Scoring method
+__norm__ | 2-8%, Winsorising 90%, Box-plot | Normalization method
+__reactive__ | \[ACGT\] | Reactive bases
+__win__ | Positive integer &ge; 3 | Normalization window's size (in nt)
+__offset__ | Positive integer &ge; 1 | Offset for normalization window sliding
+__remap__ | TRUE/FALSE | Whether normalized reactivities have been remapped according to Zarringhalam *et al*., 2012
+ | | __Scoring method #1 (Ding *et al*., 2014)__
+__max__ | Positive float &ge; 1 | Score threshold for capping raw reactivities
+__pseudo__ | Positive float &gt; 0 | Pseudocount added to avoid division by 0 during reactivity calculation
+ | | __Scoring method #3 (Siegfried *et al*., 2014)__
+__maxumut__ | Positive float &le; 1 | Maximum per-base mutation rate in untreated sample
