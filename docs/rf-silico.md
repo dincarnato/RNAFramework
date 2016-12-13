@@ -1,5 +1,11 @@
-RF Silico calculates partition function folding for a given set of RNAs, using either ViennaRNA, RNAstructure, or their combination. The probability of each base of being unpaired is then reported in the form of a XML file.<br/>
+RF Silico calculates partition function folding for a given set of RNAs, using either ViennaRNA, RNAstructure, or their combination. The probability of each base of being unpaired is then reported in the form of a XML file, along with per-base Shannon entropies.<br/>
+Regions with higher Shannon entropies are likely to form alternative structures, and those with low Shannon entropies correspond to regions with well-defined RNA structures, or persistent single-strandedness (Siegfried *et al*., 2014).<br/>
+Shannon entropy is calculated as: <br/>
 
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo><msub><mi>p</mi><mi>i&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i</mi></msub></math>
+<br/>
+where *p<sub>i</sub>* is the probability of base *i* of being base-paired.
+<br/>
 # Usage
 To list the required parameters, simply type:
 
