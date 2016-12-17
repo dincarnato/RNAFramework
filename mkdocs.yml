@@ -3,6 +3,7 @@ pages:
     - 'Overview': 'index.md'
     - 'Framework components': 'components.md'
     - 'rf-index': 'rf-index.md'
+    - 'rf-map': 'rf-map.md'
     - 'rf-count': 'rf-count.md'
     - 'rf-norm': 'rf-norm.md'
     - 'rf-fold': 'rf-fold.md'

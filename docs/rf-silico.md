@@ -5,7 +5,7 @@ Shannon entropy is calculated as: <br/>
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo><msub><mi>p</mi><mi>i&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i</mi></msub></math>
 <br/>
 where *p<sub>i</sub>* is the probability of base *i* of being base-paired.
-<br/>
+<br/><br/>
 # Usage
 To list the required parameters, simply type:
 
