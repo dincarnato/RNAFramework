@@ -9,3 +9,6 @@ __rf-silico__     | Calculates the partition function folding for a given RNA, a
 __rf-modcall__    | Performs analysis of &Psi;-seq/Pseudo-seq and 2OMe-seq data
 __rf-peakcall__   | Performs peak calling of RNA immunoprecipitation (IP) experiments
 __rf-combine__    | Combines results of multiple experiments into a single profile
+
+<br/>
+![RNAFramework logo](http://www.rnaframework.com/images/overview.png)

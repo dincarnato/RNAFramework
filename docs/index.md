@@ -40,7 +40,8 @@ Please see <http://www.gnu.org/licenses/> for more information.
 ## Prerequisites
 
 - Linux/Mac system
-- Bowtie v1.1.2 (<http://bowtie-bio.sourceforge.net/index.shtml>)
+- Bowtie v1.1.2 (<http://bowtie-bio.sourceforge.net/index.shtml>), or
+  <br/>Bowtie v2.2.7 or greater (<http://bowtie-bio.sourceforge.net/bowtie2/index.shtml>)
 - SAMTools v1.2 or greater (<http://www.htslib.org/>)
 - BEDTools v2.0 or greater (<https://github.com/arq5x/bedtools2/>)
 - Cutadapt v1.10 or greater (<http://cutadapt.readthedocs.io/en/stable/index.html>)

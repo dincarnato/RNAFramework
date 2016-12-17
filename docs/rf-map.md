@@ -16,7 +16,7 @@ __-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files cre
 __-o__ *or* __--output-dir__ | string | Output directory for writing mapped reads in SAM/BAM format (Default: rf_map/)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-nb__ *or* __--no-bam__ | | Disables conversion of SAM files to BAM format
-__-b__ *or* __--bowtie__ | string | Path to ``bowtie`` v1/v2 executable (Default: assumes ``bowtie``/``bowtie2`` is in PATH)
+__-b__ *or* __--bowtie__ | string | Path to ``bowtie`` (or ``bowtie2``) executable (Default: assumes ``bowtie``/``bowtie2`` is in PATH)
 __-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes ``cutadapt`` is in PATH)
 __-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes ``samtools`` is in PATH)
  | | __Cutadapt options__
