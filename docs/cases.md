@@ -28,11 +28,11 @@ A folder named "*Hsapiens\_rRNA_bt/*" (or "*Hsapiens\_rRNA_bt2/*" in case Bowtie
 __3.__ Map reads to reference using ``rf-map``:
 
 ```bash
-$ rf-map --bowtie-norc --bowtie-trim5 5 --bowtie-index  Hsapiens\_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
+$ rf-map -bnr -b5 5 -bi  Hsapiens_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
 ```
 
 To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
 
 ```bash
-$ rf-map --bowtie2 --bowtie-norc --bowtie-trim5 5 --bowtie-index  Hsapiens\_rRNA_bt2/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
+$ rf-map -bnr -b5 5 -bi  Hsapiens_rRNA_bt2/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq --bowtie2
 ```
