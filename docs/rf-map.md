@@ -45,15 +45,15 @@ __-bl__ *or* __--bowtie-seedlen__ | int | Seed length (3 &le; *l* &le; 32, Defau
 __-bN__ *or* __--bowtie-N__ | int | Bowtie seed mismatches (0-1, Default: __0__)
 __-bD__ *or* __--bowtie-D__ | int | Maximum number of seed extension attempts (&ge;0, Default: __15__)
 __-bR__ *or* __--bowtie-R__ | int | Maximum number of re-seeding attempts for reads with repetitive seeds (&ge;0, Default: __2__)
-__-bmp__ *or* __--bowtie-mp__ | int[,int] | Maximum and minimum mismatch penalities (&ge;0, Default: 6,2)
-__-bdp__ *or* __--bowtie-dpad__ | int | Number of extra reference bases included on sides of the DP table (&ge;0, Default: 15)
-__-bdg__ *or* __--bowtie-rdg__ | int[,int] | Read's gap open and extend penalities (&ge;0, Default: 5,3)
-__-bfg__ *or* __--bowtie-rfg__ | int[,int] | Reference's gap open and extend penalities (&ge;0, Default: 5,3)
+__-bmp__ *or* __--bowtie-mp__ | int[,int] | Maximum and minimum mismatch penalities (&ge;0, Default: __6,2__)
+__-bdp__ *or* __--bowtie-dpad__ | int | Number of extra reference bases included on sides of the DP table (&ge;0, Default: __15__)
+__-bdg__ *or* __--bowtie-rdg__ | int[,int] | Read's gap open and extend penalities (&ge;0, Default: __5,3__)
+__-bfg__ *or* __--bowtie-rfg__ | int[,int] | Reference's gap open and extend penalities (&ge;0, Default: __5,3__)
 __-bs__ *or* __--bowtie-softclip__ | | Enables local alignment mode (Default: __entire read must align__)
 __-bma__ *or* __--bowtie-ma__ | int | Match bonus in local alignment mode (Default: __2__)
 
 !!! note "Important"
-    When using __Bowtie v2__ with paired-end reads, Bowtie's ``--no-mixed`` parameter is automatically added to discard those reads for which only one of the two mates can be mapped. Please check [Bowtie v2 documentation](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) for additional information.
-    
+    When using __Bowtie v1__, Bowtie's ``--best`` and ``--strata`` parameters are automatically added. Please check [Bowtie v1 documentation](http://bowtie-bio.sourceforge.net/manual.shtml) for additional information.
+
 !!! note "Important"
-    When using __Bowtie v2__ with paired-end reads, if 5'-end bases have been trimmed (``--bowtie-trim5``), Bowtie's ``--dovetail`` parameter is automatically added to allow reads to end before mate's start coordinate. Please check [Bowtie v2 documentation](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) for additional information.
+    When using __Bowtie v2__ with paired-end reads, Bowtie's ``--no-mixed`` parameter is automatically added to discard those reads for which only one of the two mates can be mapped. Please check [Bowtie v2 documentation](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) for additional information.
