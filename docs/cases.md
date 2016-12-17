@@ -4,10 +4,35 @@ __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA T
 
 ```bash
 # Download/decompress reads
-$ fastq-dump -A SRR2414087		# High dNTP sample
-$ fastq-dump -A SRR2414088		# Low dNTP sample
+$ fastq-dump -A SRR2414087		# High dNTP (1 mM) sample
+$ fastq-dump -A SRR2414088		# Low dNTP (4 nM) sample
 
 # Rename files
 $ mv SRR2414087_1.fastq HeLa_1mM_dNTP.fastq
 $ mv SRR2414088_1.fastq HeLa_4nM_dNTP.fastq 
+```
+
+__2.__ Prepare the reference index using ``rf-index``:
+
+```bash
+$ rf-index -pb 1 
+```
+
+This will create a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-index -pb 1 --bowtie2 
+```
+
+A folder named "*Hsapiens\_rRNA_bt/*" (or "*Hsapiens\_rRNA_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
+__3.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map --bowtie-norc --bowtie-trim5 5 --bowtie-index  Hsapiens\_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
+```
+
+To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-map --bowtie2 --bowtie-norc --bowtie-trim5 5 --bowtie-index  Hsapiens\_rRNA_bt2/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
 ```
