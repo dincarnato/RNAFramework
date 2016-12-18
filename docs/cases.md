@@ -21,7 +21,7 @@ $ rf-index -g hg38 -a refGene
 This will build a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
 
 ```bash
-$ rf-index -g hg38 -a refGene  --bowtie2 
+$ rf-index -g hg38 -a refGene --bowtie2 
 ```
 
 A folder named "*hg38\_refGene\_bt/*" (or "*hg38\_refGene\_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
@@ -44,7 +44,7 @@ $ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq 
 __4.__ Count RT-stops in both samples using ``rf-count``:
 
 ```bash
-$ rf-count -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
+$ rf-count -nm -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
 ```
 <br/>
 __5.__ Normalize data using ``rf-norm``:
@@ -67,8 +67,48 @@ $ rf-fold -g S1_vs_V1_norm/
 A folder named "*structurome/*" will be generated, containing two subdirectories:<br/><br/>
 - "*structures/*": inferred structures in dot-bracket notation<br/>
 - "*images/*": structure representations in PNG format
+<br/>
 
 # Structure data analysis #2 (DMS-MaPseq)
+
+__1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
+
+```bash
+# Download/decompress reads
+$ fastq-dump -A SRR3929629		# S. cerevisiae Tagmented rRNA
+
+# Rename file
+$ mv SRR3929629_1.fastq Sc_Tag_rRNA.fastq 
+```
+<br/>
+__2.__ Prepare the reference index using ``rf-index``. To download the pre-built Bowtie v2 *Saccharomyces cerevisiae* ribosomal RNAs reference index, simply type:
+
+```bash
+$ rf-index -pb 3 --bowtie2
+```
+
+__3.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map -bi Scerevisiae_rRNA_bt2/reference Sc_Tag_rRNA.fastq --bowtie2
+```
+<br/>
+__4.__ Count mutations using ``rf-count``:
+
+```bash
+$ rf-count -m -nm -f Scerevisiae_rRNA_bt2/reference.fa rf_map/Sc_Tag_rRNA.bam
+```
+<br/>
+__5.__ Normalize data using ``rf-norm``:
+
+```bash
+# Data will be normalized on A/C residues only, using Zubradt et al., 2016 
+# scoring method, and 90% Winsorising
+
+$ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
+```
+
+A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 
 # 2'-O-Methyl data analysis (2OMe-seq)
 

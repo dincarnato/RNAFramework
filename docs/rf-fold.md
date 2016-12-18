@@ -12,6 +12,7 @@ Parameter         | Type | Description
 ----------------: | :--: |:------------
 __-o__ *or* __--output-dir__ | string | Output directory for writing inferred structures (Default: structurome/)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
 __-ct__ *or* __--connectivity-table__ | | Writes predicted structures in CT format (Default: __Dot-bracket notation__)
 __-m__ *or* __--folding-method__ | int | Folding method (1-2, Default: __1__):<br/>__1.__ ViennaRNA <br/>__2.__ RNAstructure
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
