@@ -1,4 +1,76 @@
-# Analysis of 2'-O-Methyl data (2OMe-seq)
+# Structure data analysis #1 (PARS)
+
+__1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
+
+```bash
+# Download/decompress reads
+$ fastq-dump -A SRR972714		# Nuclease S1 sample
+$ fastq-dump -A SRR972715		# RNase V1 sample
+
+# Rename files
+$ mv SRR972714_1.fastq S1.fastq
+$ mv SRR972715_1.fastq V1.fastq 
+```
+<br/>
+__2.__ Prepare the reference index using ``rf-index``. To build the RefSeq gene annotation for *Homo sapiens* (hg38 assembly), simply type:
+
+```bash
+$ rf-index -g hg38 -a refGene 
+```
+
+This will build a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-index -g hg38 -a refGene  --bowtie2 
+```
+
+A folder named "*hg38\_refGene\_bt/*" (or "*hg38\_refGene\_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
+
+__3.__ Map reads to reference using ``rf-map`` (__Note:__ according to the GEO dataset's page, the last 51 nt of reads should be trimmed):
+
+```bash
+# Reads will be trimmed by 51 nt from their 3'-end, an mapped to transcripts
+# sense strand only, allowing a maximum of 20 equally scoring alignments
+
+$ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt/hg38_refGene S1.fastq V1.fastq
+```
+
+To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq --bowtie2
+```
+<br/>
+__4.__ Count RT-stops in both samples using ``rf-count``:
+
+```bash
+$ rf-count -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
+```
+<br/>
+__5.__ Normalize data using ``rf-norm``:
+
+```bash
+# Data will be normalized by default using Ding et al., 2014 
+# scoring method, and 2-8% normalization
+
+$ rf-norm -u rf_count/V1.rc -t rf_count/S1.rc -i rf_count/index.rci
+```
+<br/>
+__6.__ Perform transcriptome-wide inference of secondary structures usign ``rf-fold``:
+
+```bash
+# Inference will be performed by default according to Deigan et al., 2009,
+# using the ViennaRNA algorithm
+
+$ rf-fold -g S1_vs_V1_norm/
+```
+A folder named "*structurome/*" will be generated, containing two subdirectories:<br/><br/>
+- "*structures/*": inferred structures in dot-bracket notation<br/>
+- "*images/*": structure representations in PNG format
+
+# Structure data analysis #2 (DMS-MaPseq)
+
+# 2'-O-Methyl data analysis (2OMe-seq)
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
@@ -12,7 +84,7 @@ $ mv SRR2414087_1.fastq HeLa_1mM_dNTP.fastq
 $ mv SRR2414088_1.fastq HeLa_4nM_dNTP.fastq 
 ```
 <br/>
-__2.__ Prepare the reference index using ``rf-index``. To download a pre-build *Homo sapiens* ribosomal RNAs reference index, simply type:
+__2.__ Prepare the reference index using ``rf-index``. To download the pre-built *Homo sapiens* ribosomal RNAs reference index, simply type:
 
 ```bash
 $ rf-index -pb 1 
@@ -28,7 +100,6 @@ A folder named "*Hsapiens\_rRNA_bt/*" (or "*Hsapiens\_rRNA_bt2/*" in case Bowtie
 __3.__ Map reads to reference using ``rf-map``:
 
 ```bash
-# Specify FastQ files
 $ rf-map -bnr -b5 5 -bi  Hsapiens_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
 ```
 
@@ -49,3 +120,5 @@ __5.__ Calculate per-base score and ratio using ``rf-modcall``:
 ```bash
 $ rf-modcall -u rf_count/HeLa_1mM_dNTP.rc -t rf_count/HeLa_4nM_dNTP.rc -i rf_count/index.rci
 ```
+
+A folder named "*HeLa\_4nM\_dNTP\_vs\_HeLa\_1mM\_dNTP/*" will be generated, containing one XML file for each analyzed transcript.

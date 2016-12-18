@@ -26,7 +26,7 @@ __-i__ *or* __--ignore-reactivity__ | | Do not use ``rf-norm`` reactivity data t
 __-v__ *or* __--viennarna__ | string | Path to ViennaRNA ``RNAfold`` executable (Default: assumes ``RNAfold`` is in PATH)
 __-nlp__ *or* __--no-lonely-pairs__ | | Disallows lonely base-pairs
 __-ngu__ *or* __--no-closing-gu__ | | Disallows G:U wobbles at the end of helices
-__-cm__ *or* __--constraint-method__ | int | Method for converting ``rf-norm`` reactivities into pseudo-energies (1-2, Default: __1__):<br/>__1.__ Zarringhalam *et al*., 2012 <br/>__2.__ Deigan *et al*., 2009
+__-cm__ *or* __--constraint-method__ | int | Method for converting ``rf-norm`` reactivities into pseudo-energies (1-2, Default: __1__):<br/>__1.__ Deigan *et al*., 2009<br/>__2.__ Zarringhalam *et al*., 2012
  | | __Zarringhalam *et al*., 2012 method options__
 __-cc__ *or* __--constraint-conversion__ | int | Method for converting ``rf-norm`` reactivities into pairing probabilities (1-5, Default: __1__):<br/>__1.__ Skip normalization step (reactivities are treated as pairing probabilities) <br/>__2.__ Linear mapping according to Zarringhalam *et al*., 2012<br/>__3.__ Use a cutoff to divide nucleotides into paired, and unpaired<br/>__4.__ Linear model for converting reactivities into probabilities of being unpaired<br/>__5.__ Linear model for converting the logarithm of reactivities into probabilities of being unpaired
 __-bf__ *or* __--beta-factor__ | float | Sets the magnitude of penalities for deviations from the observed pairing probabilities (Default: __0.5__)
