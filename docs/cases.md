@@ -1,4 +1,4 @@
-# Structure data analysis #1 (PARS)
+# 1. PARS
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
@@ -69,7 +69,7 @@ A folder named "*structurome/*" will be generated, containing two subdirectories
 - "*images/*": structure representations in PNG format
 <br/>
 
-# Structure data analysis #2 (DMS-MaPseq)
+# 2. DMS-MaPseq
 
 __1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
@@ -110,7 +110,7 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 
-# 2'-O-Methyl data analysis (2OMe-seq)
+# 3. 2OMe-seq
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
