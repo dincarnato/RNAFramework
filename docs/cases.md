@@ -8,8 +8,8 @@ $ fastq-dump -A SRR972714		# Nuclease S1 sample
 $ fastq-dump -A SRR972715		# RNase V1 sample
 
 # Rename files
-$ mv SRR972714_1.fastq S1.fastq
-$ mv SRR972715_1.fastq V1.fastq 
+$ mv SRR972714.fastq S1.fastq
+$ mv SRR972715.fastq V1.fastq 
 ```
 <br/>
 __2.__ Prepare the reference index using ``rf-index``. To build the RefSeq gene annotation for *Homo sapiens* (hg38 assembly), simply type:
@@ -78,7 +78,7 @@ __1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA To
 $ fastq-dump -A SRR3929629		# S. cerevisiae Tagmented rRNA
 
 # Rename file
-$ mv SRR3929629_1.fastq Sc_Tag_rRNA.fastq 
+$ mv SRR3929629.fastq Sc_Tag_rRNA.fastq 
 ```
 <br/>
 __2.__ Prepare the reference index using ``rf-index``. To download the pre-built Bowtie v2 *Saccharomyces cerevisiae* ribosomal RNAs reference index, simply type:
@@ -110,58 +110,3 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 
-# 3. 2OMe-seq
-
-__1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
-
-```bash
-# Download/decompress reads
-$ fastq-dump -A SRR2414089		# High dNTP (1 mM) sample
-$ fastq-dump -A SRR2414090		# Low dNTP (4 nM) sample
-
-# Rename files
-$ mv SRR2414089.fastq HeLa_1mM_dNTP.fastq
-$ mv SRR2414090.fastq HeLa_4nM_dNTP.fastq 
-```
-<br/>
-__2.__ Prepare the reference index using ``rf-index``. To download the pre-built *Homo sapiens* ribosomal RNAs reference index, simply type:
-
-```bash
-$ rf-index -pb 1 
-```
-
-This will download a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
-
-```bash
-$ rf-index -pb 1 --bowtie2 
-```
-
-A folder named "*Hsapiens\_rRNA_bt/*" (or "*Hsapiens\_rRNA_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
-__3.__ Map reads to reference using ``rf-map``:
-
-```bash
-# Default 3' adapter's sequence has been changed according to
-# GEO dataset's page
-
-$ rf-map -ca3 AGATCGGAAGAGCACACGTCT -bnr -b5 5 -bi  Hsapiens_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
-```
-
-To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
-
-```bash
-$ rf-map -ca3 AGATCGGAAGAGCACACGTCT -bnr -b5 5 -bi  Hsapiens_rRNA_bt2/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq --bowtie2
-```
-<br/>
-__4.__ Count RT-stops in both samples using ``rf-count``:
-
-```bash
-$ rf-count -fh -f Hsapiens_rRNA_bt/reference.fa rf_map/*.bam
-```
-<br/>
-__5.__ Calculate per-base score and ratio using ``rf-modcall``:
-
-```bash
-$ rf-modcall -u rf_count/HeLa_1mM_dNTP.rc -t rf_count/HeLa_4nM_dNTP.rc -i rf_count/index.rci
-```
-
-A folder named "*HeLa\_4nM\_dNTP\_vs\_HeLa\_1mM\_dNTP/*" will be generated, containing one XML file for each analyzed transcript.
