@@ -182,7 +182,7 @@ if ($list ||
         
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Decompressing]";
         
-        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>decompression.log");
+        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > decompression.log");
         
         die "\n\n  [!] Error: Index decompression failed." .
             "\n             Please check the log file and ensure that the \"tar\" utility is in PATH.\n\n" if ($ret);
