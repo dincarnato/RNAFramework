@@ -1,0 +1,386 @@
+#!/usr/bin/perl
+
+##
+# RF Mod Call (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Performs calling of modified RNA residues from Psi-seq and 2OMe-seq experiments
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Path qw(mkpath rmtree);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Data::IO::XML;
+use RF::Data::IO::RC;
+use Term::Constants qw(:screen);
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my ($help, $output, $overwrite, $win,
+    $tosmaller, 
+    $meancov, $mediancov, $untreated, $treated,
+    $index, $error, $threads,
+    $rc, $queue, $decimals, $nan,
+    @index, @pool, @ids);
+
+my %results : shared;
+%results = ( cov      => 0,
+             incov    => 0,
+             diffuseq => 0,
+             nouid    => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"               => \$help,
+                "o|output-dir=s"       => \$output,
+                "ow|overwrite"         => \$overwrite,
+                "w|window=i"           => \$win,
+                "mc|mean-coverage=s"   => \$meancov,
+                "ec|median-coverage=s" => \$mediancov,
+                "u|untreated=s"        => \$untreated,
+                "t|treated=s"          => \$treated,
+                "i|index=s"            => \$index,
+                "D|decimals=i"         => \$decimals,
+                "p|processors=i"       => \$threads,
+                "n|nan=i"              => \$nan,
+                "ts|to-smaller"        => \$tosmaller ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default
+$threads //= 1;
+$win //= 150;
+$decimals //= 3;
+$nan //= 10;
+$meancov //= 0;
+$mediancov //= 0;
+
+die "\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
+die "\n  [!] Error: Provided treated sample RC file doesn't exist\n\n" if (!-e $treated);
+die "\n  [!] Error: No untreated sample RC file provided\n\n" if (!defined $untreated);
+die "\n  [!] Error: Provided untreated sample RC file doesn't exist\n\n" if (!-e $untreated);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
+                                                                                          $decimals > 10);
+die "\n  [!] Error: Coverage threshold for reporting positions as NaN must be an integer greater than 0" if ($nan < 1);
+die "\n  [!] Error: Window's size must be an integer >= 3" if ($win < 3);
+die "\n  [!] Error: Mean coverage value must be numeric\n\n" if (!isnumeric($meancov));
+die "\n  [!] Error: Mean coverage value must be >= 0\n\n" if (!ispositive($meancov));
+die "\n  [!] Error: Median coverage value must be numeric\n\n" if (!isnumeric($mediancov));
+die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($mediancov));
+
+if (!defined $output) {
+    
+    my ($uid, $tid);
+    $uid = fileparse($untreated, qr/\.[^.]*/);
+    $tid = fileparse($treated, qr/\.[^.]*/);
+    
+    $output = $tid . "_vs_" . $uid . "_sites/";
+    
+}
+else { $output =~ s/\/?$/\//; }
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+        
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error }); 
+    
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+@index = split(/,/, $index);
+
+# In case no index has been provided, we rebuild the index before generating the working threads
+# The new index will be generated in the same path of the rc file, with extension .rci
+if (!@index) {
+    
+    print "\n[+] Regenerating RTI index files...";
+    
+    $rc = RF::Data::IO::RC->new( file       => $untreated,
+                                 buildindex => 1 );
+    
+}
+
+$rc = RF::Data::IO::RC->new( file       => $treated,
+                             index      => @index ? $index[-1] : undef,
+                             buildindex => 1 );
+
+print "\n[+] Loading transcript IDs... ";
+
+@ids = $rc->ids();
+
+print scalar(@ids) . " transcripts loaded." .
+      "\n[+] Calling modified sites [Last: none]";
+
+$queue = Thread::Queue->new();
+
+@pool = map{ threads->create(\&call, $queue) } 1 .. $threads;
+
+$queue->enqueue($_) for (@ids);
+$queue->enqueue((undef) x $threads);
+
+$_->join() for(@pool);
+
+print "\n[+] Calling statistics:\n" .
+      "\n  [*] Covered transcripts:   " . $results{cov} .
+      "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffuseq} + $results{nocov} + $results{nouid}) . " total" .
+      "\n                             " . $results{incov} . " insufficient coverage";
+      "\n                             " . $results{diffuseq} . " mismatch between treated and untreated sample sequence" .
+      "\n                             " . $results{nouid} . " absent in untreated sample reference";
+      
+print "\n\n[+] All done.\n\n";
+
+sub call {
+    
+    my $queue = shift;
+    
+    my ($urc, $trc, $attributes, $scale);
+    
+    $urc = RF::Data::IO::RC->new( file  => $untreated,
+                                  index => @index ? $index[0] : $untreated . ".rci" );
+    
+    $trc = RF::Data::IO::RC->new( file  => $treated,
+                                  index => @index ? $index[-1] : $treated . ".rci"); 
+    
+    die "\n\n  [!] Error: Total mapped reads value not set in untreated RC file." .
+        "\n             Please rerun RF Count by disabling the -nm (or --no-mapped-count) option.\n\n" unless($urc->mappedreads());
+
+    die "\n\n  [!] Error: Total mapped reads value not set in treated RC file." .
+        "\n             Please rerun RF Count by disabling the -nm (or --no-mapped-count) option.\n\n" unless($trc->mappedreads());
+    
+    $scale = $tosmaller ? min($trc->mappedreads(), $urc->mappedreads()) / max($trc->mappedreads(), $urc->mappedreads()) :
+                          max($trc->mappedreads(), $urc->mappedreads()) / min($trc->mappedreads(), $urc->mappedreads());
+    
+    while (my $id = $queue->dequeue()) {
+        
+        my ($tentry, $sequence, $score, $ratio,
+            $xml, @tcounts, @tcov, @ucounts,
+            @ucov, @score, @ratio);
+        $tentry = $trc->read($id);
+        
+        if ($tentry->meancoverage() < $meancov ||
+            $tentry->mediancoverage() < $mediancov) {
+            
+            lock(%results);
+            $results{incov}++;
+            
+            next;
+            
+        }
+        
+        $sequence = $tentry->sequence();
+        @tcounts = $tentry->counts();
+        @tcov = $tentry->coverage();
+        
+        if (my $uentry = $urc->read($id)) {
+            
+            if ($uentry->sequence() ne $sequence) {
+                
+                lock(%results);
+                $results{diffuseq}++;
+        
+                next;
+                
+            }
+            
+            if ($uentry->meancoverage() < $meancov ||
+                $uentry->mediancoverage() < $mediancov) {
+                
+                lock(%results);
+                $results{incov}++;
+        
+                next;
+                
+            }
+            
+            @ucounts = $uentry->counts();
+            @ucov = $uentry->coverage();
+            
+        }
+        else {
+        
+            lock(%results);
+            $results{nouid}++;
+            
+            next;
+            
+        }
+        
+        @ratio = map { $tcov[$_] ? $tcounts[$_] / $tcov[$_] : 0 } 0 .. $#tcounts;
+        
+        if ($urc->mappedreads() > $trc->mappedreads()) { # Untreated is the bigger dataset
+            
+            if ($tosmaller) {
+            
+                @ucov = map { $_ * $scale } @ucov;
+                @ucounts = map { $_ * $scale } @ucounts;
+                
+            }
+            else {
+                
+                @tcov = map { $_ * $scale } @tcov;
+                @tcounts = map { $_ * $scale } @tcounts;
+                
+            }
+            
+        }
+        else { # Treated is the bigger dataset
+            
+            if ($tosmaller) {
+            
+                @tcov = map { $_ * $scale } @tcov;
+                @tcounts = map { $_ * $scale } @tcounts;
+                
+            }
+            else {
+                
+                @ucov = map { $_ * $scale } @ucov;
+                @ucounts = map { $_ * $scale } @ucounts;
+                
+            } 
+            
+        }
+        
+        for (0 .. $#tcounts) {
+            
+            my ($wstart, $wend, $wsize, $denom);
+            $wstart = $_ - int($win / 2) >= 0 ? $_ - int($win / 2) : 0;
+            $wend = $_ + int($win / 2) < @tcounts ? $_ + int($win / 2) : $#tcounts;
+            $wsize = $wend - $wstart - 1;
+            $denom = sum(@ucounts[$wstart .. $wend], @tcounts[$wstart .. $wend], -$ucounts[$_], -$tcounts[$_]);
+            push(@score, $denom ? $wsize * (($tcounts[$_] - $ucounts[$_]) / $denom) : 0);
+            
+        }
+        
+        # Set positions behind coverage threshold to NaN  
+        @score = map { $tcov[$_] >= $nan &&
+                       $ucov[$_] >= $nan ? max(0, $score[$_]) : undef } 0 .. $#tcov;
+        @ratio = map { $tcov[$_] >= $nan &&
+                       $ucov[$_] >= $nan ? $ratio[$_] : undef } 0 .. $#tcov;
+        
+     
+        $score = join(",", map { defined $_ ? sprintf("%." . $decimals . "f", $_) : "NaN" } @score);
+        $ratio = join(",", map { defined $_ ? sprintf("%." . $decimals . "f", $_) : "NaN" } @ratio);
+        
+        # For nicer formatting
+        $sequence =~ s/(\w{60})/$1\n/g;
+        $score =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        $ratio =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        
+        $attributes = { combined  => "FALSE",
+                        win       => $win,
+                        tool      => "rf-modcall",
+                        tosmaller => $tosmaller ? "TRUE" : "FALSE" };
+        
+        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
+                                   mode      => "w",
+                                   heading   => 1,
+                                   indent    => 0,
+                                   autoclose => 1,
+                                   verbosity => -1 );
+        
+        $xml->opentag("data", $attributes);
+        $xml->opentag("transcript", { id     => $id,
+                                      length => $tentry->length() });
+        $xml->opentag("sequence");
+        $xml->addtext($sequence);
+        $xml->closelasttag();
+        $xml->opentag("score");
+        $xml->addtext($score);
+        $xml->closelasttag();
+        $xml->opentag("ratio");
+        $xml->addtext($ratio);
+        $xml->write();       
+        
+        { lock(%results);
+          $results{cov}++;
+          
+          print CLRRET . "[+] Normalizing reactivities [Last: $id]"; }
+        
+    }
+    
+    threads->exit();
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Mod Call (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Performs calling of modified RNA residues from Psi-seq and 2OMe-seq experiments
+ 
+ Usage:   rf-modcall [Options]
+ 
+ Options                                         Description
+ -u  or --untreated        <string>              CMCT untreated (or high dNTP) sample RC file
+ -t  or --treated          <string>              CMCT treated (or low dNTP) sample RC file
+ -i  or --index            <string>[,<string>]   A comma separated (no spaces) list of RTI index files for the provided RC files.
+                                                 Note: RCI files must be provided in the order: 1. Untreated, 2. Treated.
+                                                       If a single RCI file is specified along with both untreated and treated sample,
+                                                       it will be used for all samples.
+                                                       If no RCI index is provided, it will be created at runtime, and stored in
+                                                       the same folder of the untreated, and treated samples.
+ -p  or --processors       <int>                 Number of processors to use (Default: 1)
+ -o  or --output-dir       <string>              Output directory (Default: <treated>_vs_<untreated>/)
+ -ow or --overwrite                              Overwrites output directory (if the specified path already exists)
+ -w  or --window           <int>                 Window's size for score calculation (>=3, Default: 150)
+ -ts or --to-smaller                             Scales the bigger sample to the smaller one
+                                                 Note: by default, the smaller dataset is scaled to the bigger one.
+ -mc or --mean-coverage    <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
+ -ec or --median-coverage  <float>               Discards any transcript with median coverage below this threshold (>=0, Default: 0)
+ -D  or --decimals         <int>                 Number of decimals for reporting scores/ratios (1-10, Default: 3)
+ -n  or --nan              <int>                 Transcript positions with read coverage behind this threshold will be reported as NaN in
+                                                 the reactivity profile (Default: 10)
+ 
+HELP
+    
+}

@@ -1,0 +1,500 @@
+#!/usr/bin/perl
+
+##
+# RF Combine (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Produces XML files using the probability of bases of being unpaired
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use Cwd;
+use File::Path qw(mkpath rmtree);
+use File::Spec;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+
+use lib $Bin . "/lib";
+
+use Core::Utils;
+use Core::Mathematics qw(:all);
+use Core::Threads::Utils;
+use Data::IO::Sequence;
+use Data::IO::XML;
+use Data::Sequence::Utils;
+use Term::Constants qw(:screen);
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads and try again\n\n" unless(exists $Config{useithreads});
+
+$|++;
+
+my ($tmp, $tmpdir, $multifasta, $t,
+    $io, $window, $offset, $decimals,
+    $output, $overwrite, $help, $error,
+    $viennarna, $partition, $data, $maxdist,
+    $probplot, $method, $madetmp, $keepbases,
+    $threads, $queue, $scoring, @pool);
+
+my %results : shared;
+%results = ( folded => 0,
+             failed => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                => \$help,
+                "f|fasta=s"             => \$multifasta,
+                "t|tmp-dir=s"           => \$tmpdir,
+                "p|processors=i"        => \$threads,
+                "e|temperature=s"       => \$t,
+                "w|window-size=i"       => \$window,
+                "wo|window-offset=i"    => \$offset,
+                "o|output-dir=s"        => \$output,
+                "d|decimals=i"          => \$decimals,
+                "ow|overwrite"          => \$overwrite,
+                "md|maximum-distance=i" => \$maxdist,
+                "v|viennarna=s"         => \$viennarna,
+                "pt|partition=s"        => \$partition,
+                "pp|probability-plot=s" => \$probplot,
+                "dp|data-path=s"        => \$data ,
+                "m|method=i"            => \$method,
+                "kb|keep-bases=s"       => \$keepbases ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default
+$t //= 37.0;
+$tmp //= randalphanum(0xf);
+$tmpdir //= "/tmp/";
+$decimals //= 3;
+$window //= 1e9;
+$offset //= 1e9;
+$maxdist //= 0;
+$madetmp //= 0;
+$method //= 1;
+$threads //= 1;
+$keepbases //= "N";
+$output //= "rf_silico/";
+$viennarna //= which("RNAfold");
+$partition //= which("partition-smp") || which("partition");
+$probplot //= which("ProbabilityPlot");
+$data //= $ENV{DATAPATH};
+
+die "\n  [!] Error: No FASTA file provided\n\n" unless(defined $multifasta);
+die "\n  [!] Error: Provided FASTA file doesn't exist\n\n" unless(-e $multifasta);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Temperature must be a positive value\n\n" unless(ispositive($t));
+die "\n  [!] Error: Temperature must be comprised between 0 and 100 degree Celsius\n\n" if ($t > 100);
+die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
+                                                                                          $decimals > 10);
+die "\n  [!] Error: Window's size must be an integer >= 3\n\n" if (!isint($window) &&
+                                                                   $window < 3);
+die "\n  [!] Error: Window's offset must be an integer >= 1\n\n" if ($offset < 1);
+die "\n  [!] Error: Window's offset cannot exceed window's size\n\n" if ($offset > $window);
+die "\n  [!] Error: Maximum distance value must be a positive integer\n\n" if (!ispositive($maxdist));
+die "\n  [!] Error: Invalid partition function calculation method\n\n" if ($method !~ m/^[1-3]$/);
+die "\n  [!] Error: Invalid reactive bases\n\n" if ($keepbases !~ m/^all$/i &&
+                                                    !isiupac($keepbases));
+
+$output =~ s/\/?$/\//;
+$keepbases = $keepbases =~ m/^all$/i ? "ACGU" : dna2rna(join("", sort(uniq(iupac2nt(rna2dna($keepbases))))));
+$scoring = $method == 1 ? "ViennaRNA" : ($method == 2 ? "RNAstructure" : "Combined");
+
+$SIG{__DIE__} = \&cleanup;
+
+print "\n[+] Checking method's requirements...";
+
+if ($method =~ m/^[13]$/) { # ViennaRNA
+    
+    my $ret = `$viennarna --version`;
+    
+    if ($ret =~ m/RNAfold (\d+)\.(\d+)/) {
+        
+        my ($v1, $v2) = ($1, $2);
+        
+        die "\n\n  [!] Error: RF Silico requires ViennaRNA package v2.2.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 ||
+                                                                                                                                    $v2 < 2);
+        
+    }
+    else { warn "\n\n  [!] Warning: Unable to detect ViennaRNA package version\n"; }
+    
+}
+
+if ($method =~ m/^[23]$/) { # RNAstructure
+
+    if (!defined $data) { die "\n\n  [!] Error: Environment variable DATAPATH is not set\n\n"; }
+    elsif (!-d $data) { die "\n\n  [!] Error: Provided DATAPATH directory doesn't exist\n\n"; }
+
+    if (!defined $partition) { die "\n\n  [!] Error: RNAstructure Partition is not in PATH\n\n"; }
+    elsif (!-e $partition) { die "\n\n  [!] Error: RNAstructure Partition doesn't exist\n\n"; }
+    elsif (!-x $partition) { die "\n\n  [!] Error: RNAstructure Partition is not executable\n\n"; }
+    
+    if (!defined $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not in PATH\n\n"; }
+    elsif (!-e $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot doesn't exist\n\n"; }
+    elsif (!-x $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not executable\n\n"; }
+
+    $ENV{DATAPATH} = $data;
+
+}
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+        
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error }); 
+    
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+if (!-e $tmpdir) {
+    
+    mkdir($tmpdir, 0755) or die "\n\n  [!] Error: Unable to create temporary directory\n\n";
+    $madetmp = 1;
+    
+}
+else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+
+$output = File::Spec->rel2abs($output) . "/";
+$tmpdir = File::Spec->rel2abs($tmpdir) . "/";
+
+$io = Data::IO::Sequence->new(file => $multifasta);
+
+print "\n[+] Calculating base-pairing probabilities [Last: none]";
+
+$queue = Thread::Queue->new();
+@pool = map{ threads->create(\&partcalc, $queue) } 1 .. $threads;
+
+while(my $entry = $io->read()) { $queue->enqueue($entry); }
+
+$queue->enqueue((undef) x $threads);
+$_->join() for (@pool);
+
+print "\n[+] Partition folding statistics:\n" .
+      "\n  [*] Folded transcripts: " . $results{folded} .
+      "\n  [*] Failed transcripts: " . $results{failed} . "\n";
+
+print "\n[+] Cleaning up temporary files...";
+
+cleanup();
+
+print "\n[+] All done.\n\n";
+
+sub partcalc {
+    
+    my $queue = shift;
+    
+    while(my $entry = $queue->dequeue()) {
+    
+        my ($id, $sequence, $len, $probability,
+            $shannon, $xml, $win, $off,
+            $failed, @bppm, @shannon);
+        $id = $entry->id();
+        $sequence = $entry->sequence();
+        $len = length($sequence);
+        $win = $window > $len ? $len : $window;
+        $off = $win == $len ? $win : $offset;
+        
+        for(my $i = 0; $i + $win - 1 < $len; $i += $off) {
+            
+            my ($subseq, @winprob, @winshannon, @part);
+            $subseq = substr($sequence, $i, $win);
+            @part = partition($id, $subseq);
+            @winprob = @{$part[0]};
+            @winshannon = @{$part[1]};
+            
+            if (!@winprob ||
+                !@winshannon) {
+                
+                lock(%results);
+                $results{failed}++;
+                $failed = 1;
+                
+            }
+            
+            for (0 .. $#winprob) {
+                
+                push(@{$bppm[$_ + $i]}, $winprob[$_]);
+                push(@{$shannon[$_ + $i]}, $winshannon[$_]);
+                
+            }
+            
+        }
+        
+        next if ($failed);
+        
+        if (@bppm < $len) {
+            
+            my ($subseq, $i, @winprob, @winshannon,
+                @part);
+            $i = $len - $win;
+            $subseq = substr($sequence, $i);
+            @part = partition($id, $subseq);
+            @winprob = @{$part[0]};
+            @winshannon = @{$part[1]};
+            
+            if (!@winprob ||
+                !@winshannon) {
+                
+                lock(%results);
+                $results{failed}++;
+                $failed = 1;
+                
+            }
+            
+            for (0 .. $#winprob) {
+                
+                push(@{$bppm[$_ + $i]}, $winprob[$_]);
+                push(@{$shannon[$_ + $i]}, $winshannon[$_]);
+                
+            }
+            
+        }
+        
+        next if ($failed);
+        
+        @bppm = map { mean(@{$_}) } @bppm;
+        @shannon = map { mean(@{$_}) } @shannon;
+        
+        while($sequence =~ m/[^$keepbases]/g) {
+            
+            undef($bppm[$-[0]]);
+            undef($shannon[$-[0]]);
+            
+        }
+        
+        $probability = join(",", map { defined $_ ? sprintf("%." . $decimals . "f", $_) : "NaN" } @bppm);
+        $shannon = join(",", map { defined $_ ? sprintf("%." . $decimals . "f", $_) : "NaN" } @shannon);
+            
+        # For nicer formatting
+        $sequence =~ s/(\w{60})/$1\n/g;
+        $probability =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        $shannon =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        
+        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
+                                   mode      => "w",
+                                   heading   => 1,
+                                   indent    => 0,
+                                   autoclose => 1,
+                                   verbosity => -1 );
+        
+        $xml->opentag("data", { combined  => "FALSE",
+                                algorithm => $scoring,
+                                keep      => $keepbases,
+                                offset    => $off,
+                                win       => $win,
+                                maxdist   => $maxdist, 
+                                tool      => "rf-silico" });
+        $xml->opentag("transcript", { id     => $id,
+                                      length => $len });
+        $xml->opentag("sequence");
+        $xml->addtext($sequence);
+        $xml->closelasttag();
+        $xml->opentag("probability");
+        $xml->addtext($probability);
+        $xml->closelasttag();
+        $xml->opentag("shannon");
+        $xml->addtext($shannon);
+        $xml->write();
+        
+        { lock(%results);
+          $results{folded}++;
+          
+          print CLRRET . "[+] Calculating base-pairing probabilities [Last: $id]"; }
+    
+    }
+    
+}
+
+sub partition {
+    
+    my ($id, $winseq) = @_;
+    
+    my ($cwd, $ret, $cmd, $tmpseq,
+        $tmpid, @mean, @shannon);
+    $cwd = cwd();
+    $tmpid = $tmp . "_" . $id;
+    $tmpseq = $tmpdir . $tmpid;
+    @mean = ([0]) x length($winseq);
+    @shannon = (0) x length($winseq);
+    
+    chdir($tmpdir);
+    
+    return unless(seq2fasta($tmpseq, $tmpid, $winseq));
+    
+    if ($method =~ m/^[13]$/) { # ViennaRNA
+    
+        $cmd = $viennarna . " -p -i " . $tmpseq . ".fa -T " . $t;
+        $cmd .= " --maxBPspan=" . $maxdist if ($maxdist);
+        $ret = `$cmd --noPS 2>&1`;
+        
+        open(my $fh, "<", $tmpdir . $tmpid . "_dp.ps") or return();
+        while(<$fh>) {
+            
+            if ($_ =~ m/^(\d+) (\d+) ([\d\.]+) ubox$/) {
+                
+                my ($i, $j, $p) = ($1, $2, $3);
+                
+                $p = $p ** 2;       # ViennaRNA returns sqrt(p(i,j))
+                $mean[$i-1]->[0] += $p;
+                $mean[$j-1]->[0] += $p;
+                
+            }
+            
+        }
+        close($fh);
+        
+    }
+    
+    if ($method =~ m/^[23]$/) { # RNAstructure
+        
+        my $pfs = $tmpdir . $tmp . "_" . $id . ".pfs";
+        $cmd = $partition . " " . $tmpseq . ".fa " . $pfs;
+        $cmd .= " -t " . ($t + 273.15);
+        $cmd .= " -md " . $maxdist if ($maxdist);
+        $ret = `$cmd 2>&1`;
+        
+        return() if ($ret !~ m/Single strand partition function complete\./);
+        
+        $cmd = $probplot . " -t " . $pfs . " " . $pfs . ".txt";
+        $ret = `$cmd 2>&1`;
+        
+        return() if ($ret !~ m/Probability dot plot complete\./);
+        
+        open(my $fh, "<", $pfs . ".txt") or return();
+        while(<$fh>) {
+            
+            if ($_ =~ m/^(\d+)\t(\d+)\t([\d\.]+)$/) {
+                
+                my ($i, $j, $p) = ($1, $2, $3);
+                
+                $p = 10 ** (-$p);      # ProbabilityPLot returns -log10(p(i,j))
+                $mean[$i-1]->[1] += $p;
+                $mean[$j-1]->[1] += $p;
+                
+            }
+            
+        }
+        close($fh);
+        
+    }
+    
+    unlink(glob($tmpdir . $tmp . "_" . $id . "*"));
+    
+    chdir($cwd);
+    
+    @mean = map { 1 - mean(@{$mean[$_]}) } (0 .. $#mean);
+    @shannon = map { -((1 - $_) * logarithm((1 - $_), 10)) } @mean;
+    
+    return(\@mean, \@shannon);
+    
+}
+
+sub seq2fasta {
+    
+    my ($file, $id, $sequence) = @_;
+    
+    eval {
+        
+        my ($io, $fasta);
+        $io = Data::IO::Sequence->new( file   => $file . ".fa",
+                                       mode   => "w",
+                                       flush  => 1,
+                                       format => "fasta" );
+        $fasta = Data::Sequence->new( id       => $id,
+                                      sequence => $sequence );
+        
+        $io->write($fasta);
+        
+    };
+    
+    if ($@) { return(); }
+    
+    return(1);
+    
+}
+
+sub cleanup {
+    
+    if ($madetmp) {
+    
+        rmtree($tmpdir, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+    }
+    else { unlink(glob($tmpdir . $tmp . "*")); }
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Silico (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Produces XML files using the probability of bases of being unpaired
+ 
+ Usage:   rf-silico [Options]
+ 
+ Options                                     Description
+ -f   or --fasta             <string>        Path to a FASTA file containing transcript sequences
+ -o   or --output-dir        <string>        Output directory (Default: rf_silico/)
+ -ow  or --overwrite                         Overwrites output directory (if the specified path already exists)
+ -t   or --tmp-dir           <string>        Temporary directory (Default: /tmp)
+ -p   or --processors        <int>           Number of processors to use for the analysis (Default: 1)
+ -m   or --method            <int>           Partition function calculation method (Default: 1): [1] ViennaRNA
+                                                                                                 [2] RNAstructure
+                                                                                                 [3] Combined
+                                             Note: method #3 calculates base-pair probabilities using both ViennaRNA and RNAstructure,
+                                                   and produces a XML file containing the per-base average of the two algorithms
+ -e   or --temperature       <float>         Temperature in Celsius degrees (Default: 37.0)
+ -md  or --maximum-distance  <int>           Sets the maximum pairing distance in nucleotides between transcript's residues (Default: 0 [No limit])
+ -v   or --viennarna         <string>        Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
+ -pr  or --partition         <string>        Path to RNAstructure Partition executable (Default: assumes Partition is in PATH)
+ -pp  or --probability-plot  <string>        Path to RNAstructure ProbabilityPlot executable (Default: assumes ProbabilityPlot is in PATH)
+ -dp  or --data-path         <string>        Path to RNAstructure data tables (Default: assumes DATAPATH environment variable is already set)
+ -w   or --window-size       <int>           Window for base-pair probability calculation (>=3, Default: full transcript)
+ -wo  or --window-offset     <int>           Offset for window sliding (Default: none)
+ -kb  or --keep-bases        <string>        Bases to report in the XML file (Default: N)
+                                             Note: excluded bases will be reported as NaN in the XML file
+ -d   or --decimals          <int>           Number of decimals for reporting reactivities (1-10, Default: 3)
+ 
+HELP
+    
+}

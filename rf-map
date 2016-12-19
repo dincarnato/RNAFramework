@@ -1,0 +1,655 @@
+#!/usr/bin/perl
+
+##
+# RF Map (v2.0.0b)
+# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
+#
+# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
+# Summary: Performs reads pre-processing and mapping
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Copy;
+use File::Path qw(mkpath rmtree);
+use File::Spec;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+
+use lib $Bin . "/lib";
+
+use Core::Utils;
+use Core::Mathematics qw(:all);
+use Core::Process::Queue;
+use Data::Sequence::Utils;
+use Term::Table;
+
+$|++;
+
+my ($tmp, $tmpdir, $output, $trim3,
+    $trim5, $bv, $bn, $ba,
+    $wt, $bi, $bc, $bD, $bN,
+    $bR, $bmp, $bdp, $bs,
+    $bma, $bnr, $bdg, $bfg, $ca5, $ca3,
+    $cl, $bowtie, $bowtie2, $cutadapt,
+    $samtools, $sam, $clipped, $help,
+    $overwrite, $bm, $nobam, $error,
+    $threads, $bseed, $processmanager, $madetmp,
+    $bnorc, $table, $bk, $cm,
+    $mp, $mo, @tmp, %spacer, %files);
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                  => \$help,
+                "t|tmp-dir=s"             => \$tmpdir,
+                "o|output-dir=s"          => \$output,
+                "ow|overwrite"            => \$overwrite,
+                "nb|no-bam"               => \$nobam,
+                "p|processors=i"          => \$threads,
+                "wt|working-threads=i"    => \$wt,
+                "b|bowtie=s"              => \$bowtie,
+                "c|cutadapt=s"            => \$cutadapt,
+                "s|samtools=s"            => \$samtools,
+                "cm|cutadapt-min-align=i" => \$cm,
+                "ca5|cutadapt-5adapter=s" => \$ca5,
+                "ca3|cutadapt-3adapter=s" => \$ca3,
+                "cl|cutadapt-len=i"       => \$cl,
+                "cp|clipped"              => \$clipped,
+                "b5|bowtie-trim5=i"       => \$trim5,
+                "b3|bowtie-trim3=i"       => \$trim3,
+                "bv|bowtie-v=i"           => \$bv,
+                "bn|bowtie-n=i"           => \$bn,
+                "ba|bowtie-all"           => \$ba,
+                "bm|bowtie-max=i"	      => \$bm,
+                "bi|bowtie-index=s"       => \$bi,
+                "bc|bowtie-chunkmbs=i"    => \$bc,
+                "bk|bowtie-multimap=i"    => \$bk,
+                "bN|bowtie-N=i"           => \$bN,
+                "bD|bowtie-D=i"           => \$bD,
+                "bR|bowtie-R=i"           => \$bR,
+                "bmp|bowtie-mp=s"         => \$bmp,
+                "bdp|bowtie-dpad=i"       => \$bdp,
+                "bs|bowtie-softclip"      => \$bs,
+                "bma|bowtie-ma=i"         => \$bma,
+                "bnr|bowtie-norc"         => \$bnr,
+                "bdg|bowtie-rdg=s"        => \$bdg,
+                "bfg|bowtie-rfg=s"        => \$bfg,
+                "mp|mapping-params=s"     => \$mp,
+                "mo|manual-only"          => \$mo,
+                "b2|bowtie2"              => \$bowtie2 ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default values
+$madetmp = 0;
+$tmp //= randalphanum(0xf);
+$tmpdir //= "/tmp/";
+$output //= "rf_map/";
+$wt //= 1;
+$threads //= 1;
+$bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
+$cutadapt //= which("cutadapt");
+$samtools //= which("samtools");
+$ca5 //= "CAAGTCTCAAGATGTCAGGCTGCTAG";
+$ca3 //= "TGGAATTCTCGGGTGCCAAGG";
+$cl //= 25;
+$cm //= 1;
+$trim5 //= 0;
+$trim3 //= 0;
+$bc //= 128;
+$bm //= 1;
+$bn //= $bowtie2 ? 1 : 2;
+$bseed //= $bowtie2 ? 22 : 28;
+$bN //= 0;
+$bD //= 15;
+$bR //= 2;
+$bmp //= "6,2";
+$bdg //= "5,3";
+$bfg //= "5,3";
+$bdp //= 15;
+$bma //= 2;
+$tmpdir =~ s/\/?$/\//;
+$output =~ s/\/?$/\//;
+$bc = 2147483647 if ($bc > 2147483647);
+$ca5 = revcomp($ca5) if (isdna($ca5));
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: No sample FastQ file provided\n\n" if (!@ARGV);
+die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) ||
+                                                                                     $wt < 1);
+# Cutadapt validation
+die "\n  [!] Error: No 5' adapter's sequence provided\n\n"if (!defined $ca5);
+die "\n  [!] Error: Invalid 5' adapter's sequence\n\n" if (!isdna($ca5));
+die "\n  [!] Error: No 3' adapter's sequence provided\n\n"if (!defined $ca3);
+die "\n  [!] Error: Invalid 3' adapter's sequence\n\n" if (!isdna($ca3));
+die "\n  [!] Error: No minimum read length provided\n\n" if (!defined $cl);
+die "\n  [!] Error: Minimum read length should be an integer >= 10\n\n" if ($cl < 10);
+die "\n  [!] Error: Minimum adapter alignment should be an integer > 0\n\n" if ($cm < 1);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+
+# Bowtie validation
+die "\n  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($trim5) ||
+                                                                              !isint($trim5));
+die "\n  [!] Error: 3'-end trimming value must be a positive integer\n\n" if (!ispositive($trim3) ||
+                                                                              !isint($trim3));
+die "\n  [!] Error: Parameter -bk must be an integer > 0\n\n" if (defined $bk &&
+                                                                  (!isint($bk) ||
+                                                                   !$bk));
+die "\n  [!] Error: Parameters -ba and -bk are mutually exclusive\n\n" if ($bk > 1 &&
+                                                                           $ba);
+
+if ($bowtie2) {
+    
+    die "\n  [!] Error: Bowtie seed length value must be an integer >= 3 and <= 32\n\n" if (!isint($bseed) ||
+                                                                                            $bseed < 3 ||
+                                                                                            $bseed > 32);
+    die "\n  [!] Error: Bowtie seed mismatches value must be 0 or 1\n\n" if ($bN !~ m/^[01]$/);
+    die "\n  [!] Error: Bowtie maximum seed extension attempts value must be an integer >= 0\n\n" if (!isint($bD) ||
+                                                                                                      !ispositive($bD));
+    die "\n  [!] Error: Bowtie maximum re-seeding attempts value must be an integer >= 0\n\n" if (!isint($bR) ||
+                                                                                                  !ispositive($bR));
+    die "\n  [!] Error: Invalid Bowtie maximum and minimum mismatch penalities format\n\n" if ($bmp !~ m/^\d+(?:,\d+)$/);
+    die "\n  [!] Error: Invalid Bowtie read's gap open and extend penalities format\n\n" if ($bdg !~ m/^\d+(?:,\d+)$/);
+    die "\n  [!] Error: Invalid Bowtie reference's gap open and extend penalities format\n\n" if ($bfg !~ m/^\d+(?:,\d+)$/);
+    die "\n  [!] Error: Bowtie number of extra DP table bases must be an integer >= 0\n\n" if (!isint($bdp) ||
+                                                                                               !ispositive($bdp));
+    die "\n  [!] Error: Bowtie match bonus in local alignment mode must be an integer >= 0\n\n" if (!isint($bma) ||
+                                                                                                    !ispositive($bma));
+    
+}
+else {
+    
+    die "\n  [!] Error: Bowtie seed length value must be an integer >= 5\n\n" if (!isint($bseed) ||
+                                                                                  $bseed < 5);
+    die "\n  [!] Error: Bowtie mismatches value must be an integer comprised between 0 and 3\n\n" if ((defined $bv &&
+                                                                                                       $bv !~ m/^[0-3]$/) ||
+                                                                                                      (defined $bn &&
+                                                                                                       $bn !~ m/^[0-3]$/));
+    
+}
+
+if ($mp) { # Evaluate additional mapping parameters
+    
+    my $ret = `$bowtie $mp 2>&1`;
+    
+    die "\n  [!] Error: Invalid additional mapping parameters (\"" . $mp . "\")." .
+        "\n             Please check aligner's documentation for detailed parameters description\n\n" if (($bowtie2 &&
+                                                                                                           $ret =~ m/Error: Encountered internal Bowtie 2 exception/) ||
+                                                                                                          (!$bowtie2 &&
+                                                                                                           $ret =~ m/bowtie: unrecognized option/));
+    
+}
+
+
+warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
+
+if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
+elsif (!-e $samtools) { die "\n  [!] Error: samtools doesn't exist\n\n"; }
+elsif (!-x $samtools) { die "\n  [!] Error: samtools is not executable\n\n"; }
+else {
+    
+    my $ret = `$samtools 2>&1`;
+    
+    if ($ret =~ m/Version: (.+)$/m) {
+        
+        my $version = $1;
+        
+        die "\n  [!] Error: RF Count requires SAMTools v1 or greater (Detected: v" . $version . ")\n\n" if (substr($version, 0, 1) < 1);
+        
+    }
+    else { warn "\n  [!] Warning: Unable to detect SAMTools version\n"; }
+    
+}
+
+$SIG{__DIE__} = \&cleanup;
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error }); 
+    
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+if (!-e $tmpdir) {
+    
+    mkpath($tmpdir, { mode  => 0755,
+                      error => \$error });
+    
+    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+    
+    $madetmp = 1;
+    
+}
+else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+
+##
+# Prepare files
+##
+
+$table = Term::Table->new(indent => 2);
+$table->head("Sample", "Type", "File(s)");
+
+print "\n[+] Validating FastQ files:\n\n";
+
+foreach my $sample (uniq(@ARGV)) {
+    
+    my ($file, @sample);
+    @sample = split(/,/, $sample);
+    $file = (fileparse($sample[0], qr/\.[^.]*/))[0];
+    $file =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
+    
+    for (@sample) {
+    
+        die "  [!] Error: Specified sample file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_);
+        die "  [!] Error: Sample file \"" . $_ . "\" is not a valid FastQ file\n\n" unless(checkfq($_));
+        
+    }
+    
+    push(@tmp, { path   => $sample[0],
+                 file   => $file,
+                 paired => @sample == 2 ? 1 : 0,
+                 path2  => @sample == 2 ? $sample[1] : undef,
+                 file2  => @sample == 2 ? (fileparse($sample[1], qr/\.[^.]*/))[0] : undef });
+    
+    $files{$file} = $#tmp;
+    $spacer{$file} = length($file);
+    
+    $table->row($file,
+                @sample == 2 ? "Paired-end" : "Single-read",
+                @sample == 2 ? join(",", (fileparse($sample[0], qr/\.[^.]*/))[0], (fileparse($sample[1], qr/\.[^.]*/))[0]) : (fileparse($sample[0], qr/\.[^.]*/))[0]);
+    
+}
+
+%spacer = map { $_ => 1 + max(values %spacer) - $spacer{$_} } (keys %spacer);
+
+$table->print();
+
+print "\n";
+
+# Check if we have a reference index and all required tools
+if (defined $bi) {
+
+    my ($ret, $suffix);
+
+    if (!defined $bowtie) { die "\n  [!] Error: " . ($bowtie2 ? "bowtie2" : "bowtie") . " is not in PATH\n\n"; }
+    elsif (!-e $bowtie) { die "\n  [!] Error: " . ($bowtie2 ? "bowtie2" : "bowtie") . " doesn't exist\n\n"; }
+    elsif (!-x $bowtie) { die "\n  [!] Error: " . ($bowtie2 ? "bowtie2" : "bowtie") . " is not executable\n\n"; }
+        
+    if (!defined $cutadapt) { die "\n  [!] Error: cutadapt is not in PATH\n\n"; }
+    elsif (!-e $cutadapt) { die "\n  [!] Error: cutadapt doesn't exist\n\n"; }
+    elsif (!-x $cutadapt) { die "\n  [!] Error: cutadapt is not executable\n\n"; }
+    
+    $ret = `$bowtie --version 2>&1`;
+    
+    if ($ret =~ m/version (.+)$/m) {
+        
+        my $v = $1;
+        
+        if (($bowtie2 && substr($v, 0, 1) == 1) ||
+            (!$bowtie2 && substr($v, 0, 1) == 2)) {
+                
+            warn "\n  [!] Warning: Bowtie " . ($bowtie2 ? "v2" : "v1") . " was expected, but v" . $v . " was detected." .
+                 "\n               Automatically switching to v" . substr($v, 0, 1) . "\n";
+                     
+            $bowtie2 = substr($v, 0, 1) == 2 ? 1 : 0;
+                
+        }
+        
+    }
+    else { warn "\n  [!] Warning: Unable to detect Bowtie version\n"; }
+    
+    $suffix = $bowtie2 ? "bt2" : "ebwt";
+    
+    # When checking whether index files exist, we use a glob() because:
+    # Bowtie indices can be either *.ebwt or *.ebwt1
+    # Bowtie2 indices can be either *.bt2 or *.bt21
+    for(map { $_ . $suffix } qw(.1. .2. .3. .4. .rev.1. .rev.2.)) { die "\n  [!] Error: Bowtie " . ($bowtie2 ? "v2" : "v1") .
+                                                                        " index file \"" . $bi . $_ . "\" doesn't exist\n\n" if (!-e (glob($bi . $_ . "*"))[0]); }
+    
+}
+else { die "\n  [!] Error: No Bowtie index provided\n\n"; }
+
+# Starts the process manager
+$processmanager = Core::Process::Queue->new( processors => $threads,
+                                             stderr     => "/dev/null",
+                                             verbosity  => -1 );
+
+##
+# FastQ processing
+##
+
+print "\n[+] Processing FastQ files...";
+
+if (!$clipped) {
+
+    print "\n[+] Clipping adapter's sequence from sequencing reads...\n";
+    
+    $processmanager->onstart(sub { print "\n  [-] Processing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+    
+    foreach my $sample (@tmp) {
+        
+        $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . " -a " . $ca3 . " -A " . $ca5 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
+                                                                 $cutadapt . " -a " . $ca3 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
+                                  id      => $sample->{file},
+                                  stdout  => "/dev/null" );
+    
+        $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
+        $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq" if ($sample->{paired});
+    
+    }
+    
+    $processmanager->start();
+    $processmanager->waitall();
+    
+    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform adapter clipping on sample \"" . $sample->id() . "\"." .
+                                                          "\n             Please check input file's format/quality and try again.\n\n" if ($sample->exitcode()); }
+    
+    print "\n";
+
+}
+else {
+
+    print "\n[+] Input FastQ files are already clipped. Skipping adapter clipping...";
+    
+    foreach my $sample (@tmp) {
+        
+        system("ln -s \"" . File::Spec->rel2abs($sample->{path}) . "\" \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".fq\"");
+        
+        $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
+        
+        if ($sample->{paired}) {
+            
+            system("ln -s \"" . File::Spec->rel2abs($sample->{path2}) . "\" \"" . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq\"");
+            
+            $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq";
+            
+        }
+        
+    }
+
+}
+
+##
+# Reads mapping
+##
+
+print "\n[+] Mapping reads to transcriptome...\n";
+
+$processmanager->onstart(sub { print "\n  [-] Mapping sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+    
+foreach my $sample (@tmp) {
+    
+    # In the future BWA support will be added:
+    # bwa mem -t 40 bwa/index/reference.fa NT.fastq | samtools view -@6 -Sub - | tee >(samtools flagstat - > stats.out) > aln.sam
+    # This allows generating mapping statistics while mapping reads
+    
+    my $command = $bowtie . " -p " . $wt;
+    
+    if (!$mo) {
+    
+        $command .= " -3 " . $trim3 if ($trim3);
+        $command .= " -5 " . $trim5 if ($trim5);
+        $command .= " --norc" if ($bnorc);
+        $command .= " -a" if ($ba);
+        $command .= " -k " . $bk if ($bk);
+        $command .= $bowtie2 ? " -L " . $bseed : " -l " . $bseed;
+        
+    }
+    
+    if ($bowtie2) { # Bowtie v2
+        
+        if (!$mo) {
+        
+            $command .= " -N " . $bN . " -D " . $bD . " -R " . $bR . " --mp " . $bmp . " --dpad " . $bdp;
+            $command .= " --local" if ($bs);
+            $command .= " --ma " . $bma if ($bs);
+            
+        }
+
+        $command .= " --no-mixed" if ($sample->{paired});
+        $command .= " --no-unal -x " . $bi . " -S \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\""; 
+        
+    }
+    else { # Bowtie v1
+    
+        if (!$mo) {
+        
+            $command .= defined $bv ? " -v " . $bv : " -n " . $bn;
+            $command .= " -m " . $bm . "  --best --strata --chunkmbs " . $bc;
+        
+        }
+        
+        $command .= " -S \"" . $bi . "\"";
+        
+    }
+    
+    $command .= " " . $mp if (defined $mp);
+    $command .= $sample->{paired} ? " -1 \"" . $sample->{path} . "\" -2 \"" . $sample->{path2} . "\"" : " \"" . $sample->{path} . "\"";
+    $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
+    
+    $processmanager->enqueue( command => $command,
+                              id      => $sample->{file},
+                              stderr  => $tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log" );
+
+}
+
+$processmanager->start();
+$processmanager->waitall();
+
+while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: An error has occurred while mapping sample \"" . $sample->id() . "\" reads to transcriptome\n\n" if ($sample->exitcode()); }
+
+print "\n\n[+] Mapping statistics:\n";
+
+foreach my $sample (@tmp) {
+    
+    my (@stats, $total);
+    @stats = bowtie_log($tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log");
+    $total = sum(@stats[0..2]);
+    
+    die "\n  [!] All reads for sample \"" . $sample->{file} . "\" have failed to map." .
+        "\n      Please check the transcriptome assembly and try again.\n\n" if ($stats[3] == 0);
+    
+    @stats = map { sprintf("%.2f", $_ / $total * 100) . "\%" } @stats;
+    
+    print "\n  [*] Sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : ($ba ? "]" : "; Suppressed: " . $stats[2] . "]"));
+    
+    $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file}  . ".sam";
+    
+}
+
+print "\n\n[+] Sorting " . ($nobam ? "SAM" : "BAM") . " files...\n";
+
+$processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . ($nobam ? ".sam" : ".bam") . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+
+foreach my $sample (@tmp) {
+    
+    my $path = $output . $sample->{file} . ($nobam ? ".sam" : ".bam");
+    
+    $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "sam" : "bam") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{file} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
+                              id      => $sample->{file} );
+    
+    $sample->{path} = $path;
+    
+}
+
+$processmanager->start();
+$processmanager->waitall();
+
+while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
+
+print "\n\n[+] All done.\n\n";
+
+sub cleanup {
+    
+    if ($madetmp) {
+    
+        rmtree($tmpdir, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+    }
+    else { unlink(glob($tmpdir . $tmp . "*")); }
+    
+}
+
+sub bowtie_log { 
+    
+    my $log = shift;
+    
+    my @stats = (0, 0, 0, 0);
+    
+    open(my $fh, "<", $log) or die "\n  [!] Error: Unable to open Bowtie log file (" . $! . ")\n\n";
+    while(my $row = <$fh>) {
+        
+        if ($bowtie2) {
+            
+            if ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? exactly 1 time/) { $stats[0] = $1; }
+            elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? 0 times/) { $stats[1] = $1; }
+            elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? >1 times/) { $stats[2] = $1; }
+            
+        }
+        else {
+            
+            if ($row =~ m/reads with at least one reported alignment: (\d+) /) { $stats[0] = $1; }
+            elsif ($row =~ m/reads that failed to align: (\d+) /) { $stats[1] = $1; }
+            elsif ($row =~ m/reads with alignments suppressed due to -m: (\d+) /) { $stats[2] = $1; }
+            
+        }
+        
+    }
+    close($fh);
+    
+    $stats[3] = $bowtie2 ? $stats[0] + $stats[2] : $stats[0];
+    
+    return(@stats);
+    
+}
+
+sub checkfq {
+    
+    my $file = shift;
+    
+    my ($type);
+    
+    if ($file !~ m/\.(fq|fastq)$/i) {
+    
+        my (@rows);
+    
+        open(my $fh, "<" . $file) or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        for (0 .. 3) { $rows[$_] = <$fh>; }
+        close($fh);
+        
+        return if ($rows[0] !~ m/^@/ ||
+                   !isdna($rows[1]) ||
+                   $rows[2] !~ m/^\+/);
+    }
+    
+    return(1);
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Map (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Performs reads pre-processing and mapping
+ 
+ Usage:   rf-map [Options] Sample1_R1.fastq[,Sample1_R2.fastq] ... Samplen_R1.fastq[,Samplen_R2.fastq] 
+ 
+ Options                                      Description
+ -b2 or --bowtie2                             Uses Bowtie v2 for reads mapping (Default: Bowtie v1)
+ -p  or --processors           <int>          Number of processors to use (Default: 1)
+ -wt or --working-threads      <int>          Number of working threads to use for each instance of the aligner software (Default: 1).
+                                              Note: RF Map executes 1 instance of the aligner for each processor specified by -p.
+                                                    At least -p <processors> * -wt <threads> processors are required.
+ -t  or --tmp-dir              <string>       Temporary directory (Default: /tmp)
+ -o  or --output-dir           <string>       Output directory (Default: rf_map/)
+ -ow or --overwrite                           Overwrites output directory (if the specified path already exists)
+ -nb or --no-bam                              Disables mapped SAM files conversion to BAM format
+ -b  or --bowtie               <string>       Path to Bowtie v1/v2 executable (Default: assumes Bowtie is in PATH)
+ -c  or --cutadapt             <string>       Path to Cutadapt executable (Default: assumes Cutadapt is in PATH)
+ -s  or --samtools             <string>       Path to SAMTools executable (Default: assumes SAMTools is in PATH)
+ 
+ Cutadapt options
+ -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: CAAGTCTCAAGATGTCAGGCTGCTAG)
+                                             Note: Sequence of 5' adapter will be automatically reverse-complemented
+ -ca3 or --cutadapt-3adapter   <string>      Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG) 
+ -cl  or --cutadapt-len        <int>         Minimum length to keep reads after clipping (>=10, Default: 25)
+ -cm  or --cutadapt-min-align  <int>         Minimum alignment in nt to adapter's sequence (>0, Default: 1)
+ -cp  or --clipped                           Assumes that the provided FastQ files have been already clipped
+ 
+ Mapping options
+ -mp  or --mapping-params      <string>      Manually specify additional aligner parameters (e.g. -mp "-n 2 -l 15")
+                                             Note: for a complete list of aligner's parameters, please check aligner's documentation
+ -mo  or --manual-only                       Only uses manually specified aligner's parameters.
+                                             Any other parameter, except -bi (or --bowtie-index), will be ignored
+ -bk  or --bowtie-k            <int>         Reports up to this number of mapping positions for reads (Default: disabled)
+ -ba  or --bowtie-all                        Reports all mapping positions for reads (Default: disabled)
+ -bnr or --bowtie-norc                       Maps only to transcript's sense strand (Default: both strands)
+ -b5  or --bowtie-trim5        <int>         Number of bases to trim from 5'-end of reads (>=0 bases, Default: 0)
+ -b3  or --bowtie-trim3        <int>         Number of bases to trim from 3'-end of reads (>=0 bases, Default: 0)
+ -bi  or --bowtie-index        <string>      Path to transcriptome reference index
+ 
+ |
+ +- Bowtie v1 options
+    -bl  or --bowtie-seedlen      <int>            Seed length (>=5, Default: 28)
+    -bn  or --bowtie-n            <int>            Uses Bowtie in -n mode (0-3, Default: 2)
+    -bv  or --bowtie-v            <int>            Uses Bowtie in -v mode (0-3, Default: disabled)
+    -bm  or --bowtie-max          <int>            Discards alignment if more than this number of alignments exist (Default: 1)
+    -bc  or --bowtie-chunkmbs     <int>            Maximum MB of RAM for best-first search frames (Default: 128)
+    
+ |
+ +- Bowtie v2 options
+    -bl  or --bowtie-seedlen      <int>            Seed length (3<=l<=32, Default: 22)
+    -bN  or --bowtie-N            <int>            Bowtie seed mismatches (0-1 mismatches, Default: 1)
+    -bD  or --bowtie-D            <int>            Maximum number of seed extension attempts (>=0, Default: 15)
+    -bR  or --bowtie-R            <int>            Maximum number of re-seeding attempts for reads with repetitive seeds (>=0, Default: 2)
+    -bmp or --bowtie-mp           <int>[,<int>]    Maximum and minimum mismatch penalities (>=0, Default: 6,2)
+    -bdp or --bowtie-dpad         <int>            Number of extra reference bases included on sides of the DP table (>=0, Default: 15)
+    -bdg or --bowtie-rdg          <int>[,<int>]    Read's gap open and extend penalities (>=0, Default: 5,3)
+    -bfg or --bowtie-rfg          <int>[,<int>]    Reference's gap open and extend penalities (>=0, Default: 5,3)
+    -bs  or --bowtie-softclip                      Enables local alignment mode (Default: entire read must align)
+    -bma or --bowite-ma           <int>            Match bonus in local alignment mode (>=0, Default: 2)
+ 
+ 
+HELP
+    
+}
+

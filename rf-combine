@@ -1,0 +1,526 @@
+#!/usr/bin/perl
+
+##
+# RF Combine (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Combines multiple experiments into a single XML profile
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Path qw(mkpath rmtree);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+use XML::LibXML;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Core::Utils;
+use Data::IO::XML;
+use Term::Constants qw(:screen);
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads and try again\n\n" unless(exists $Config{useithreads});
+
+$|++;
+
+my ($output, $overwrite, $stdev, $help,
+    $error, $threads, $queue, $decimals,
+    @xml, @pool, %xml);
+
+my %results : shared;
+%results = ( diffseq    => 0,
+             diffscore  => 0,
+             diffnorm   => 0,
+             diffoffset => 0,
+             diffwin    => 0,
+             difftool   => 0,
+             failed     => 0,
+             combined   => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"         => \$help,
+                "o|output-dir=s" => \$output,
+                "ow|overwrite"   => \$overwrite,
+                "s|stdev"        => \$stdev,
+                "p|processors=i" => \$threads,
+                "d|decimals=i"   => \$decimals ) or help(1);
+    
+    @xml = uniq(@ARGV);
+
+};
+
+help() if ($help);
+
+# Default
+$output //= "combined";
+$decimals //= 3;
+$threads //= 1;
+
+$output =~ s/\/?$/\// if (defined $output);
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: No output directory specified\n\n" unless(defined $output);
+die "\n  [!] Error: Not enough XML directories/files specified\n\n" if (@xml < 2);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
+                                                                                          $decimals > 10);
+
+print "\n[+] Importing input XML directories\/files...";
+
+for (@xml) {
+    
+    die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $_);
+    
+    if (-d $_) {
+        
+        $_ =~ s/\/?$/\//;
+        
+        opendir(my $dh, $_) or die "\n\n  [!] Error: Unable to read from input directory \"" . $_ . "\" (" . $! . ")\n\n";
+        while(my $file = readdir($dh)) {
+        
+            next if ($file !~ m/\.xml$/);
+            
+            $file =~ s/\.xml//;
+            $xml{$file}++;
+            
+        }
+        close($dh);
+        
+    }
+    else { $xml{(fileparse($_, ".xml"))[0]}++; }
+    
+}
+
+# Delete all transcripts that are not common to all XML directories
+for (keys %xml) { delete($xml{$_}) if ($xml{$_} != @xml); }
+
+print " " . (keys %xml) . " common transcripts.";
+
+die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %xml);
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+        
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error }); 
+    
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+print "\n[+] Combining reactivities [Last: none]";
+
+$queue = Thread::Queue->new();
+
+@pool = map{ threads->create(\&combine, $queue) } 1 .. $threads;
+
+$queue->enqueue($_) for (keys %xml);
+$queue->enqueue((undef) x $threads);
+
+$_->join() for(@pool);
+
+print "\n[+] Combination statistics:\n" .
+      "\n  [*] Combined transcripts:  " . $results{combined} .
+      "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
+      "\n                             " . ($results{failed} - $results{diffseq} - $results{diffscore} - $results{diffnorm} - $results{difftool}) . " XML parsing failed" .
+      "\n                             " . $results{difftool} . " mismatch between analysis tools" .
+      "\n                             " . $results{diffseq} . " mismatch between transcript sequences" .
+      "\n                             " . $results{diffscore} . " mismatch between scoring methods" .
+      "\n                             " . $results{diffnorm} . " mismatch between normalization methods" .
+      "\n                             " . $results{diffwin} . " mismatch between window sizes" .
+      "\n                             " . $results{diffoffset} . " mismatch between window offsets";
+
+print "\n\n[+] All done.\n\n";
+
+sub combine {
+    
+    my $queue = shift;
+    
+    while (my $id = $queue->dequeue()) {
+        
+        my ($xmlref, $sequence, $scoring, $reactive,
+            $norm, $xml, $mean1, $stdev1,
+            $mean2, $stdev2, $attributes, $offset,
+            $win, $remap, $tool, $reactive2,
+            $algorithm, @values1, @values2, @mean1,
+            @stdev1, @mean2, @stdev2);
+        
+        for (@xml) {
+            
+            my $file = -d $_ ? $_ . $id . ".xml" : $_;
+            
+            eval {
+                
+                no warnings;
+                
+                my ($sequence2, $scoring2, $norm2, $win2,
+                    $offset2, $remap2, $tool2, $algorithm2);
+                
+                $xmlref = XML::LibXML->load_xml(location => $file);
+                $tool2 = $xmlref->findnodes("/data/\@tool");
+                $sequence2 = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
+                $norm2 = $xmlref->findnodes("/data/\@norm")->to_literal();
+                $scoring2 = $xmlref->findnodes("/data/\@scoring")->to_literal();
+                $win2 = $xmlref->findnodes("/data/\@win")->to_literal();
+                $offset2 = $xmlref->findnodes("/data/\@offset")->to_literal();
+                $remap2 = $xmlref->findnodes("/data/\@remap")->to_literal();
+                $reactive2 = $xmlref->findnodes("/data/\@reactive")->to_literal() || $xmlref->findnodes("/data/\@keep")->to_literal();    
+                $algorithm2 = $xmlref->findnodes("/data/\@algorithm")->to_literal();
+            
+                $sequence2 =~ s/\s+?//g;
+
+                $tool = $tool2 if (!defined $tool);
+                $sequence = $sequence2 if (!defined $sequence);
+                $scoring = $scoring2 if (!defined $scoring);
+                $norm = $norm2 if (!defined $norm);
+                $win = $win2 if (!defined $win);
+                $offset = $offset2 if (!defined $offset);
+                $remap = $remap2 if (!defined $remap);
+                $algorithm = $algorithm2 if (!defined $algorithm);
+                $reactive .= $reactive2;
+                
+                if ($tool ne $tool2) {
+                    
+                    lock(%results);
+                    $results{difftool}++;
+                    
+                    die;
+                    
+                }
+                
+                if ($tool ne "rf-modcall") {
+                
+                    if ($scoring ne $scoring2) {
+                        
+                        lock(%results);
+                        $results{diffscore}++;
+                        
+                        die;
+                        
+                    }
+                    
+                    if ($norm ne $norm2 ||
+                        ($norm eq $norm2 &&
+                         $remap != $remap2)) {
+                        
+                        lock(%results);
+                        $results{diffnorm}++;
+                        
+                        die;
+                        
+                    }
+                    
+                    if ($offset != $offset2) {
+                        
+                        lock(%results);
+                        $results{diffoffset}++;
+                        
+                        die;
+                        
+                    }
+                
+                }
+                
+                if ($sequence ne $sequence2) {
+                    
+                    lock(%results);
+                    $results{diffseq}++;
+                    
+                    die;
+                    
+                }
+                
+                if ($win != $win2) {
+                    
+                    lock(%results);
+                    $results{diffwin}++;
+                    
+                    die;
+                    
+                }
+                
+                $algorithm = "Combined" if ($algorithm ne $algorithm2);
+                
+            };
+            
+            last if ($@);
+            
+            if ($tool eq "rf-norm") {  # rf-norm
+                
+                my ($reactivity, @reactivity);
+                $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
+                $reactivity =~ s/\s+?//g;
+                @reactivity = split(/,/, $reactivity);
+                
+                push(@{$values1[$-[0]]}, $reactivity[$-[0]]) while($sequence =~ m/[$reactive2]/g);
+                
+            }
+            elsif ($tool eq "rf-silico") {  # rf-silico
+                
+                my ($prob, $shannon, @prob, @shannon);
+                $prob = $xmlref->findnodes("/data/transcript/probability")->to_literal();
+                $shannon = $xmlref->findnodes("/data/transcript/shannon")->to_literal();
+                $prob =~ s/\s+?//g;
+                $shannon =~ s/\s+?//g;
+                @prob = split(/,/, $prob);
+                @shannon = split(/,/, $shannon);
+                
+                while($sequence =~ m/[$reactive2]/g) {
+                    
+                    push(@{$values1[$-[0]]}, $prob[$-[0]]);
+                    push(@{$values2[$-[0]]}, $shannon[$-[0]])
+                    
+                }
+                
+            }
+            else { # rf-modcall
+                
+                my ($score, $ratio, @score, @ratio);
+            
+                $score = $xmlref->findnodes("/data/transcript/score")->to_literal();
+                $ratio = $xmlref->findnodes("/data/transcript/ratio")->to_literal();
+                $score =~ s/\s+?//g;
+                $ratio =~ s/\s+?//g;
+                @values1 = split(/,/, $score);
+                @values2 = split(/,/, $ratio);
+                
+            }
+            
+        }
+        
+        if ($@) { # Exception from eval
+            
+            lock(%results);
+            $results{failed}++;
+            
+            undef($@);
+            
+            next;
+                
+        } 
+        
+        @mean1 = map { ref($values1[$_]) eq "ARRAY" && !isnan(@{$values1[$_]}) ? mean(@{$values1[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+        @stdev1 = map { ref($values1[$_]) eq "ARRAY" && !isnan(@{$values1[$_]}) ? stdev(@{$values1[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+
+        if ($tool ne "rf-norm") { # rf-modcall / rf-silico
+        
+            @mean2 = map { ref($values2[$_]) eq "ARRAY" && !isnan(@{$values2[$_]}) ? mean(@{$values2[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+            @stdev2 = map { ref($values2[$_]) eq "ARRAY" && !isnan(@{$values2[$_]}) ? stdev(@{$values2[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+        
+        }
+        
+        #for (@profile) { 
+        #    
+        #    if (ref($_) eq "ARRAY" &&
+        #        !isnan(@{$_})) {
+        #        
+        #        push(@mean, sprintf("%." . $decimals . "f", mean(@{$_})));
+        #        push(@stdev, sprintf("%." . $decimals . "f", stdev(@{$_})));
+        #        
+        #    }
+        #    else {
+        #        
+        #        push(@mean, "NaN");
+        #        push(@stdev, "NaN");
+        #        
+        #    }
+        #    
+        #}
+        #
+        #push(@mean, "NaN") while (@mean < length($sequence));
+        #push(@stdev, "NaN") while (@stdev < length($sequence));
+        
+        { lock(%results);
+          $results{combined}++; }
+        
+        # For nicer formatting
+        $sequence =~ s/(\w{60})/$1\n/g; 
+        $mean1 = join(",", @mean1);
+        $stdev1 = join(",", @stdev1);
+        $mean2 = join(",", @mean2);
+        $stdev2 = join(",", @stdev2);
+        $mean1 =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        $stdev1 =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        $mean2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        $stdev2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
+        
+        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
+                                   mode      => "w",
+                                   heading   => 1,
+                                   indent    => 0,
+                                   autoclose => 1,
+                                   verbosity => -1 );
+        
+        if ($tool ne "rf-modcall") {
+            
+            $reactive = join("", sort(uniq(split(//, $reactive))));
+            
+            if ($tool eq "rf-norm") {
+                
+                $attributes = { combined => "TRUE",
+                                reactive => $reactive,
+                                scoring  => $scoring,
+                                norm     => $norm,
+                                win      => $win,
+                                offset   => $offset,
+                                remap    => $remap,
+                                tool     => $tool };
+                
+            }
+            else {
+                
+                $attributes = { combined  => "TRUE",
+                                keep      => $reactive,
+                                algorithm => $algorithm,
+                                win       => $win,
+                                offset    => $offset,
+                                tool      => $tool };
+                
+            }
+            
+        }
+        else {
+            
+            $attributes = { combined => "TRUE",
+                            win      => $win,
+                            tool     => $tool };
+            
+        }
+        
+        $xml->opentag("data", $attributes);
+        $xml->opentag("transcript", { id     => $id,
+                                      length => scalar(@mean1) });
+        $xml->opentag("sequence");
+        $xml->addtext($sequence);
+        $xml->closelasttag();
+        
+        if ($tool ne "rf-modcall") {
+        
+            $xml->opentag($tool eq "rf-norm" ? "reactivity" : "probability");
+            $xml->addtext($mean1);
+            $xml->closelasttag();
+        
+            if ($stdev) { # Report stdev
+            
+                $xml->opentag($tool eq "rf-norm" ? "reactivity-error" : "probability-error");
+                $xml->addtext($stdev1);
+                $xml->closelasttag();
+            
+            }
+            
+            if ($tool eq "rf-silico") {
+                
+                $xml->opentag("shannon");
+                $xml->addtext($mean2);
+                $xml->closelasttag();
+            
+                if ($stdev) { # Report stdev
+                
+                    $xml->opentag("shannon-error");
+                    $xml->addtext($stdev2);
+                
+                }
+                
+            }
+            
+        }
+        else {
+            
+            $xml->opentag("score");
+            $xml->addtext($mean1);
+            $xml->closelasttag();
+            
+            if ($stdev) { # Report stdev
+            
+                $xml->opentag("score-error");
+                $xml->addtext($stdev1);
+                $xml->closelasttag();
+            
+            }
+            
+            $xml->opentag("ratio");
+            $xml->addtext($mean2);
+            $xml->closelasttag();
+        
+            if ($stdev) { # Report stdev
+            
+                $xml->opentag("ratio-error");
+                $xml->addtext($stdev2);
+            
+            }
+            
+        }
+        
+        $xml->write();
+        
+        print CLRRET . "[+] Combining reactivities [Last: $id]";
+        
+    }
+    
+    threads->exit();
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Combine (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Combines multiple experiments into a single XML profile
+ 
+ Usage:   rf-combine [Options] XML_folder_rep1/ XML_folder_rep2/ .. XML_folder_repn/           # Whole transcriptome
+          rf-combine [Options] file_rep1.xml file_rep2.xml .. file_repn.xml                    # Single transcript
+ 
+ Options                             Description
+ -p  or --processors  <int>          Number of processors to use (Default: 1)
+ -o  or --output-dir  <string>       Output directory (Default: combined/)
+ -ow or --overwrite                  Overwrites output directory (if the specified path already exists)
+ -s  or --stdev                      When combining multiple replicates, an optional "-error" tag will be reported
+                                     in the output XML files, containing the per-base standard deviation of the measure
+ -d  or --decimals    <int>          Number of decimals for reporting reactivities (1-10, Default: 3)
+ 
+HELP
+    
+}

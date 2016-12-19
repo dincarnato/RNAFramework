@@ -1,0 +1,190 @@
+#!/usr/bin/perl
+
+##
+# RF Compare (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Compares inferred secondary structures to a set of reference structures
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use File::Basename;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Data::IO::Sequence;
+use RNA::Utils;
+use Term::Table;
+
+$|++;
+
+my ($input, $reference, $refio, $help,
+    $table, %results);
+%results = ( compared      => 0,
+             ioerr         => 0,
+             diffseq       => 0,
+             missingstruct => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"        => \$help,      
+                "r|reference=s" => \$reference ) or help(1);
+
+    $input = $ARGV[0];
+                
+};
+
+help() if ($help);
+
+$input =~ s/\/?$/\// if (-d $input);
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: Provided structure directory\/file doesn't exist\n\n" if (!-e $input);
+die "\n  [!] Error: No reference structures file provided\n\n" if (!defined $reference);
+die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $reference);
+
+##
+# Read structures
+##
+
+print "\n[+] Comparing structures to reference...";
+
+$refio = Data::IO::Sequence->new(file => $reference);
+$table = Term::Table->new(indent => 2);
+$table->head("Transcript", "PPV", "Sensitivity");
+
+while(my $ref = $refio->read()) {
+    
+    my ($file, $refid, $refseq, $refstruct, $queryseq,
+        $querystruct, $format);
+    ($refid, $refseq, $refstruct) = ($ref->id(), $ref->sequence(), $ref->structure());
+    
+    if (-d $input) {
+        
+        if (-e $input . $refid . ".ct") { $format = "ct"; }
+        elsif (-e $input . $refid . ".db") { $format = "db"; }
+        else {
+        
+            $results{missingstruct}++;
+            
+            next;
+            
+        }
+        
+        $file = $input . $refid . "." . $format;
+        
+    }
+    else {
+        
+        my ($fileid);
+        ($fileid, undef, $format) = fileparse($input, qr/\.[^.]*/);
+        $format =~ s/^\.//;
+        $file = $input;
+        
+        next if ($fileid ne $refid);
+        
+    }
+    
+    if ($format eq "db") { # Dot-bracket
+        
+        my $queryio = Data::IO::Sequence->new(file => $file);
+        
+        if (my $query = $queryio->read()) {
+            
+            $queryseq = $query->sequence();
+            $querystruct = $query->structure();
+            
+        }
+        else {
+            
+            $results{ioerr}++;
+            
+            next;
+        
+        }
+        
+    }
+    else { ($querystruct, $queryseq, undef) = ct2db($file); } # CT
+    
+    $refseq = dna2rna($refseq);
+    $queryseq = dna2rna($queryseq);
+    
+    if (!defined $queryseq ||
+        !defined $querystruct) {
+        
+        $results{ioerr}++;
+        
+        next;
+        
+    }
+    
+    if ($queryseq ne $refseq) {
+        
+        $results{diffseq}++;
+        
+        next;
+        
+    }
+    
+    $table->row($refid, sprintf("%.2f", ppv($refstruct, $querystruct)), sprintf("%.2f", sensitivity($refstruct, $querystruct)));
+    
+    $results{compared}++;
+    
+}
+
+if ($results{compared}) {
+    
+    print "\n\n";
+    $table->print();
+    print "\n";
+    
+}
+
+$results{missingstruct} = 1 unless (sum(values %results));
+
+print "\n[+] Comparison statistics:\n" .
+      "\n  [*] Compared transcripts: " . $results{compared} .
+      "\n  [*] Excluded transcripts: " . ($results{ioerr} + $results{diffseq} + $results{missingstruct}) . " total" .
+      "\n                            " . $results{ioerr} . " structure file parsing failed" .
+      "\n                            " . $results{diffseq} . " mismatch between reference and query transcript sequences" .
+      "\n                            " . $results{missingstruct} . " missing structure file";
+
+print "\n\n[+] All done.\n\n";
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Compare (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Compares inferred secondary structures to a set of reference structures
+ 
+ Usage:   rf-compare [Options] structures_folder/                # Multiple transcripts
+          rf-compare [Options] file.(ct|db)                      # Single transcript
+ 
+ Options                             Description
+ -r  or --reference  <string>        A file containing reference structures in Vienna format (dot-bracket)
+ 
+HELP
+    
+}

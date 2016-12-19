@@ -1,0 +1,398 @@
+#!/usr/bin/perl
+
+##
+# RF Peak Call (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Performs peak calling of RNA immunoprecipitation (IP) experiments
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Path qw(mkpath rmtree);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Data::IO::XML;
+use RF::Data::IO::RC;
+use Term::Constants qw(:screen);
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my ($help, $output, $overwrite, $win,
+    $pvalue, $pseudocount, $meancov, $mediancov,
+    $control, $ip, $index, $enrich,
+    $threads, $rc, $qcaller, $qresults,
+    $decimals, $offset, $mergedist, @index,
+    @pool, @ids);
+
+my %results : shared;
+%results = ( cov      => 0,
+             incov    => 0,
+             diffcseq => 0,
+             nocid    => 0,
+             pass     => 0,
+             peaks    => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"               => \$help,
+                "o|output=s"           => \$output,
+                "ow|overwrite"         => \$overwrite,
+                "w|window=i"           => \$win,
+                "mc|mean-coverage=s"   => \$meancov,
+                "ec|median-coverage=s" => \$mediancov,
+                "c|control=s"          => \$control,
+                "I|IP=s"               => \$ip,
+                "i|index=s"            => \$index,
+                "D|decimals=i"         => \$decimals,
+                "p|processors=i"       => \$threads,
+                "f|offset=i"           => \$offset,
+                "e|enrichment=s"       => \$enrich,
+                "v|p-value=s"          => \$pvalue,
+                "pc|pseudocount=s"     => \$pseudocount,
+                "md|merge-distance=i"  => \$mergedist ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default
+$threads //= 1;
+$win //= 150;
+$offset //= round($win / 2);
+$enrich //= 3;
+$mergedist //= 50;
+$pvalue //= 0.05;
+$pseudocount //= 1;
+$decimals //= 3;
+$meancov //= 0;
+$mediancov //= 0;
+
+die "\n  [!] Error: No IP sample RC file provided\n\n" if (!defined $ip);
+die "\n  [!] Error: Provided IP sample RC file doesn't exist\n\n" if (!-e $ip);
+die "\n  [!] Error: No control sample RC file provided\n\n" if (!defined $control);
+die "\n  [!] Error: Provided control sample RC file doesn't exist\n\n" if (!-e $control);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
+                                                                                          $decimals > 10);
+die "\n  [!] Error: Window's size must be an integer >= 10" if ($win < 10);
+die "\n  [!] Error: P-value must be numeric\n\n" if (!isnumeric($pvalue));
+die "\n  [!] Error: P-value must be comprised between 0 and 1\n\n" if (!ispositive($pvalue) ||
+                                                                       $pvalue > 1);
+die "\n  [!] Error: Pseudocount value must be numeric\n\n" if (!isnumeric($pseudocount));
+die "\n  [!] Error: Pseudocount value must be > 0\n\n" if (!$pseudocount);
+die "\n  [!] Error: Enrichment value must be numeric\n\n" if (!isnumeric($enrich));
+die "\n  [!] Error: Enrichment value must be > 0\n\n" if (!$enrich);
+die "\n  [!] Error: Mean coverage value must be numeric\n\n" if (!isnumeric($meancov));
+die "\n  [!] Error: Mean coverage value must be >= 0\n\n" if (!ispositive($meancov));
+die "\n  [!] Error: Median coverage value must be numeric\n\n" if (!isnumeric($mediancov));
+die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($mediancov));
+
+
+if (!defined $output) {
+    
+    my ($cid, $iid);
+    $cid = fileparse($control, qr/\.[^.]*/);
+    $iid = fileparse($ip, qr/\.[^.]*/);
+    
+    $output = $iid . "_vs_" . $cid . ".bed";
+    
+}
+else { $output =~ s/(\.bed)?$/.bed/; }
+
+print "\n[+] Checking output file...";
+
+if (-e $output) {
+
+    if ($overwrite) { unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n"; }
+    else { die "\n\n  [!] Error: Output file already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output file\n\n"; }
+    
+}
+
+@index = split(/,/, $index);
+
+# In case no index has been provided, we rebuild the index before generating the working threads
+# The new index will be generated in the same path of the rc file, with extension .rci
+if (!@index) {
+    
+    print "\n[+] Regenerating RTI index files...";
+    
+    $rc = RF::Data::IO::RC->new( file       => $control,
+                                 buildindex => 1 );
+    
+}
+
+$rc = RF::Data::IO::RC->new( file       => $ip,
+                             index      => @index ? $index[-1] : undef,
+                             buildindex => 1 );
+
+print "\n[+] Loading transcript IDs... ";
+
+@ids = $rc->ids();
+
+print scalar(@ids) . " transcripts loaded." .
+      "\n[+] Calling peaks [Last: none]";
+
+$qcaller = Thread::Queue->new();
+$qresults = Thread::Queue->new();
+
+@pool = map{ threads->create(\&call, $qcaller, $qresults) } 1 .. $threads;
+
+$qcaller->enqueue($_) for (@ids);
+$qcaller->enqueue((undef) x $threads);
+
+$_->join() for(@pool);
+
+if ($results{peaks}) {
+
+    my (@results);
+
+    print "\n[+] Sorting peaks...";
+    
+    for (1 .. $threads) { while (my $result = $qresults->dequeue()) { push(@results, $result); } }
+    
+    # Sort lexicographically by transcript ID and numerically by start position
+    @results = sort {$a->[0] cmp $b->[0] ||
+                     $a->[1] <=> $b->[1]} @results;
+    
+    print "\n[+] Writing output BED file...";
+    
+    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output BED file (" . $! . ")\n\n";
+    select((select($wh), $|=1)[0]);
+    print $wh join("\t", @{$_}) . "\n" for (@results);
+    close($wh);
+    
+}
+
+print "\n[+] Calling statistics:\n" .
+      "\n  [*] Covered transcripts:   " . $results{cov} . " total" .
+      "\n                             " . $results{pass} . " enriched in IP vs. control sample" .
+      "\n                             " . $results{peaks} . " called peaks" .
+      "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffcseq} + $results{nocov} + $results{nocid}) . " total" .
+      "\n                             " . $results{incov} . " insufficient coverage" .
+      "\n                             " . $results{diffcseq} . " mismatch between IP and control sample sequence" .
+      "\n                             " . $results{nocid} . " absent in control sample reference";
+      
+print "\n\n[+] All done.\n\n";
+
+sub call {
+    
+    my ($qcaller, $qresults) = @_;
+    
+    my ($crc, $irc, $attributes, $scale);
+    
+    $crc = RF::Data::IO::RC->new( file  => $control,
+                                  index => @index ? $index[0] : $control . ".rci" );
+    
+    $irc = RF::Data::IO::RC->new( file  => $ip,
+                                  index => @index ? $index[-1] : $ip . ".rci"); 
+    
+    while (my $id = $qcaller->dequeue()) {
+        
+        my ($ientry, $sequence, $imedian, $cmedian,
+            $last, @icov, @ccov, @peaks,
+            @pvalues);
+        $ientry = $irc->read($id);
+        $imedian = $ientry->mediancoverage();
+        
+        if ($ientry->meancoverage() < $meancov ||
+            $imedian < $mediancov) {
+            
+            lock(%results);
+            $results{incov}++;
+            
+            next;
+            
+        }
+    
+        $sequence = $ientry->sequence();
+        @icov = $ientry->coverage();
+        
+        if (my $centry = $crc->read($id)) {
+            
+            $cmedian = $centry->mediancoverage();
+            
+            if ($centry->sequence() ne $sequence) {
+                
+                lock(%results);
+                $results{diffcseq}++;
+        
+                next;
+                
+            }
+            
+            if ($centry->meancoverage() < $meancov ||
+                $cmedian < $mediancov) {
+                
+                lock(%results);
+                $results{incov}++;
+        
+                next;
+                
+            }
+            
+            @ccov = $centry->coverage();
+            
+            { lock(%results);
+              $results{cov}++;
+              
+              print CLRRET . "[+] Calling peaks [Last: $id]"; }
+            
+        }
+        else {
+        
+            lock(%results);
+            $results{nocid}++;
+            
+            next;
+            
+        }
+        
+        for (my $i = 0; $i < $#icov; $i += $offset) {
+        
+            my ($start, $end, $score, $cmean, $imean,
+                $p, @ctrlwin, @ipwin);
+            $start = $i;
+            
+            if ($start + $win > $#icov) {
+            
+                $start = $#icov - $win >= 0 ? $#icov - $win : 0;
+                $end = $#icov;
+                
+            }
+            else { $end = $start + $win; }
+            
+            $cmean = mean(@ccov[$start .. $end]);
+            $imean = mean(@icov[$start .. $end]);
+            $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)) / (($cmean + $pseudocount) / ($cmedian + $pseudocount)), 2);
+            
+            next if ($score < $enrich); # Requires minimum enrichment in IP sample vs. Ctrl
+            
+            $p =  fisher(round($imean), round($imedian), round($cmean), round($cmedian), 1);
+        
+            push(@peaks, { coords => [$start, $end],
+                           score  => [$score],
+                           pvalue => [$p] });
+            push(@pvalues, $p);
+        
+        }
+        
+        next if (!@pvalues);
+    
+        @pvalues = padjust(\@pvalues); # Benjamini-Hochberg adjusted p-values
+        
+        # Delete peaks whose corrected p-value is greater than cutoff
+        for (my $i = 0; $i < @pvalues; $i++) {
+        
+            if ($pvalues[$i] >= $pvalue) {
+                
+                splice(@pvalues, $i, 1);
+                splice(@peaks, $i, 1);
+                
+                $i--;
+                
+            }
+        
+        }
+        
+        next if (!@peaks);
+        
+        $last = shift(@peaks);
+        
+        while(my $current = shift(@peaks)) {
+        
+            if (intersect($current->{coords}, [$last->{coords}->[0], $last->{coords}->[1] + $mergedist])) {
+                
+                $last->{coords}->[1] = $current->{coords}->[1];
+                push(@{$last->{score}}, $current->{score}->[0]);
+                push(@{$last->{pvalue}}, $current->{pvalue}->[0]);
+                
+            }
+            else {
+                
+                { lock(%results);
+                  $results{peaks}++; }
+                
+                $qresults->enqueue([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))]); 
+                $last = $current;
+                
+            }
+        
+        }
+        
+        $qresults->enqueue([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))]); 
+        
+        { lock(%results);
+          $results{pass}++;
+          $results{peaks}++; }
+        
+    }
+    
+    $qresults->enqueue(undef);
+    
+    threads->exit();
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Peak Call (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Performs peak calling of RNA immunoprecipitation (IP) experiments
+ 
+ Usage:   rf-peakcall [Options]
+ 
+ Options                                        Description
+ -c  or --control          <string>             Control sample RC file
+ -I  or --IP               <string>             Immunoprecipitated (IP) sample RC file
+ -i  or --index            <string>[,<string>]  A comma separated (no spaces) list of RTI index files for the provided RC files.
+                                                Note: RCI files must be provided in the order: 1. Control, 2. IP.
+                                                If a single RCI file is specified along with both control and IP sample,
+                                                it will be used for all samples.
+                                                If no RCI index is provided, it will be created at runtime, and stored in
+                                                the same folder of the control, and IP samples.
+ -p  or --processors       <int>                Number of processors to use (Default: 1)
+ -o  or --output           <string>             Output file (Default: <IP>_vs_<Control>.bed)
+ -ow or --overwrite                             Overwrites output file (if the specified file already exists)
+ -w  or --window           <int>                Window's size for peak calling (>=10, Default: 150)
+ -f  or --offset           <int>                Offset for window sliding (>=1, Default: Window's size / 2)
+ -md or --merge-distance   <int>                Maximum distance in nt for merging non-overlapping windows (>=0, Default: 50)
+ -e  or --enrichment       <float>              Minimum log2 enrichment in IP vs. control sample, for reporting a peak (>=1, Default: 3)
+ -v  or --p-value          <float>              P-value cutoff for reporting a peak (0<=p<=1, Default: 0.05)
+ -pc or --pseudocount      <float>              Pseudocount added to read counts to avoid division by 0 (>0, Default: 1)
+ -mc or --mean-coverage    <float>              Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
+ -ec or --median-coverage  <float>              Discards any transcript with median coverage below this threshold (>=0, Default: 0)
+ -D  or --decimals         <int>                Number of decimals for reporting enrichment/p-value (1-10, Default: 3)
+
+HELP
+    
+}

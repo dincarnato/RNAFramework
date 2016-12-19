@@ -1,0 +1,586 @@
+#!/usr/bin/perl
+
+##
+# RF Fold (v2.0.0b)
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Produces secondary structures for analyzed transcripts using structural
+#          probing data to guide folding
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use ExtUtils::Installed;
+use File::Basename;
+use File::Path qw(mkpath rmtree);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+use XML::LibXML;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Core::Utils;
+use Data::IO::Sequence;
+use Data::Sequence;
+use Data::Sequence::Utils;
+use RNA::Utils;
+use Term::Constants qw(:screen);
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads and try again\n\n" unless(exists $Config{useithreads});
+
+$|++;
+
+my ($output, $ct, $input, $method,
+    $threads, $img, $svg, $t,
+    $cutoff, $nlp, $ngu, $rnastructure,
+    $viennarna, $data, $slope, $intercept,
+    $maxdist, $constmethod, $constconversion, $beta,
+    $modslope, $modintercept, $installed, $queue,
+    $overwrite, $error, $help, $tmpdir,
+    $ignore, $madetmp, @xml, @pool,
+    %modules);
+
+my %results : shared;
+%results = ( folded   => 0,
+             parseerr => 0,
+             consterr => 0,
+             folderr  => 0,
+             db2cterr => 0,
+             fastaerr => 0 );
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                     => \$help,
+                "o|output-dir=s"             => \$output,
+                "ow|overwrite"               => \$overwrite,
+                "t|tmp-dir=s"                => \$tmpdir,
+                "ct|connectivity-table"      => \$ct,
+                "m|folding-method=i"         => \$method,
+                "p|processors=i"             => \$threads,
+                "g|img"                      => \$img,
+                "s|svg"                      => \$svg,
+                "t|temperature=s"            => \$t,
+                "sl|slope=s"                 => \$slope,
+                "in|intercept=s"             => \$intercept,
+                "md|maximum-distance=i"      => \$maxdist,
+                "v|viennarna=s"              => \$viennarna,
+                "f|cutoff=s"                 => \$cutoff,
+                "nlp|no-lonely-pairs"        => \$nlp,
+                "ngu|no-closing-gu"          => \$ngu,
+                "cm|constraint-method=i"     => \$constmethod,
+                "cc|constraint-conversion=i" => \$constconversion,
+                "bf|beta-factor=s"           => \$beta,
+                "ms|model-slope=s"           => \$modslope,
+                "mi|model-intercept=s"       => \$modintercept,
+                "r|rnastructure=s"           => \$rnastructure,
+                "dp|data-path=s"             => \$data,
+                "i|ignore-reactivity"        => \$ignore ) or help(1);
+    
+    $input = $ARGV[0];
+
+};
+
+help() if ($help);
+
+# Default
+$madetmp = 0;
+$output //= "structurome/";
+$tmpdir //= "/tmp/";
+$method //= 1;
+$threads //= 1;
+$t //= 37.0;
+$cutoff //= 0.7;
+$slope //= 1.8;
+$intercept //= -0.6;
+$constmethod //= 1;
+$constconversion //= 1;
+$beta //= 0.5;
+$maxdist //= 0;
+$viennarna //= which("RNAfold");
+$rnastructure //= which("Fold");
+$data //= $ENV{DATAPATH};
+
+$output =~ s/\/?$/\//;
+$tmpdir =~ s/\/?$/\//;
+$installed = ExtUtils::Installed->new();
+%modules = map {$_ => 1} $installed->modules();
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: No output directory specified\n\n" unless(defined $output);
+die "\n  [!] Error: No XML directory\/file specified\n\n" if (!defined $input);
+die "\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $input);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Invalid folding method\n\n" unless($method =~ m/^[12]$/);
+die "\n  [!] Error: Temperature must be a positive value\n\n" unless(ispositive($t));
+die "\n  [!] Error: Temperature must be comprised between 0 and 100 degree Celsius\n\n" if ($t > 100);
+die "\n  [!] Error: Invalid slope value\n\n" unless(isnumeric($slope));
+die "\n  [!] Error: Invalid intercept value\n\n" unless(isnumeric($intercept));
+die "\n  [!] Error: Invalid cutoff value\n\n" unless(isnumeric($cutoff));
+die "\n  [!] Error: Cutoff value must be > 0\n\n" unless($cutoff <= 0);
+die "\n  [!] Error: Maximum distance value must be a positive integer\n\n" if (!ispositive($maxdist));
+die "\n  [!] Error: No closing GU parameter requires folding method 1 (ViennaRNA)\n\n" if ($ngu &&
+                                                                                           $method != 1);
+die "\n  [!] Error: No lonely pairs parameter requires folding method 1 (ViennaRNA)\n\n" if ($nlp &&
+                                                                                             $method != 1);
+
+if ($constmethod == 2) { # Zarringhalam et al., 2012
+    
+    if ($constconversion == 4) {
+        
+        $modslope = 0.68 if (!defined $modslope);
+        $modintercept = 0.2 if (!defined $modintercept);
+        
+    }
+    elsif ($constconversion == 5) {
+        
+        $modslope = 1.6 if (!defined $modslope);
+        $modintercept = -2.29 if (!defined $modintercept);
+        
+    }
+    
+    die "\n  [!] Error: Invalid constraint conversion method\n\n" unless($method =~ m/^[1-5]$/);
+    die "\n  [!] Error: Invalid beta factor value\n\n" if (!isnumeric($beta));
+    die "\n  [!] Error: Constraining cutoff must be a positive value\n\n" if ($constconversion == 3 &&
+                                                                              !ispositive($cutoff));       # ViennaRNA 'C'
+    die "\n  [!] Error: Invalid linear model's slope value\n\n" if ($constconversion =~ m/^[45]$/ &&
+                                                                    !isnumeric($modslope));                # ViennaRNA 'L' & 'O'
+    die "\n  [!] Error: Invalid linear model's intercept value\n\n" if ($constconversion =~ m/^[45]$/ &&
+                                                                        !isnumeric($modintercept));        # ViennaRNA 'L' & 'O'
+    
+}
+
+die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
+    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless(exists $modules{RNA});
+ 
+print "\n[+] Checking method's requirements...";
+
+if ($method == 1) { # ViennaRNA
+    
+    my $ret = `$viennarna --version`;
+    
+    if ($ret =~ m/RNAfold (\d+)\.(\d+)/) {
+        
+        my ($v1, $v2) = ($1, $2);
+        
+        die "\n\n  [!] Error: RF Fold requires ViennaRNA package v2.2.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 ||
+                                                                                                                                  $v2 < 2);
+        
+    }
+    else { warn "\n\n  [!] Warning: Unable to detect ViennaRNA package version\n"; }
+    
+}
+else { # RNAstructure
+
+    if (!defined $data) { die "\n\n  [!] Error: Environment variable DATAPATH is not set\n\n"; }
+    elsif (!-d $data) { die "\n\n  [!] Error: Provided DATAPATH directory doesn't exist\n\n"; }
+
+    if (!defined $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold is not in PATH\n\n"; }
+    elsif (!-e $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold doesn't exist\n\n"; }
+    elsif (!-x $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold is not executable\n\n"; }
+
+    $ENV{DATAPATH} = $data;
+    $t += 273.15; # RNAstructure expects a temperature in Kelvin degrees
+
+}
+
+# Output directory tree
+print "\n[+] Making output directory tree...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error}); 
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output . "structures", { mode  => 0755,
+                                 error => \$error });
+mkpath($output . "images", { mode  => 0755,
+                             error => \$error }) if ($img); 
+
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+if (!-e $tmpdir) {
+    
+    mkpath($tmpdir, { mode  => 0755,
+                      error => \$error });
+    
+    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+    
+    $madetmp = 1;
+    
+}
+else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+
+$queue = Thread::Queue->new();
+@pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
+
+print "\n[+] Importing XML file(s) [0 imported]";
+
+if (-d $input) {
+    
+    opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
+    while(my $file = readdir($dh)) {
+        
+        next if ($file !~ m/\.xml$/);
+        
+        push(@xml, $input . "/" . $file);
+        print CLRRET . "[+] Importing XML file(s) [" . scalar(@xml) . " imported]";
+        
+    }
+    closedir($dh);
+    
+    die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless(@xml);
+    
+}
+else { # Single xml file
+
+    print CLRRET . "[+] Importing XML file(s) [1 imported]";    
+    push(@xml, $input);
+    
+}
+    
+warn "\n\n  [!] Ignoring XML reactivity data files. Predicting MFE unconstrained structures...\n" if ($ignore);
+
+print "\n[+] Building RNA structurome [Last: none]";
+
+$queue->enqueue($_) for (@xml);
+$queue->enqueue((undef) x $threads);
+$_->join() for (@pool);
+
+my $ioerr = @xml;
+$ioerr -= $_ for (values %results);
+
+print "\n[+] Folding statistics:\n" .
+      "\n  [*] Folded transcripts:    " . $results{folded} .
+      "\n  [*] Discarded transcripts: " . (@xml - $results{folded}) . " total" .
+      "\n                             " . $results{parseerr} . " xml parsing failed" .
+      "\n                             " . $results{consterr} . " constraint file generation failed" .
+      "\n                             " . $results{fastaerr} . " FASTA file generation failed" .
+      "\n                             " . $results{folderr} . " folding failed" .
+      "\n                             " . $ioerr . " I/O error";
+      
+print "\n                             " . $results{db2cterr} . " dot-bracket to CT conversion failed" if ($ct);
+
+rmtree($tmpdir, { safe      => 1,
+                  keep_root => 0,
+                  error     => \$error }) if ($madetmp);
+
+print "\n\n[+] All done.\n\n";
+
+sub fold { # Threads
+    
+    my $queue = shift;
+
+    require RNA;
+    
+    select(undef, undef, undef, threads->tid() / 100);
+    
+    while(my $xml = $queue->dequeue()) {
+       
+        my ($sequence, $id, $structure, $cmd,
+            $xmlref, $tmp, $ret, $reactivity,
+            @reactivity);
+       
+        eval { $xmlref = XML::LibXML->load_xml(location => $xml); };
+        
+        if ($@) {
+
+            lock(%results);
+            $results{parseerr}++;
+            
+            undef($@);
+            
+            next;
+            
+        }
+        
+        $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
+        $sequence = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
+        $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
+        
+        $sequence =~ s/\s+?//g;
+        $reactivity =~ s/\s+?//g;
+        $sequence = dna2rna($sequence);
+        @reactivity = split(/,/, $reactivity);
+        $tmp = $tmpdir . $id . "_" . threads->tid();
+        
+        if (!$ignore) {
+        
+            if (xml2shape($tmp, \@reactivity)) { # Generates temporary SHAPE constraint file
+                
+                lock(%results);
+                $results{consterr}++;
+                
+                next;
+                
+            }
+            
+        }
+        
+        if (seq2fasta($tmp, $id, $sequence)) { # Generates temporary fasta file
+            
+            lock(%results);
+            $results{fastaerr}++;
+            
+            next;
+            
+        }
+       
+        if ($method == 1) { # ViennaRNA
+        
+            $cmd = $viennarna . " --noPS -i '" . $tmp . ".fa'";
+            
+            if (!$ignore) {
+            
+                $cmd .= " --shape='" . $tmp . ".shape'";
+            
+                if ($constmethod == 1) {  # Deigan et al., 2009 (ViennaRNA 'D')
+                    
+                    $cmd .= " --shapeMethod=Dm" . $slope . "b" . $intercept;
+                    
+                }
+                else {  # Zarringhalam et al., 2012 (ViennaRNA 'Z')
+                    
+                    $cmd .= " --shapeMethod=Z" . $beta . " --shapeConversion=";
+                    
+                    if ($constconversion == 1) { $cmd .= "S"; }                                             # ViennaRNA 'S'
+                    elsif ($constconversion == 2) { $cmd .= "M"}                                            # ViennaRNA 'M'
+                    elsif ($constconversion == 3) { $cmd .= "C" . $cutoff; }                                # ViennaRNA 'C'
+                    elsif ($constconversion == 4) { $cmd .= "Ls" . $modslope . "i" . $modintercept; }       # ViennaRNA 'L'
+                    else { $cmd .= "Os" . $modslope . "i" . $modintercept; }                                # ViennaRNA 'O'
+                
+                }  
+                
+            }
+            
+            $cmd .= " --maxBPspan=" . $maxdist if ($maxdist);
+            
+            $ret = `$cmd 2>/dev/null`;
+            $structure = (split(/\n/, $ret))[2]; # Only extracts dot-bracket structure
+            $structure =~ s/\s.+?$//;            # Removes free energy
+        
+        }
+        elsif ($method == 2) { # RNAstructure
+            
+            $cmd = $rnastructure . " '" . $tmp . ".fa' '" . $tmp . ".ct' -t " . $t;
+            $cmd .= " -si " . $intercept . " -sm " . $slope . " -sh '" . $tmp . ".shape'" if (!$ignore);
+            $cmd .= " -md " . $maxdist if ($maxdist);
+            
+            $ret = `$cmd 2>&1`;
+            
+            if ($ret !~ m/Single strand folding complete\./ ||
+                $ret =~ m/incorrect|error/i) { # Something went wrong during RNAstructure execution
+                
+                lock(%results);
+                $results{folderr}++;
+                
+                unlink(glob($tmp . "*"));
+                
+                next;
+                
+            }
+            
+            ($structure, $sequence, undef) = ct2db($tmp . ".ct");
+            
+        }
+        
+        if (isdotbracket($structure)) {
+                
+            my ($file, $energy);
+            $file = $output . "structures/" . $id . "." . ($ct ? "ct" : "db");
+            $energy = sprintf("%.2f", RNA::energy_of_struct($sequence, $structure));
+            
+            open(my $wh, ">" . $file) or next;
+            select((select($wh), $|=1)[0]);
+            
+            if ($ct) {
+        
+                if (my $ctout = db2ct($sequence, $structure)) { print $wh "  " . length($sequence) . "  ENERGY = " . $energy . "  " . $id . "\n" . $ctout; }
+                else {
+                
+                    lock(%results);
+                    $results{db2cterr}++;
+                    
+                    unlink(glob($tmp . "*"));
+                    
+                    next;
+                    
+                }
+                
+            }
+            else {
+                
+                print $wh ">" . $id . "\n" .
+                          $sequence . "\n" .
+                          $structure . " (" . $energy . ")\n";
+                
+            }
+            
+            close($wh);
+                
+        }
+        else {
+            
+            lock(%results);
+            $results{folderr}++;
+            
+            unlink(glob($tmp . "*"));
+            
+            next;
+            
+        }
+        
+        { lock(%results);
+          $results{folded}++;
+         
+          print CLRRET . "[+] Building RNA structurome [Last: " . $id . "]"; }
+        
+        if ($img) {
+        
+            my $file = $output . "images/" . $id;
+        
+            if ($svg) { RNA::svg_rna_plot($sequence, $structure, $file . ".svg"); }
+            else { RNA::PS_rna_plot($sequence, $structure, $file . ".ps"); }
+        
+        }
+        
+        unlink(glob($tmp . "*"));
+        
+    }
+    
+}
+
+sub xml2shape {
+    
+    my ($file, $reactivity) = @_;
+    
+    my $i = 0;
+    
+    open(my $wh, ">", $file . ".shape") or return(1);
+    select((select($wh), $|=1)[0]);
+    for (@{$reactivity}) {
+        
+        $i++;
+        
+        next if (isnan($_));
+        
+        print $wh $i . " " . $_ . "\n";
+        
+    }
+    close($wh);
+    
+    return;
+    
+}
+
+sub seq2fasta {
+    
+    my ($file, $id, $sequence) = @_;
+    
+    eval {
+        
+        my ($io, $fasta);
+        $io = Data::IO::Sequence->new( file   => $file . ".fa",
+                                       mode   => "w",
+                                       flush  => 1,
+                                       format => "fasta" );
+        $fasta = Data::Sequence->new( id       => $id,
+                                      sequence => $sequence );
+        
+        $io->write($fasta);
+        
+    };
+    
+    if ($@) { return(1); }
+    
+    return;
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+     
+    die <<HELP;
+ 
+ RF Fold (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Produces RNA secondary structures using structural probing data to guide folding
+ 
+ Usage:   rf-fold [Options] XML_folder/                          # Whole transcriptome
+          rf-fold [Options] file.xml                             # Single transcript
+ 
+ Options                                  Description
+ -o  or --output-dir          <string>    Output directory (Default: structurome/)
+ -ow or --overwrite                       Overwrites output directory (if the specified path already exists)
+ -ct or --connectivity-table              Writes predicted structures in CT format (Default: Dot-bracket notation)
+ -m  or --folding-method      <int>       Specifies the folding method (1-2, Default: 1): [1] ViennaRNA
+                                                                                          [2] RNAstructure 
+
+ -p  or --processors          <int>       Number of processors to use for the analysis (Default: 1)
+ -g  or --img                             Enables generation of structure representations (Default: Postscript format)
+ -s  or --svg                             Structure representations are generated in SVG format (requires -g)
+ -t  or --temperature         <float>     Temperature in Celsius degrees (Default: 37.0)
+ -sl or --slope               <float>     Sets slope used with structural probing data restraints (Default: 1.8 [kcal/mol])
+ -in or --intercept           <float>     Sets intercept used with structural probing data restraints (Default: -0.6 [kcal/mol])
+ -md or --maximum-distance    <int>       Sets the maximum pairing distance in nucleotides between transcript's residues (Default: 0 [No limit])
+ -i  or --ignore-reactivity               Do not use reactivity data to guide folding (MFE unconstrained prediction)
+ 
+ Folding method #1 options (ViennaRNA)
+ -v   or --viennarna          <string>    Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
+ -nlp or --no-lonely-pairs                Disallows lonely base-pairs (1 bp helices) inside predicted structure
+ -ngu or --no-closing-gu                  Disallows G:U wobbles at the end of helices
+ -cm  or --constraint-method  <int>       Method for converting reactivities into pseudo-energies (1-2, Default: 1): [1] Deigan et al., 2009
+                                                                                                                     [2] Zarringhalam et al., 2012
+ |
+ +- Zarringhalam et al., 2012 method options
+    -cc or --constraint-conversion  <int>       Method for converting reactivities to pairing probabilities (1-5, Default: 1):
+                                                [1] Skip normalization step (reactivities are treated as pairing probabilities)
+                                                [2] Linear mapping according to Zarringhalam et al., 2012
+                                                [3] Use a cutoff to divide into paired and unpaired nucleotides
+                                                [4] Linear model for converting reactivities into probabilities of being unpaired
+                                                [5] Linear model for converting the logarithm of reactivities into probabilities
+                                                    of being unpaired
+    -bf or --beta-factor            <float>     Sets the magnitude of penalities for deviations from the observed pairing probabilities (Default: 0.5)
+    -f  or --cutoff                 <float>     Cutoff for constraining a position as unpaired (0-1, Default: 0.7, requires -cc 3)
+    -ms or --model-slope            <float>     Sets the slope used by the linear model (Default: 0.68 [#4] or 1.6 [#5], requires -cc [45])
+    -mi or --model-intercept        <float>     Sets the intercept used by the linear model (Default: 0.2 [#4] or -2.29 [#5], requires -cc [45])
+ 
+ Folding method #2 options (RNAstructure)
+ -r  or --rnastructure        <string>    Path to RNAstructure Fold executable (Default: assumes RNAstructure is in PATH)
+ -dp or --data-path           <string>    Path to RNAstructure data tables (Default: assumes DATAPATH environment variable is already set)
+ 
+HELP
+    
+}

@@ -1,0 +1,793 @@
+#!/usr/bin/perl
+
+##
+# RF Count (v2.0.0b)
+# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
+#
+# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
+# Summary: Calculates per-base RT-stops/mutations and coverage
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use Fcntl qw(SEEK_SET);
+use File::Basename;
+use File::Copy;
+use File::Path qw(mkpath rmtree);
+use File::Spec;
+use FindBin qw($Bin);
+use Fcntl qw(SEEK_SET SEEK_END);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+use Thread::Queue;
+
+use lib $Bin . "/lib";
+
+use Core::Utils;
+use Core::Mathematics qw(:all);
+use Core::Process::Queue;
+use Core::Statistics;
+use Data::IO::Sequence;
+use Data::Sequence::Utils;
+use RF::Data::RC;
+use RF::Data::IO::RC;
+use Term::Table;
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my $lock :shared;
+my ($tmp, $tmpdir, $output, $wt,
+    $samtools, $multifasta, $sam, $sorted,
+    $help, $overwrite, $error, $bam_trim5,
+    $hex, $offset, $threads, $processmanager,
+    $madetmp, $qcounter, $qresults, $table,
+    $mutcount, $seqio, $rcio, $includeclip,
+    $nomapcount, $covonly, $nodel, $pp,
+    $po, $fromhead, @bam_trim5, @tmp,
+    @pool, %transcripts, %spacer, %files);
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                  => \$help,
+                "t|tmp-dir=s"             => \$tmpdir,
+                "o|output-dir=s"          => \$output,
+                "ow|overwrite"            => \$overwrite,
+                "nm|no-mapped-count"      => \$nomapcount,
+                "t5|trim-5prime=s"        => \$bam_trim5,
+                "wt|working-threads=i"    => \$wt,
+                "s|samtools=s"            => \$samtools,
+                "r|sorted"                => \$sorted,
+                "p|processors=i"          => \$threads,
+                "f|fasta=s"               => \$multifasta,
+                "m|count-mutations"       => \$mutcount,
+                "ic|include-clipped"      => \$includeclip,
+                "co|coverage-only"        => \$covonly,
+                "nd|no-deletions"         => \$nodel,
+                "pp|properly-paired"      => \$pp,
+                "po|paired-only"          => \$po,
+                "fh|from-header"          => \$fromhead ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default values
+$hex = 5;
+$madetmp = 0;
+$tmp //= randalphanum(0xf);
+$tmpdir //= "/tmp/";
+$output //= "rf_count/";
+$wt //= 1;
+$offset //= 0;
+$threads //= 1;
+$bam_trim5 //= 0;
+$samtools //= which("samtools");
+
+$tmpdir =~ s/\/?$/\//;
+$output =~ s/\/?$/\//;
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: No sample SAM/BAM file provided\n\n" if (!@ARGV);
+die "\n  [!] Error: No FASTA file provided\n\n" if (!defined $multifasta);
+die "\n  [!] Error: Provided FASTA file doesn't exist\n\n" if (!-e $multifasta);
+die "\n  [!] Error: Parameters -co and -m are mutually exclusive\n\n" if ($mutcount &&
+                                                                          $covonly);
+die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) ||
+                                                                                     $wt < 1);
+die "\n  [!] Error: Invalid format for -t5 parameter's argument\n\n" if (defined $bam_trim5 &&
+                                                                         $bam_trim5 !~ m/^(\d+[;,]?)+$/);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel &&
+                                                                 !$mutcount);
+warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
+
+if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
+elsif (!-e $samtools) { die "\n  [!] Error: samtools doesn't exist\n\n"; }
+elsif (!-x $samtools) { die "\n  [!] Error: samtools is not executable\n\n"; }
+else {
+    
+    my $ret = `$samtools 2>&1`;
+    
+    if ($ret =~ m/Version: (.+)$/m) {
+        
+        my $version = $1;
+        
+        die "\n  [!] Error: RF Count requires SAMTools v1 or greater (Detected: v" . $version . ")\n\n" if (substr($version, 0, 1) < 1);
+        
+    }
+    else { warn "\n  [!] Warning: Unable to detect SAMTools version\n"; }
+    
+}
+
+$SIG{__DIE__} = \&cleanup;
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+        
+        rmtree($output, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+    
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error }); 
+    
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+if (!-e $tmpdir) {
+    
+    mkpath($tmpdir, { mode  => 0755,
+                      error => \$error });
+    
+    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+    
+    $madetmp = 1;
+    
+}
+else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+
+##
+# Prepare files
+##
+
+$table = Term::Table->new(indent => 2);
+$table->head("Sample", "Type", "5'-end trimming");
+
+@bam_trim5 = split(/,/, $bam_trim5);
+
+undef($bam_trim5);
+$bam_trim5 = shift(@bam_trim5) if (@bam_trim5 == 1);        # If only one value for 5' trimming in SAM/BAM files has been specified,
+                                                            # this is applied to all the passed SAM/BAM files
+
+print "\n[+] Guessing file types:\n\n";
+
+foreach my $sample (uniq(@ARGV)) {
+    
+    die "  [!] Error: Specified sample file \"" . $sample . "\" doesn't exist\n\n" if (!-e $sample);
+
+    my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
+    
+    push(@tmp, { path   => $sample,
+                 file   => $file,
+                 type   => guess_type($sample),
+                 head   => undef,
+                 trim5  => 0,
+                 nreads => 0 });
+    
+    $files{$file} = $#tmp;
+    $spacer{$file} = length($file);
+    
+    if (!$fromhead) {
+    
+        # If only one value for 5' trimming in SAM/BAM files has been specified, this is applied to all the passed SAM/BAM files
+        $tmp[-1]->{trim5} = isint($bam_trim5) &&
+                            ispositive($bam_trim5) ? $bam_trim5 : shift(@bam_trim5);
+    
+        die "  [!] Error: Less 5'-end trimming values in -t5 list than provided SAM/BAM files\n\n" if (!defined $tmp[-1]->{trim5});
+        die "  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($tmp[-1]->{trim5}) ||
+                                                                                    !isint($tmp[-1]->{trim5}));
+        
+    }
+    
+    $table->row($tmp[-1]->{file}, $tmp[-1]->{type}, ($mutcount || $covonly) ? "Ignored" : ($fromhead ? "Unknown (to be guessed)" : $tmp[-1]->{trim5} . " nt"));
+
+}
+
+%spacer = map { $_ => 1 + max(values %spacer) - $spacer{$_} } (keys %spacer);
+
+die "  [!] Error: More 5'-end trimming values in -t5 list than provided SAM/BAM files\n\n" if (@bam_trim5);
+
+$table->print();
+
+print "\n";
+
+# Starts the process manager
+$processmanager = Core::Process::Queue->new( processors => $threads,
+                                             stderr     => "/dev/null",
+                                             verbosity  => -1 );
+
+##
+# FASTA Parsing
+##
+
+print "\n[+] Getting transcripts from reference, and building count table base structure...";
+
+$seqio = Data::IO::Sequence->new(file => $multifasta);
+$rcio = RF::Data::IO::RC->new( file       => $tmpdir . $tmp . "_base.rc",
+                               index      => $output . "index.rci",
+                               buildindex => 1,
+                               mode       => "w" );
+
+while (my $entry = $seqio->read()) {
+    
+    $entry->unmask(); # Makes sequence uppercase
+    
+    my ($rentry, $offset);
+    $rentry = RF::Data::RC->new( id       => $entry->id(),
+                                 sequence => $entry->sequence(),
+                                 counts  => [(0) x $entry->length()],
+                                 coverage => [(0) x $entry->length()] );
+    ($offset) = $rcio->write($rentry);
+    
+    # Store length for later steps
+    $transcripts{$entry->id()} = $entry->length();
+    
+}
+
+$rcio->close();
+
+##
+# SAM/BAM Header validation
+##
+
+print "\n[+] Inspecting SAM/BAM file headers...";
+
+foreach my $sample (@tmp) {
+        
+    my $inheader = 0;
+    
+    open(my $fh, $samtools . " view -H " . $sample->{path} . " 2>&1 |") or die "\n\n  [!] Error: Unable to read SAM/BAM header from sample \"" . $sample->{file} . "\" (" . $! . ")\n\n";
+    while (my $row = <$fh>) {
+    
+        chomp($row); 
+    
+        if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)$/) {
+            
+            my ($id, $length) = ($1, $2);
+            
+            if (exists $transcripts{$id}) {
+            
+                die "\n\n  [!] Error: Transcript \"" . $id . "\" length from sample \"" . $sample->{file} . "\" header (" . $length . " nt) differs from reference (" . $transcripts{$id} . " nt)." .
+                    "\n             Please re-map your dataset using the same reference, and try again.\n\n" if ($transcripts{$id} != $length);
+                    
+                $inheader++;
+            
+            }
+            
+        }
+        elsif ($row =~ m/^\@PG\tID:Bowtie/ &&
+               $row =~ m/CL:"(.+?)"/ &&
+               $fromhead &&
+               !$mutcount &&
+               !$covonly) { $sample->{head} = $1; }
+    
+    }
+    close($fh);
+         
+    die "\n\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
+        "\n             Please re-map your dataset using the same reference, or provide a different reference by the -bi (or --bowtie-index) parameter.\n\n" unless($inheader);
+        
+    warn "\n\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
+         "\n               All transcripts absent in reference will be skipped.\n" if ($inheader != keys(%transcripts));
+    
+}
+
+##
+# Guessing 5'-end trimming for RT-stop count mode
+##
+
+if ($fromhead &&
+    !$mutcount &&
+    !$covonly) {
+    
+    $table = Term::Table->new(indent => 2);
+    $table->head("Sample", "5'-end trimming");
+    
+    print "\n[+] Guessing 5'-end trimmed bases from SAM/BAM file headers\n\n";
+    
+    foreach my $sample (@tmp) {
+        
+        if (defined $sample->{head}) {
+            
+            if ($sample->{head} =~ m/ (?:-5|--trim5) (\d+)/) { $sample->{trim5} = $1; }
+            
+            $table->row($sample->{file}, $sample->{trim5} . " nt");
+            
+        }
+        else { $table->row($sample->{file}, "Unable to guess (falling back to 0 nt)"); }
+        
+    }
+    
+    $table->print();
+    
+    print "\n";
+    
+}
+
+##
+# Sorting SAM/BAM files (if needed)
+##
+
+if ($sorted) { print "\n[+] Assuming that provided SAM/BAM files are already sorted. Skipping sorting..."; }
+else {
+    
+    print "\n[+] Sorting SAM/BAM files...\n";
+    
+    $processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+    
+    foreach my $sample (@tmp) {
+        
+        my $path = $tmpdir . $tmp . "_" . $sample->{file} . "_sorted." . lc($sample->{type});
+        
+        $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . $sample->{type} . " -T \"" . $tmpdir . $tmp . "_" . $sample->{file} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
+                                  id      => $sample->{file} );
+
+        $sample->{path} = $path;
+        
+    }
+    
+    $processmanager->start();
+    $processmanager->waitall();
+    
+    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
+    
+    print "\n";
+    
+}
+
+# Count mapped reads
+
+if (!$nomapcount) {
+
+    print "\n[+] Getting total mapped reads count...\n";
+    
+    $processmanager->onstart(sub { print "\n  [-] Counting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+        
+    foreach my $sample (@tmp) {
+        
+        my $path = $sample->{path};
+        
+        $processmanager->enqueue( command => sub { my $n = `samtools view -F 0x40 "$path" | cut -f1 | sort -T "$tmpdir" | uniq | wc -l`; chomp($n); return($n); },
+                                  id      => $sample->{file} );
+        
+    }
+    
+    $processmanager->start();
+    $processmanager->waitall();
+    
+    while (my $sample = $processmanager->dequeue()) {
+        
+        die "\n\n  [!] Error: Unable to count total mapped reads for sample \"" . $sample->id() . "\"\n\n" if (!ispositive($sample->exitcode()));
+        
+        $tmp[$files{$sample->id()}]->{nreads} = $sample->exitcode();
+        
+    }
+    
+    print "\n";
+    
+}
+else { print "\n[+] Skipping total mapped reads counting..."; }
+
+print "\n[+] Calculating per-base " . ($mutcount ? "mutation counts" : "RT-stops") . " and coverage. This may take a while...\n";
+
+$qcounter = Thread::Queue->new();
+$qresults = Thread::Queue->new();
+
+@pool = map{ threads->create(\&count, $qcounter, $qresults) } 1 .. $threads;
+
+$qcounter->enqueue($_) for (@tmp);
+$qcounter->enqueue((undef) x $threads);
+
+$_->join() for(@pool);
+
+print "\n\n[+] Statistics:\n";
+
+for (1 .. $threads) { while (my $result = $qresults->dequeue()) { print $result; } }
+
+print "\n\n[+] Cleaning up temporary files...";
+
+cleanup();
+
+print "\n[+] All done.\n\n";
+
+sub count {
+    
+    my ($qcounter, $qresults) = @_;
+    
+    while (my $sample = $qcounter->dequeue()) {
+    
+        my ($covered, $rcio, $stats, @counts,
+            @coverage, %last, %stats);
+        $covered = 0;
+        %last = ( id       => undef,
+                  sequence => undef );
+        %stats = ( A => 0,
+                   C => 0,
+                   G => 0,
+                   T => 0 );
+        
+        print "\n  [-] Processing sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "(Thread #" . threads->tid . ")...";
+        
+        copy($tmpdir . $tmp . "_base.rc", $output . $sample->{file} . ".rc") or $qresults->enqueue("\n  [!] Error: Unable to copy counts table structure for sample \"" .
+                                                                                                               $sample->{file} . "\" (" . $! . ")") and next;
+        
+        $rcio = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
+                                       index => $output . "index.rci",
+                                       mode  => "w+" );
+        
+        open(my $fh, $samtools . " view " . $sample->{path} . " |") or $qresults->enqueue("\n  [!] Error: Unable to read from sample \"" .
+                                                                                          $sample->{file} . "\" (" . $! . ")") and next;
+        while (!eof($fh)) {
+            
+            my ($row, $clip5, $cov, @row);
+            $row = <$fh>;
+            chomp($row);
+            @row = split(/\t/, $row);
+            ($clip5, $cov) = parsecigar($row[5]);
+            
+            next if (!exists $transcripts{$row[2]});
+            next if ($po &&
+                     $row[1] & 1 &&
+                     $row[1] & 8); # Read is one of a pair, but one mate is unmapped
+            next if ($pp &&
+                     $row[1] & 1 &&
+                     !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
+            next if ($row[1] & 16 &&
+                     (!$mutcount ||
+                      !$covonly)); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
+            next if ($clip5 &&
+                     !$mutcount &&
+                     !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
+            
+            if ($row[2] ne $last{id}) {
+                
+                if (defined $last{id}) {
+                
+                    my $rentry = RF::Data::RC->new( id       => $last{id},
+                                                    sequence => $last{sequence},
+                                                    counts   => \@counts,
+                                                    coverage => \@coverage );
+                    
+                    $rcio->write($rentry);
+                    
+                    $covered++;
+                    
+                }
+                
+                # The object $seqio is a different copy in each
+                # thread, but the filehandle is shared
+                # Locking prevents multiple threads from seeking
+                # inside file at the same moment
+                { lock($lock);
+                  my $entry = $seqio->read($row[2]);
+                  $entry->unmask();
+                  $last{id} = $row[2];
+                  $last{sequence} = $entry->sequence(); }
+            
+                @counts = (0) x $transcripts{$row[2]};
+                @coverage = (0) x $transcripts{$row[2]};
+                
+            }
+            
+            if ($mutcount ||
+                $covonly) {  # Mutations count / Coverage only modes
+                
+                # Parse the MD flag only when edit distance != 0
+                if ($row !~ m/NM:i:0/ &&
+                    $mutcount) {
+                    
+                    for (parsemd(\@row, $last{sequence})) {
+                    
+                        $counts[$_]++;
+                        $stats{substr($last{sequence}, $_, 1)}++;
+                        
+                    }
+                    
+                }
+                
+                map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
+                                       ($row[3] + $cov - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 1);
+                
+                
+            }
+            else {  # RT-stops count mode
+            
+                if ($row[3] >= 2 + $sample->{trim5} + $clip5) { # Read 5'-end is not before transcript 5'-end 
+        
+                    $row[3] -= $sample->{trim5} + $clip5 + 2;
+                    $counts[$row[3]]++;
+                    $stats{substr($last{sequence}, $row[3], 1)}++;
+                    
+                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 1);
+        
+                }
+                
+            }
+            
+        }
+        
+        # Writes the last entry after EOF has been reached
+        if (defined $last{id}) {
+        
+            my $rentry = RF::Data::RC->new( id       => $last{id},
+                                            sequence => $last{sequence},
+                                            counts   => \@counts,
+                                            coverage => \@coverage );
+            
+            $rcio->write($rentry);
+            
+            $covered++;
+            
+        }
+        
+        close($fh);
+        
+        $rcio->mappedreads($sample->{nreads});
+        $rcio->close();
+        
+        $stats = "\n  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " transcripts covered";
+        
+        if (!$covonly) {
+            
+            my $total = sum(map { $stats{$_} } qw(A C G T));
+            $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
+            
+        }
+        
+        $qresults->enqueue($stats);
+        
+    }
+    
+    $qresults->enqueue(undef);
+    
+    threads->exit();
+    
+}
+
+sub cleanup {
+    
+    if ($madetmp) {
+    
+        rmtree($tmpdir, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+    }
+    else { unlink(glob($tmpdir . $tmp . "*")); }
+    
+}
+
+sub guess_type {
+    
+    my $file = shift;
+    
+    my ($type);
+    
+    if ($file =~ m/\.([bs]am)$/i) { $type = uc($1); }
+    else {
+    
+        my ($header, $eof, @data);
+        $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
+        $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00BC\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        
+        open(my $fh, $samtools . " view " . $file . " 2>&1|") or die "\n  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        for (1 .. 10) {
+            
+            my ($row, @row);
+            
+            $row = <$fh>;
+            @row = split("\t", $row);
+            
+            die "\n  [!] Error: Sample \"" . $file . "\" is not a valid FastQ/SAM/BAM file\n\n" if (@row < 12 ||
+                                                                                                    !isint($row[3]) ||
+                                                                                                    !isdna($row[9]));
+            
+        }
+        close($fh);
+        
+        open($fh , "<:raw", $file);
+        read($fh, $data[0], 16);
+        seek($fh, -28, SEEK_END);
+        read($fh, $data[1], 28);
+        close($fh);
+        
+        if ($data[0] eq $header &&
+            $data[1] eq $eof) { $type = "BAM"; }
+        else { $type = "SAM"; }
+    
+    }
+    
+    return($type);
+    
+}
+
+sub parsemd { # SAM MD flag parser
+    
+    my ($row, $reference) = @_;
+    
+    my ($md, $llen, @pos);
+    $llen = $row->[3];
+    
+    return if (@{$row} < 11);
+    
+    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; } }
+    
+    return if (!defined $md);
+    
+    while($md =~ m/^(\d+)/) {
+        
+        my ($len, $next);
+        $len = $1;
+        $md =~ s/^$len//;
+        
+        while(substr($md, 0, 1) =~ m/^\D$/) {
+            
+            $next = substr($md, 0, 1);
+        
+            if ($next eq "^") { # Deletion
+                
+                my ($del, $start, $end, $win,
+                    $real, $disttodel, %collapsed);
+                
+                $md =~ s/^\^//;
+                $md =~ m/^([ACGNT]+)/;
+                $del = $1;
+                
+                if (!$nodel) { # Count unambiguously mapped deletions as mutations
+                
+                    # Extract a window of 20 nt (+/- 10nt) centered on the deletion
+                    $start = $len + $llen - 1 >= 9 ? $len + $llen - 1 - 9 : 0;
+                    $end = $len + $llen - 1 + length($del) + 10 < length($reference) ? $len + $llen - 1 + length($del) + 10 : length($reference) - 1;
+                    $win = substr($reference, $start, $end - $start + 1);
+                    $disttodel = $len + $llen >= 10 ? 10 : $len + $llen;
+                    $real = substr($reference, $start, $disttodel) . substr($reference, $start + $disttodel + length($del), $end - $start - $disttodel - length($del) + 1);
+                    
+                    # Slide the deletion along sequence, and build hash table
+                    $collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}++ for (0 .. length($win) - length($del));
+                    
+                    if ($collapsed{$real} == 1) { # Deletion unambiguously mapped
+                        
+                        push(@pos, $len + $llen + $_) for (0 .. length($del) - 1);
+                        
+                    }
+                    
+                }
+                
+                $len += length($del);
+                $md =~ s/^$del//;
+                
+            }
+            elsif ($next =~ m/^[ACGNT]$/) {
+                
+                push(@pos, $len + $llen - 1);
+                $md =~ s/^$next//;
+                
+                $len++;
+                
+            }
+            
+        }
+        
+        $llen += $len;
+        
+    }
+    
+    return(@pos);
+    
+}
+
+sub parsecigar {
+    
+    my $cigar = shift;
+    
+    my ($clip, $cov) = (0, 0);
+    
+    while ($cigar =~ m/^(\d+[SH])/) {
+        
+        my $clipsh = $1;
+        $cigar =~ s/^$clipsh//;
+        $clipsh =~ s/[SH]$//;
+        $clip += $clipsh;
+        
+    }
+    
+    while ($cigar =~ m/(\d+)[DM]/g) { $cov += $1; }
+    
+    $cov += $clip if ($includeclip);
+    
+    return($clip, $cov);
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    
+    die <<HELP;
+ 
+ RF Count (v2.0.0b)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Calculates per-base RT-stops/mutations and coverage
+ 
+ Usage:   rf-count [Options] Sample1.sam Sample2.bam ... Samplen.sam
+ 
+ Options                                     Description
+ -p  or --processors          <int>          Number of processors to use (Default: 1)
+ -wt or --working-threads     <int>          Number of working threads to use for each instance of SAMTools (Default: 1).
+                                             Note: RF Count executes 1 instance of SAMTools/Bowtie for each processor specified by -p.
+                                                   At least -p <processors> * -wt <threads> processors are required.
+ -t  or --tmp-dir             <string>       Temporary directory (Default: /tmp)
+ -o  or --output-dir          <string>       Output directory (Default: rf_count/)
+ -ow or --overwrite                          Overwrites output directory (if the specified path already exists)
+ -nm or --no-mapped-count                    Disables counting of total mapped reads
+                                             Note: This option should be avoided when processing SAM/BAM files from Psi-seq/Pseudo-seq
+                                                   and 2OMe-seq experiments
+ -r  or --sorted                             Assumes that the provided SAM/BAM files are already sorted lexicographically by
+                                             transcript ID, and numerically by position
+ -t5 or --trim-5prime         <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
+                                             5'-end of reads in the respective sample SAM/BAM files (Default: 0)
+                                             Note: Values must be provided in the same order as the input files.
+                                                   If a single value is specified along with multiple SAM/BAM files, it will
+                                                   be used for all files.
+ -fh or --from-header                        Instead of providing the number of bases trimmed from 5'-end of reads through the -t5 (or
+                                             --trim-5prime) parameter, RF Count will try to guess it automatically from the header of
+                                             the provided SAM/BAM files
+ -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
+                                             Note: Transcripts in this file must match transcripts in SAM/BAM file headers.
+                                             This can be omitted if a Bowtie index is specified by -bi (or --bowtie-index).
+ -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
+                                             both mates are mapped will be considered
+ -pp or --properly-paired                    When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
+                                             proper pair will be considered
+ -ic or --include-clipped                    Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops
+                                             Note: The default behavior is to exclude soft/hard-clipped reads. 
+                                                   When this option is active, the RT-stop position is considered to be the position
+                                                   preceding the clipped bases.
+                                                   This option has no effect when -m (or --count-mutations) is enabled.
+ -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+ -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
+ -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
+ 
+ 
+HELP
+    
+}
+
