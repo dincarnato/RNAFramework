@@ -65,6 +65,8 @@ sub read {
     local $/ = "\n>";
     $stream = <$fh>;
     
+    chomp();
+    
     foreach my $line (split(/\n/, $stream)) {
         
         $line = striptags($line);
@@ -74,10 +76,6 @@ sub read {
                  $line =~ m/^#/);
         
         if (!defined $header) {
-            
-            # First seq header must start with >
-            next if (!@{$self->{_prev}} &&
-                     $line !~ m/^>/);
             
             $header = $line;
             $header =~ s/^>//;
