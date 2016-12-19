@@ -110,3 +110,55 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 
+# 3. 2OMe-seq
+
+__1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
+
+```bash
+# Download/decompress reads
+$ fastq-dump -A SRR2414093		# High dNTP (1 mM) sample
+$ fastq-dump -A SRR2414094		# Low dNTP (4 nM) sample
+
+# Rename files
+$ mv SRR2414093.fastq mESC_1mM_dNTP.fastq
+$ mv SRR2414094.fastq mESC_4nM_dNTP.fastq 
+```
+<br/>
+__2.__ Prepare the reference index using ``rf-index``. To download the pre-built *Mus musculus* ribosomal RNAs reference index, simply type:
+
+```bash
+$ rf-index -pb 2 
+```
+
+This will download a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-index -pb 2 --bowtie2 
+```
+
+A folder named "*Mmusculus\_rRNA_bt/*" (or "*Mmusculus\_rRNA_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
+__3.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map -b5 5 -bi Mmusculus_rRNA_bt/reference mESC_1mM_dNTP.fastq mESC_4nM_dNTP.fastq
+```
+
+To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-map -b5 5 -bi Mmusculus_rRNA_bt/reference mESC_1mM_dNTP.fastq mESC_4nM_dNTP.fastq --bowtie2
+```
+<br/>
+__4.__ Count RT-stops in both samples using ``rf-count``:
+
+```bash
+$ rf-count -fh -f Mmusculus_rRNA_bt/reference.fa rf_map/*.bam
+```
+<br/>
+__5.__ Calculate per-base score and ratio using ``rf-modcall``:
+
+```bash
+$ rf-modcall -u rf_count/mESC_1mM_dNTP.rc -t rf_count/mESC_4nM_dNTP.rc -i rf_count/index.rci
+```
+
+A folder named "*mESC\_4nM\_dNTP\_vs\_mESC\_1mM\_dNTP/*" will be generated, containing one XML file for each analyzed transcript.
