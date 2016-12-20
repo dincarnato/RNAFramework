@@ -320,7 +320,7 @@ sub round {
     
     my $value = shift;
     
-    Core::Utils::throw("No value has been provided") if (!$value);
+    Core::Utils::throw("No value has been provided") if (!defined $value);
     Core::Utils::throw("Value must be a real number") if (!isreal($value));
     
     my $int = floor($value);

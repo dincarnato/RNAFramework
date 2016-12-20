@@ -217,17 +217,6 @@ sub call {
             @pvalues);
         $ientry = $irc->read($id);
         $imedian = $ientry->mediancoverage();
-        
-        if ($ientry->meancoverage() < $meancov ||
-            $imedian < $mediancov) {
-            
-            lock(%results);
-            $results{incov}++;
-            
-            next;
-            
-        }
-    
         $sequence = $ientry->sequence();
         @icov = $ientry->coverage();
         
