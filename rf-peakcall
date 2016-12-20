@@ -282,6 +282,9 @@ sub call {
             
             $p =  fisher(round($imean), round($imedian), round($cmean), round($cmedian), 1);
         
+            next if (!isnumeric($p) ||  # Avoid NaN and p-value >= cutoff
+                     $p >= $pvalue);
+        
             push(@peaks, { coords => [$start, $end],
                            score  => [$score],
                            pvalue => [$p] });
