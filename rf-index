@@ -200,7 +200,7 @@ if ($list ||
 else {
     
     $prefix = $assembly . "_" . $annotation;
-    $output = $prefix . "_" . ($bowtie2 ? "_bt2/" : "_bt/") if (!defined $output);
+    $output = $prefix . ($bowtie2 ? "_bt2/" : "_bt/") if (!defined $output);
     $output =~ s/\/?$/\//;
     
     ##
