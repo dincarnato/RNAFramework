@@ -143,8 +143,8 @@ if ($list ||
             
         }
         
-        mkpath($output, { mode  => 0755,
-                          error => \$error });
+        mkpath($output . "logs/", { mode  => 0755,
+                                    error => \$error });
             
         die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
         
@@ -182,7 +182,7 @@ if ($list ||
         
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Decompressing]";
         
-        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > decompression.log");
+        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > " . $output . "logs/decompression.log");
         
         die "\n\n  [!] Error: Index decompression failed." .
             "\n             Please check the log file and ensure that the \"tar\" utility is in PATH.\n\n" if ($ret);
@@ -190,7 +190,6 @@ if ($list ||
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [DONE]";
             
         unlink($output . $indexes{$prebuilt}->{file});
-        unlink(glob($output . "*.log"));
             
         print "\n[+] Successfully retrieved " . $indexes{$prebuilt}->{name} . " prebuilt index..." .
               "\n[+] All done.\n\n";
@@ -256,8 +255,8 @@ else {
         
     }
     
-    mkpath($output, { mode  => 0755,
-                      error => \$error });
+    mkpath($output . "logs/", { mode  => 0755,
+                                error => \$error });
         
     die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
     
@@ -381,9 +380,10 @@ else {
         foreach my $chromosome (sort keys %chromosomes) {
             
             my ($ua, $downloaded, $content, $reply,
-                $status, $xml, $spacer);
+                $status, $xml, $spacer, $size);
             $ua = LWP::UserAgent->new(timeout => $timeout);
             $downloaded = 0;
+            $size = 0;
             $spacer = " " x ($longer - length($chromosome) + 1);
             
             print "\n  [*] Chromosome " . $chromosome . $spacer . "[0.00%]";
@@ -391,11 +391,14 @@ else {
             $reply = $ua->get("http://genome.ucsc.edu/cgi-bin/das/" . $assembly . "/dna?segment=" . $chromosome,
                               ":content_cb" => sub {
                                 
-                                my ($chunk, $response) = @_;
+                                my ($chunk, $response, $protocol) = @_;
                                 my $percentage = 0;
-                      
+                                
+                                # We estimate the size of the data from the DNA tag
+                                if (!$size && $chunk =~ m/<DNA length="(\d+)">/) { $size = $1; }
+                                  
                                 $downloaded += length($chunk);
-                                $percentage = sprintf("%.2f", $downloaded / $response->content_length * 100);
+                                $percentage = sprintf("%.2f", $downloaded / $size * 100);
                                 
                                 print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[" . ($percentage > 100 ? "100.00" : $percentage) . "%]";
                                   
@@ -449,7 +452,7 @@ else {
     
     print "\n[+] Extracting transcript sequences...";
     
-    $ret = system($bt . " -fi " . $reference . " -fo " . $output . $prefix . "_tmp.fa -bed " . $output . $prefix . ".bed -name -s -split 2>" . $output . "fastaFromBed.log");
+    $ret = system($bt . " -fi " . $reference . " -fo " . $output . $prefix . "_tmp.fa -bed " . $output . $prefix . ".bed -name -s -split 2>" . $output . "logs/fastaFromBed.log");
     
     die "\n\n  [!] Error: Transcripts sequence extraction failed." .
         "\n             Please check the log file and ensure that the installed bedTools version is >= 2.17.0.\n\n" if ($ret);
@@ -461,18 +464,20 @@ else {
     
     print "\n[+] Building Bowtie " . ($bowtie2 ? "v2" : "v1") . " transcriptome index from sequences. Please wait...";
     
-    $ret = system($bb . " " . $output . $prefix . ".fa " . $output . $prefix . " 2>&1 > " . $output . "bowtie-build.log");
+    $ret = system($bb . " " . $output . $prefix . ".fa " . $output . $prefix . " 2>&1 > " . $output . "logs/bowtie-build.log");
     
     die "\n\n  [!] Error: Bowtie transcriptome index generation failed. Please check the log file.\n\n" if ($ret);
     
     print "\n[+] Successfully built Bowtie index for " . $annotation . " annotation on assembly " . $assembly . "..." .
           "\n[+] All done.\n\n";
     
-    unlink(glob($output . "*.log"));
-    
-    sub table_exists { return(scalar(@{$dbh->selectcol_arrayref("SHOW TABLES LIKE '" . $_[0] . "'")})); }
-    
 }
+
+rmtree($output . "logs/", { safe      => 1,
+                            keep_root => 0,
+                            error     => \$error });
+
+sub table_exists { return(scalar(@{$dbh->selectcol_arrayref("SHOW TABLES LIKE '" . $_[0] . "'")})); }
 
 sub help {
     
