@@ -700,7 +700,7 @@ sub parsemd { # SAM MD flag parser
             }
             elsif ($next =~ m/^[ACGNT]$/) {
                 
-                push(@pos, $len + $llen - 1) if (unpack("C*", substr($row->[10], $len, 1)) >= $minqual);
+                push(@pos, $len + $llen - 1) if (unpack("C*", substr($row->[10], $len, 1) - 33) >= $minqual);
                 $md =~ s/^$next//;
                 
                 $len++;
