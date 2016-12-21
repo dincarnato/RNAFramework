@@ -59,11 +59,7 @@ sub formatlongtext {
     
     my ($columns, $row, $remove, $formatted,
         @words);
-    
     $columns = (termsize())[1];
-    
-    $row = " " x $indent if ($indent);
-
     $indent = " " x $indent;
     @words = split(/\s+/, $text);
 

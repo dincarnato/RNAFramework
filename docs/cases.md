@@ -90,7 +90,7 @@ $ rf-index -pb 3 --bowtie2
 __3.__ Map reads to reference using ``rf-map``:
 
 ```bash
-$ rf-map -bi Scerevisiae_rRNA_bt2/reference Sc_Tag_rRNA.fastq --bowtie2
+$ rf-map -ca3 CTGTCTCTTATACACATCT -bs -bi Scerevisiae_rRNA_bt2/reference Sc_Tag_rRNA.fastq --bowtie2
 ```
 <br/>
 __4.__ Count mutations using ``rf-count``:
@@ -110,55 +110,108 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 
-# 3. 2OMe-seq
+# 3. m<sup>6</sup>A-seq
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
 ```bash
 # Download/decompress reads
-$ fastq-dump -A SRR2414093		# High dNTP (1 mM) sample
-$ fastq-dump -A SRR2414094		# Low dNTP (4 nM) sample
+$ fastq-dump -A SRR456551		# m6A IP sample
+$ fastq-dump -A SRR456555		# Input sample
 
 # Rename files
-$ mv SRR2414093.fastq mESC_1mM_dNTP.fastq
-$ mv SRR2414094.fastq mESC_4nM_dNTP.fastq 
+$ mv SRR456551.fastq IP.fastq
+$ mv SRR456555.fastq Input.fastq 
 ```
 <br/>
-__2.__ Prepare the reference index using ``rf-index``. To download the pre-built *Mus musculus* ribosomal RNAs reference index, simply type:
+__2.__ Prepare the reference index using ``rf-index``. To build the *Homo sapiens* mRNAs reference index, simply type:
 
 ```bash
-$ rf-index -pb 2 
+$ rf-index -g hg19 -a refGene 
 ```
 
 This will download a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
 
 ```bash
-$ rf-index -pb 2 --bowtie2 
+$ rf-index -g hg19 -a refGene --bowtie2 
 ```
 
-A folder named "*Mmusculus\_rRNA_bt/*" (or "*Mmusculus\_rRNA_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
+A folder named "*hg19\_refGene\_bt/*" (or "*hg19\_refGene\_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
 __3.__ Map reads to reference using ``rf-map``:
 
 ```bash
-$ rf-map -b5 5 -bi Mmusculus_rRNA_bt/reference mESC_1mM_dNTP.fastq mESC_4nM_dNTP.fastq
+$ rf-map -ca3 GATCGGAAGAGCGGTTCAGCAG -bm 20 -bi hg19_refGene_bt/hg19_refGene Input.fastq IP.fastq
 ```
 
 To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
 
 ```bash
-$ rf-map -b5 5 -bi Mmusculus_rRNA_bt/reference mESC_1mM_dNTP.fastq mESC_4nM_dNTP.fastq --bowtie2
+$ rf-map -ca3 GATCGGAAGAGCGGTTCAGCAG -bm 20 -bi hg19_refGene_bt/hg19_refGene Input.fastq IP.fastq --bowtie2
+```
+<br/>
+__4.__ Calculate read coverage in both samples using ``rf-count``:
+
+```bash
+$ rf-count -nm -r -co -f hg19_refGene_bt/hg19_refGene.fa rf_map/*.bam
+```
+<br/>
+__5.__ Call m<sup>6</sup>A peaks using ``rf-peakcall``:
+
+```bash
+$ rf-peakcall -c rf_count/Input.rc -I rf_count/IP.rc -i rf_count/index.rci -e 2.5
+```
+
+A BED file named "*IP\_vs\_Input.bed*" will be generated, containing the called peaks.
+
+# 4. 2OMe-seq
+
+__1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
+
+```bash
+# Download/decompress reads
+$ fastq-dump -A SRR2414087		# High dNTP (1 mM) sample
+$ fastq-dump -A SRR2414088		# Low dNTP (4 nM) sample
+
+# Rename files
+$ mv SRR2414087.fastq HeLa_1mM_dNTP.fastq
+$ mv SRR2414088.fastq HeLa_4nM_dNTP.fastq 
+```
+<br/>
+__2.__ Prepare the reference index using ``rf-index``. To download the pre-built *Homo sapiens* ribosomal RNAs reference index, simply type:
+
+```bash
+$ rf-index -pb 1 
+```
+
+This will download a Bowtie v1 reference index. To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-index -pb 1 --bowtie2 
+```
+
+A folder named "*Hsapiens\_rRNA_bt/*" (or "*Hsapiens\_rRNA_bt2/*" in case Bowtie v2 is used) will be created in the current working directory.<br/><br/>
+__3.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map -b5 5 -bi Hsapiens_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq
+```
+
+To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
+
+```bash
+$ rf-map -b5 5 -bi Hsapiens_rRNA_bt/reference HeLa_1mM_dNTP.fastq HeLa_4nM_dNTP.fastq --bowtie2
 ```
 <br/>
 __4.__ Count RT-stops in both samples using ``rf-count``:
 
 ```bash
-$ rf-count -fh -f Mmusculus_rRNA_bt/reference.fa rf_map/*.bam
+$ rf-count -r -fh -f Hsapiens_rRNA_bt/reference.fa rf_map/*.bam
 ```
 <br/>
 __5.__ Calculate per-base score and ratio using ``rf-modcall``:
 
 ```bash
-$ rf-modcall -u rf_count/mESC_1mM_dNTP.rc -t rf_count/mESC_4nM_dNTP.rc -i rf_count/index.rci
+$ rf-modcall -u rf_count/HeLa_1mM_dNTP.rc -t rf_count/HeLa_4nM_dNTP.rc -i rf_count/index.rci
 ```
 
-A folder named "*mESC\_4nM\_dNTP\_vs\_mESC\_1mM\_dNTP/*" will be generated, containing one XML file for each analyzed transcript.
+A folder named "*HeLa\_4nM\_dNTP\_vs\_HeLa\_1mM\_dNTP/*" will be generated, containing one XML file for each analyzed transcript.

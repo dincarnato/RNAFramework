@@ -54,8 +54,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $madetmp, $qcounter, $qresults, $table,
     $mutcount, $seqio, $rcio, $includeclip,
     $nomapcount, $covonly, $nodel, $pp,
-    $po, $fromhead, @bam_trim5, @tmp,
-    @pool, %transcripts, %spacer, %files);
+    $po, $fromhead, $minqual, @bam_trim5,
+    @tmp, @pool, %transcripts, %spacer,
+    %files);
 
 do {
     
@@ -78,6 +79,7 @@ do {
                 "nd|no-deletions"         => \$nodel,
                 "pp|properly-paired"      => \$pp,
                 "po|paired-only"          => \$po,
+                "mq|min-quality=i"        => \$minqual,
                 "fh|from-header"          => \$fromhead ) or help(1);
 
 };
@@ -94,6 +96,7 @@ $wt //= 1;
 $offset //= 0;
 $threads //= 1;
 $bam_trim5 //= 0;
+$minqual //= 20;
 $samtools //= which("samtools");
 
 $tmpdir =~ s/\/?$/\//;
@@ -115,6 +118,8 @@ die "\n  [!] Error: Invalid format for -t5 parameter's argument\n\n" if (defined
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel &&
                                                                  !$mutcount);
+die "\n  [!] Error: Minimum quality score value must be and integer >=0 and <= 41" if (!ispositive($minqual) ||
+                                                                                       $minqual > 41);
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
@@ -695,7 +700,7 @@ sub parsemd { # SAM MD flag parser
             }
             elsif ($next =~ m/^[ACGNT]$/) {
                 
-                push(@pos, $len + $llen - 1);
+                push(@pos, $len + $llen - 1) if (unpack("C*", substr($row->[10], $len, 1)) >= $minqual);
                 $md =~ s/^$next//;
                 
                 $len++;
@@ -783,6 +788,7 @@ sub help {
                                                    preceding the clipped bases.
                                                    This option has no effect when -m (or --count-mutations) is enabled.
  -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+ -mq or --min-quality                        Minimum quality score value to consider a mutation (Phred+33, Default: 20)
  -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
  -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
  

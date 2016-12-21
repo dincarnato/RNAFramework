@@ -36,8 +36,8 @@ my ($dbh, $sth, $assembly, $annotation,
     $reference, $output, $bb, $bt,
     $prefix, $timeout, $help, $ret,
     $overwrite, $error, $name, $bowtie2,
-    $list, $prebuilt, @columns, %columns,
-    %chromosomes, %ids);
+    $list, $prebuilt, $codonly, $nconly,
+    @columns, %columns, %chromosomes, %ids);
 
 @columns = qw(name chrom strand txStart
               txEnd cdsStart cdsEnd exonCount
@@ -50,7 +50,7 @@ do {
     GetOptions( "h|help"              => \$help,
                 "g|genome-assembly=s" => \$assembly,
                 "a|annotation=s"      => \$annotation,
-                "n|gene-name"         => \$name,
+                "n|alt-name"          => \$name,
                 "r|reference=s"       => \$reference,
                 "o|output-dir=s"      => \$output,
                 "ow|overwrite"        => \$overwrite,
@@ -59,7 +59,9 @@ do {
                 "e|bedtools=s"        => \$bt,
                 "b2|bowtie2"          => \$bowtie2,
                 "l|list"              => \$list,
-                "pb|prebuilt=i"       => \$prebuilt ) or help(1);
+                "pb|prebuilt=i"       => \$prebuilt,
+                "co|coding-only"      => \$codonly,
+                "no|noncoding-only"   => \$nconly ) or help(1);
 
 };
 
@@ -182,7 +184,7 @@ if ($list ||
         
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Decompressing]";
         
-        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > " . $output . "logs/decompression.log");
+        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > \"" . $output . "logs/decompression.log\"");
         
         die "\n\n  [!] Error: Index decompression failed." .
             "\n             Please check the log file and ensure that the \"tar\" utility is in PATH.\n\n" if ($ret);
@@ -209,6 +211,8 @@ else {
     
     die "\n  [!] Error: No genome assembly specified\n\n" unless(defined $assembly);
     die "\n  [!] Error: No genes annotation specified\n\n" unless(defined $annotation);
+    die "\n  [!] Error: Parameters -co and -no are mutually exclusive\n\n" if ($codonly &&
+                                                                               $nconly);
     die "\n  [!] Error: Timeout value must be an integer greater than 0\n\n" if (!ispositive($timeout) ||
                                                                                  !isint($timeout) ||
                                                                                  $timeout == 0);
@@ -330,7 +334,7 @@ else {
     }
     else {
         
-        open(my $wh, "| LC_ALL=C sort -k 1,1 -k 2,2n > \"" . $output . $prefix . ".bed\"") or die "\n\n  [!] Error: Unable to write annotation output BED file (" . $! . ")\n\n";
+        open(my $wh, "| LC_ALL=C sort -k 4,4 > \"" . $output . $prefix . ".bed\"") or die "\n\n  [!] Error: Unable to write annotation output BED file (" . $! . ")\n\n";
         select((select($wh), $|=1)[0]);
     
         while (my $ref = $sth->fetchrow_hashref()) {
@@ -348,7 +352,12 @@ else {
                 
             }
             
-            print $wh join("\t", $ref->{chrom}, $ref->{txStart}, $ref->{txEnd}, ($name && defined $ref->{geneName} ? $ref->{geneName} : $ref->{name}),
+            next if (($codonly &&
+                      $ref->{cdsStart} == $ref->{cdsEnd}) ||
+                     ($nconly &&
+                      $ref->{cdsStart} != $ref->{cdsEnd}));
+            
+            print $wh join("\t", $ref->{chrom}, $ref->{txStart}, $ref->{txEnd}, ($name && defined $ref->{name2} ? $ref->{name2} : $ref->{name}),
                                  0, $ref->{strand}, $ref->{cdsStart}, $ref->{cdsEnd}, "0,0,0", $ref->{exonCount}) .
                       "\t" .  join(",", @length) . ",\t" . join(",", @starts) . ",\n";
             
@@ -452,19 +461,14 @@ else {
     
     print "\n[+] Extracting transcript sequences...";
     
-    $ret = system($bt . " -fi " . $reference . " -fo " . $output . $prefix . "_tmp.fa -bed " . $output . $prefix . ".bed -name -s -split 2>" . $output . "logs/fastaFromBed.log");
+    $ret = system($bt . " -fi \"" . $reference . "\" -fo \"" . $output . $prefix . ".fa\" -bed \"" . $output . $prefix . ".bed\" -name -s -split 2> \"" . $output . "logs/fastaFromBed.log\"");
     
     die "\n\n  [!] Error: Transcripts sequence extraction failed." .
         "\n             Please check the log file and ensure that the installed bedTools version is >= 2.17.0.\n\n" if ($ret);
-        
-    print "\n[+] Sorting transcripts by ID...";
-    
-    system("awk 'BEGIN{RS=\">\"} NR>1 {gsub(\"\\n\", \"\\t\"); print \">\"\$0}' \"" . $output . $prefix . "_tmp.fa\" | LC_ALL=C sort -t ' ' -k2,2 | awk '{sub(\"\\t\", \"\\n\"); gsub(\"\\t\", \"\"); print \$0}' > \"" . $output . $prefix . ".fa\"");
-    unlink($output . $prefix . "_tmp.fa");
     
     print "\n[+] Building Bowtie " . ($bowtie2 ? "v2" : "v1") . " transcriptome index from sequences. Please wait...";
     
-    $ret = system($bb . " " . $output . $prefix . ".fa " . $output . $prefix . " 2>&1 > " . $output . "logs/bowtie-build.log");
+    $ret = system($bb . " \"" . $output . $prefix . ".fa\" \"" . $output . $prefix . "\" 2>&1 > \"" . $output . "logs/bowtie-build.log\"");
     
     die "\n\n  [!] Error: Bowtie transcriptome index generation failed. Please check the log file.\n\n" if ($ret);
     
@@ -507,7 +511,9 @@ sub help {
  Reference index building
  -g  or --genome-assembly  <string>     Genome assembly for the species of interest (Default: mm9)
  -a  or --annotation       <string>     Name of the UCSC table containing the genes annotation (Default: refFlat)
- -n  or --gene-name                     When possible, gene names will be used instead of gene IDs/accessions
+ -n  or --alt-name                      Uses alternative gene names (see UCSC tables' "name2" column)
+ -co or --coding-only                   Builds reference index using only protein-coding transcripts
+ -no or --noncoding-only                Builds reference index using only non-coding transcripts
  -t  or --timeout          <int>        Connection's timeout in seconds (Default: 180)
  -r  or --reference        <string>     Path to a FASTA file containing chromosome (or scaffold) sequences for the chosen genome assembly
                                         Note: if no file is specified, RF Index will try to obtain sequences from UCSC DAS server.

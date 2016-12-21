@@ -313,7 +313,7 @@ sub _fisher {
     }
     elsif ($complement) { $pvalue = 1 - $pvalue + $first; }
     
-    return($pvalue > 1 ? 1 : $pvalue);
+    return(min($pvalue, 1));
 
 }
       

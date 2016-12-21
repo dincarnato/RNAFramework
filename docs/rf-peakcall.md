@@ -35,8 +35,8 @@ __-md__ *or* __--merge-distance__ | int | Maximum distance (in nt) for merging n
 __-e__ *or* __--enrichment__ | float | Minimum log<sub>2</sub> enrichment in IP vs. Control for reporting a peak (&ge;1, Default: __3__)
 __-v__ *or* __--p-value__ | float | P-value cutoff for reporting a peak (0 &le; *p* &le; 1, Default: __0.05__)
 __-pc__ *or* __--pseudocount__ | float | Pseudocount added to read counts to avoid division by 0 (&gt;0, Default: __1__)
-__-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
-__-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
+__-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage in control sample below this threshold (&ge;0, Default: __0__)
+__-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage in control sample below this threshold (&ge;0, Default: __0__)
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting enrichment/p-value (1-10, Default: __3__)
 
 <br/>
