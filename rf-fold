@@ -134,8 +134,6 @@ die "\n  [!] Error: Temperature must be a positive value\n\n" unless(ispositive(
 die "\n  [!] Error: Temperature must be comprised between 0 and 100 degree Celsius\n\n" if ($t > 100);
 die "\n  [!] Error: Invalid slope value\n\n" unless(isnumeric($slope));
 die "\n  [!] Error: Invalid intercept value\n\n" unless(isnumeric($intercept));
-die "\n  [!] Error: Invalid cutoff value\n\n" unless(isnumeric($cutoff));
-die "\n  [!] Error: Cutoff value must be > 0\n\n" unless($cutoff <= 0);
 die "\n  [!] Error: Maximum distance value must be a positive integer\n\n" if (!ispositive($maxdist));
 die "\n  [!] Error: No closing GU parameter requires folding method 1 (ViennaRNA)\n\n" if ($ngu &&
                                                                                            $method != 1);

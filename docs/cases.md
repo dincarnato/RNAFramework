@@ -66,7 +66,7 @@ $ rf-fold -g S1_vs_V1_norm/
 ```
 A folder named "*structurome/*" will be generated, containing two subdirectories:<br/><br/>
 - "*structures/*": inferred structures in dot-bracket notation<br/>
-- "*images/*": structure representations in PNG format
+- "*images/*": structure representations in Postscript format
 <br/>
 
 # 2. DMS-MaPseq
