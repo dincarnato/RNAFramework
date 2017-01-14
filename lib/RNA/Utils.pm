@@ -202,8 +202,7 @@ sub listpairs {
     return() if (!isdotbracket($dotbracket) ||
                  !isdbbalanced($dotbracket));
     
-    my ($open, @dotbracket, @open, @pairs);
-    $open = 0;
+    my (@dotbracket, @open, @pairs);
     @dotbracket = split(//, $dotbracket);
 
     for(my $i = 0; $i < @dotbracket; $i++) {

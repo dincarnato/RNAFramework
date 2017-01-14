@@ -46,7 +46,7 @@ my ($help, $output, $overwrite, $configfile,
     $index, $config, $error, $threads,
     $rc, $queue, $hasctrl, $decimals,
     $nan, $remap, $denatured, $maxumut,
-    @index, @pool, @ids);
+    $raw, @index, @pool, @ids);
 
 my %results : shared;
 %results = ( cov      => 0,
@@ -82,7 +82,8 @@ do {
                 "p|processors=i"         => \$threads,
                 "n|nan=i"                => \$nan,
                 "rm|remap-reactivities"  => \$remap,
-                "mu|max-untreated-mut=s" => \$maxumut) or help(1);
+                "mu|max-untreated-mut=s" => \$maxumut,
+                "r|raw"                  => \$raw ) or help(1);
 
 };
 
@@ -417,60 +418,72 @@ sub norm {
         
         # This part works both for Ding and Rouskin (if Ding needs to be performed in sliding windows)
         
-        $winlen = $config->normwindow() > @tcounts ? @tcounts : $config->normwindow();
-        $winoffset = $winlen == @tcounts ? $winlen : $config->windowoffset();
+        if ($raw) { # Skips normalization
         
-        for(my $i = 0; $i + $winlen - 1 <= $#tcounts; $i += $winoffset) {
-        
-            my ($winseq, @wincounts, @winnorm);
-            $winseq = substr($sequence, $i, $winlen);
-            @wincounts = @tcounts[$i .. $i + $winlen - 1];
+            my $base = $config->reactivebases();
+            @norm = @tcounts;
             
-            foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
-                
-                my (@base, @basenorm);
-                
-                push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
-                
-                @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
-                @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
-                
-                $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
-                push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
-               
-            }
-            
-            for (0 .. $#winnorm) { push(@{$norm[$_ + $i]}, $winnorm[$_]); }
-        
-        }
-        
-        if (@norm < @tcounts) { # Missing the last window
-
-            my ($winseq, $i, @wincounts, @winnorm);
-            $i = @tcounts - $winlen;
-            $winseq = substr($sequence, $i);
-            @wincounts = @tcounts[$i .. $#tcounts];
-            
-            foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
-                
-                my (@base, @basenorm);
-                
-                push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
-                
-                @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
-                @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
-                
-                $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
-                push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
-                
-            }
-            
-            for (0 .. $#winnorm) { push(@{$norm[$_ + $i]}, $winnorm[$_]); }
+            undef($norm[$-[0]]) while($sequence =~ m/[^$base]/g);
             
         }
+        else { # Performs normalization
         
-        @norm = map { isnumeric(@{$_}) ? mean(@{$_}) : undef } @norm;
-        @norm = zarringhalam(@norm) if ($config->remapreactivities());
+            $winlen = $config->normwindow() > @tcounts ? @tcounts : $config->normwindow();
+            $winoffset = $winlen == @tcounts ? $winlen : $config->windowoffset();
+            
+            for(my $i = 0; $i + $winlen - 1 <= $#tcounts; $i += $winoffset) {
+            
+                my ($winseq, @wincounts, @winnorm);
+                $winseq = substr($sequence, $i, $winlen);
+                @wincounts = @tcounts[$i .. $i + $winlen - 1];
+                
+                foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
+                    
+                    my (@base, @basenorm);
+                    
+                    push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                    
+                    @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                    @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
+                    
+                    $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
+                    push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
+                   
+                }
+                
+                for (0 .. $#winnorm) { push(@{$norm[$_ + $i]}, $winnorm[$_]); }
+            
+            }
+            
+            if (@norm < @tcounts) { # Missing the last window
+    
+                my ($winseq, $i, @wincounts, @winnorm);
+                $i = @tcounts - $winlen;
+                $winseq = substr($sequence, $i);
+                @wincounts = @tcounts[$i .. $#tcounts];
+                
+                foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
+                    
+                    my (@base, @basenorm);
+                    
+                    push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                    
+                    @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                    @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
+                    
+                    $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
+                    push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
+                    
+                }
+                
+                for (0 .. $#winnorm) { push(@{$norm[$_ + $i]}, $winnorm[$_]); }
+                
+            }
+            
+            @norm = map { isnumeric(@{$_}) ? mean(@{$_}) : undef } @norm;
+            @norm = zarringhalam(@norm) if ($config->remapreactivities());
+        
+        }
         
         # Set positions behind coverage threshold to NaN  
         @norm = map { $tcov[$_] >= $nan ? $norm[$_] : undef } 0 .. $#tcov;
@@ -686,6 +699,7 @@ sub help {
                                                                                                           [2] 90% Winsorising 
                                                                                                           [3] Box-plot
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
+ -r  or --raw                                       Reports raw reactivities (skips normalization)
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: N)
  -ni or --norm-independent                          Each reactive base will be normalized independently

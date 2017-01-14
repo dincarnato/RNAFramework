@@ -280,7 +280,7 @@ $ioerr -= $_ for (values %results);
 print "\n[+] Folding statistics:\n" .
       "\n  [*] Folded transcripts:    " . $results{folded} .
       "\n  [*] Discarded transcripts: " . (@xml - $results{folded}) . " total" .
-      "\n                             " . $results{parseerr} . " xml parsing failed" .
+      "\n                             " . $results{parseerr} . " XML parsing failed" .
       "\n                             " . $results{consterr} . " constraint file generation failed" .
       "\n                             " . $results{fastaerr} . " FASTA file generation failed" .
       "\n                             " . $results{folderr} . " folding failed" .
