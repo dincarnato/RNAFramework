@@ -416,8 +416,6 @@ sub norm {
             
         }
         
-        # This part works both for Ding and Rouskin (if Ding needs to be performed in sliding windows)
-        
         if ($raw) { # Skips normalization
         
             my $base = $config->reactivebases();
@@ -505,7 +503,7 @@ sub norm {
         $attributes = { combined => "FALSE",
                         reactive => $config->reactivebases(),
                         scoring  => $config->scoremethod(1),
-                        norm     => $config->normmethod(1),
+                        norm     => $raw ? "raw" : $config->normmethod(1),
                         offset   => $winoffset,
                         win      => $winlen,
                         remap    => $config->remapreactivities(),

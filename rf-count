@@ -474,8 +474,8 @@ sub count {
                      $row[1] & 1 &&
                      !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
             next if ($row[1] & 16 &&
-                     (!$mutcount ||
-                      !$covonly)); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
+                     !$mutcount &&
+                     !$covonly); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
             next if ($clip5 &&
                      !$mutcount &&
                      !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
@@ -527,7 +527,7 @@ sub count {
                 }
                 
                 map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
-                                       ($row[3] + $cov - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 1);
+                                       ($row[3] + $cov - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 2);
                 
                 
             }
@@ -539,7 +539,7 @@ sub count {
                     $counts[$row[3]]++;
                     $stats{substr($last{sequence}, $row[3], 1)}++;
                     
-                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 1);
+                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 2);
         
                 }
                 
@@ -647,11 +647,11 @@ sub parsemd { # SAM MD flag parser
     my ($row, $reference) = @_;
     
     my ($md, $llen, @pos);
-    $llen = $row->[3];
+    $llen = $row->[3] - 1;
     
     return if (@{$row} < 11);
     
-    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; } }
+    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
     
     return if (!defined $md);
     
@@ -700,7 +700,7 @@ sub parsemd { # SAM MD flag parser
             }
             elsif ($next =~ m/^[ACGNT]$/) {
                 
-                push(@pos, $len + $llen - 1) if (unpack("C*", substr($row->[10], $len, 1) - 33) >= $minqual);
+                push(@pos, $len + $llen) if (unpack("C*", substr($row->[10], $len, 1) - 33) >= $minqual);
                 $md =~ s/^$next//;
                 
                 $len++;
