@@ -114,7 +114,7 @@ if ($list ||
         
         my ($url, $ua, $downloaded, $reply);
         $url = "http://www.rnaframework.com/data/indexes/" . ($bowtie2 ? "bowtie2/" : "bowtie/") . $indexes{$prebuilt}->{file};
-        $ua = LWP::UserAgent->new();
+        $ua = LWP::UserAgent->new(timeout => $timeout);
         $ua->default_header("Accept" => "application/x-gzip");
         $downloaded = 0;
         

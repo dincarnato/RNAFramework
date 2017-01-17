@@ -2,6 +2,11 @@
 <br />  
 <br />  
 
+!!! warning "Important"
+    __[01-17-2017] Major bug fix:__ Please update to the latest version of RNA Framework. Fixed bugs:<br/>__1.__ When ``rf-count`` was used mutation count mode, deletions were shifted downstream by 1 nt<br/>__2.__ When calculating reference coverage, additional coverage was erroneously added to the base following read's end mapping position<br/>__3.__ In mutation count and coverage only modes, reads mapping to the reverse strand were erroneously discarded
+
+<br/>
+
 ## Introduction
 
 The recent advent of Next Generation Sequencing (NGS) techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
