@@ -806,7 +806,7 @@ sub help {
     
     die <<HELP;
  
- RF Count (v2.0.0b)
+ RF Count (v2.0.2b)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
