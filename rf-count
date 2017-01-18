@@ -850,7 +850,7 @@ sub help {
  -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
  -mq or --min-quality                        Minimum quality score value to consider a mutation (Phred+33, Default: 20)
  -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
- -md or --max-deletion-len    <int>          Ignore deletions longer than this number of nucleotides (Default: 3)
+ -md or --max-deletion-len    <int>          Ignores deletions longer than this number of nucleotides (requires -m, Default: 3)
  -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
  
  
