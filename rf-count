@@ -54,9 +54,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $madetmp, $qcounter, $qresults, $table,
     $mutcount, $seqio, $rcio, $includeclip,
     $nomapcount, $covonly, $nodel, $pp,
-    $po, $fromhead, $minqual, @bam_trim5,
-    @tmp, @pool, %transcripts, %spacer,
-    %files);
+    $po, $fromhead, $minqual, $maxdel,
+    @bam_trim5, @tmp, @pool, %transcripts,
+    %spacer, %files);
 
 do {
     
@@ -77,6 +77,7 @@ do {
                 "ic|include-clipped"      => \$includeclip,
                 "co|coverage-only"        => \$covonly,
                 "nd|no-deletions"         => \$nodel,
+                "md|max-deletion-len=i"   => \$maxdel,
                 "pp|properly-paired"      => \$pp,
                 "po|paired-only"          => \$po,
                 "mq|min-quality=i"        => \$minqual,
@@ -97,6 +98,7 @@ $offset //= 0;
 $threads //= 1;
 $bam_trim5 //= 0;
 $minqual //= 20;
+$maxdel //= 3;
 $samtools //= which("samtools");
 
 $tmpdir =~ s/\/?$/\//;
@@ -539,7 +541,7 @@ sub count {
                     $counts[$row[3]]++;
                     $stats{substr($last{sequence}, $row[3], 1)}++;
                     
-                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 1 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 2);
+                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 2);
         
                 }
                 
@@ -686,7 +688,8 @@ sub parsemd { # SAM MD flag parser
                     # Slide the deletion along sequence, and build hash table
                     $collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}++ for (0 .. length($win) - length($del));
                     
-                    if ($collapsed{$real} == 1) { # Deletion unambiguously mapped
+                    if ($collapsed{$real} == 1 &&
+                        length($del) <= $maxdel) { # Deletion unambiguously mapped, and shorter than cutoff
                         
                         push(@pos, $len + $llen + $_) for (0 .. length($del) - 1);
                         
@@ -700,7 +703,7 @@ sub parsemd { # SAM MD flag parser
             }
             elsif ($next =~ m/^[ACGNT]$/) {
                 
-                push(@pos, $len + $llen) if (unpack("C*", substr($row->[10], $len, 1) - 33) >= $minqual);
+                push(@pos, $len + $llen) if (quality($row, $llen + $len) >= $minqual);
                 $md =~ s/^$next//;
                 
                 $len++;
@@ -732,12 +735,69 @@ sub parsecigar {
         
     }
     
-    while ($cigar =~ m/(\d+)[DM]/g) { $cov += $1; }
+    while ($cigar =~ m/(\d+)[DM=X]/g) { $cov += $1; }
     
     $cov += $clip if ($includeclip);
     
     return($clip, $cov);
     
+}
+
+sub quality { # Interprets CIGAR to get quality score at a given position of read
+    
+    my ($row, $pos) = @_;
+    
+    my ($rpos, $qpos, $cigar, @ops,
+        %ops);
+    $cigar = $row->[5];
+    $rpos = $row->[3] - 1;
+    $qpos = 0;
+    %ops = ( "M" => [1, 1],
+             "I" => [1, 0],
+             "D" => [0, 1],
+             "N" => [0, 1],
+             "S" => [1, 0],
+             "H" => [0, 0],
+             "P" => [0, 0],
+             "=" => [1, 1],
+             "X" => [1, 1] );
+    
+    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
+        
+        my ($n, $op) = ($1, $2);
+        push(@ops, [$n, $op]);
+        $cigar =~ s/^$n$op//;
+    
+    }
+
+    for (@ops) {
+        
+        my ($n, $op) = @{$_};
+        next if (!$ops{$op}->[0] &&
+                 !$ops{$op}->[1]);
+
+        $qpos += $n if ($ops{$op}->[0]);
+        $rpos += $n if ($ops{$op}->[1]);
+        
+        if ($rpos > $pos) {
+
+            my $diff = $rpos - $pos;
+            $rpos -= $diff;
+            $qpos -= $diff;
+        
+        }
+        
+        if ($rpos == $pos) {
+            
+            return if ($ops{$op}->[1] &&
+                       !$ops{$op}->[0]);
+            
+            return(unpack("C*", substr($row->[10], $qpos, 1)) - 33);
+            
+        }
+         
+    }
+
 }
 
 sub help {
@@ -790,6 +850,7 @@ sub help {
  -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
  -mq or --min-quality                        Minimum quality score value to consider a mutation (Phred+33, Default: 20)
  -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
+ -md or --max-deletion-len    <int>          Ignore deletions longer than this number of nucleotides (Default: 3)
  -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
  
  

@@ -92,14 +92,10 @@ sub rnapair {
     
     my ($base1, $base2, $excludegu) = @_;
     
-    my $pairs = { A => "U", U => "AG", G => "CU", C => "G" };
-    
-    if ($excludegu) {
-        
-        $pairs->{U} = "A";
-        $pairs->{G} = "C";
-        
-    }
+    my $pairs = { A => "U",
+                  U => $excludegu ? "A" : "AG",
+                  G => $excludegu ? "C" : "CU",
+                  C => "G" };
     
     $_ = dna2rna(uc($_)) for ($base1, $base2); 
     
