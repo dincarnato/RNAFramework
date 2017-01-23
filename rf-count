@@ -663,9 +663,9 @@ sub parsemd { # SAM MD flag parser
         $len = $1;
         $md =~ s/^$len//;
         
-        while(substr($md, 0, 1) =~ m/^\D$/) {
+        while($md =~ m/^(\D)/) {
             
-            $next = substr($md, 0, 1);
+            $next = $1;
         
             if ($next eq "^") { # Deletion
                 

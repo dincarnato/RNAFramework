@@ -508,6 +508,8 @@ $processmanager->waitall();
 
 while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
 
+cleanup();
+
 print "\n\n[+] All done.\n\n";
 
 sub cleanup {

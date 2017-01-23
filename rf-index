@@ -468,7 +468,7 @@ else {
     
     print "\n[+] Building Bowtie " . ($bowtie2 ? "v2" : "v1") . " transcriptome index from sequences. Please wait...";
     
-    $ret = system($bb . " \"" . $output . $prefix . ".fa\" \"" . $output . $prefix . "\" 2>&1 > \"" . $output . "logs/bowtie-build.log\"");
+    $ret = system($bb . " \"" . $output . $prefix . ".fa\" \"" . $output . $prefix . "\" > \"" . $output . "logs/bowtie-build.log\" 2>&1");
     
     die "\n\n  [!] Error: Bowtie transcriptome index generation failed. Please check the log file.\n\n" if ($ret);
     
