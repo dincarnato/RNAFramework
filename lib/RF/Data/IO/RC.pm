@@ -8,6 +8,8 @@ use RF::Data::RC;
 
 use base qw(Data::IO);
 
+use constant EOF => "\x5b\x65\x66\x72\x74\x63\x5d";
+
 our (%bases);
 
 BEGIN {
@@ -54,7 +56,7 @@ sub _validate {
         seek($fh, -7, SEEK_END);
         read($fh, $eof, 7);
     
-        $self->throw("Invalid RC file (EOF marker is absent)") unless ($eof eq "\x5b\x65\x66\x72\x74\x63\x5d");
+        $self->throw("Invalid RC file (EOF marker is absent)") unless ($eof eq EOF);
         
         $self->reset();
         
@@ -198,7 +200,7 @@ sub read {
     seek($fh, tell($fh) - 15, SEEK_SET);
     
     # The first 4 bytes are the number of mapped reads in the experiment
-    if (substr($eightbytes, -7) eq "\x5b\x65\x66\x72\x74\x63\x5d") {
+    if (substr($eightbytes, -7) eq EOF) {
     
         $self->reset() if ($self->{autoreset});
     
@@ -337,7 +339,7 @@ sub close {
         seek($fh, -15, SEEK_END) if ($self->mode() eq "w+");
         
         print $fh pack("L<*", ($self->{mappedreads} >> 32), ($self->{mappedreads} & 0xFFFFFFFF)) .  # Total mapped reads (64bit int packed as 2x uint32_t)
-                  "\x5b\x65\x66\x72\x74\x63\x5d"; # EOF Marker
+                  EOF; # EOF Marker
         
         if ($self->{buildindex} &&
             defined $self->{index}) {

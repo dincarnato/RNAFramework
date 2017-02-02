@@ -449,7 +449,8 @@ sub count {
                    G => 0,
                    T => 0 );
         
-        print "\n  [-] Processing sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "(Thread #" . threads->tid . ")...";
+        { lock($lock);
+          print "\n  [-] Processing sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "(Thread #" . threads->tid . ")..."; }
         
         copy($tmpdir . $tmp . "_base.rc", $output . $sample->{file} . ".rc") or $qresults->enqueue("\n  [!] Error: Unable to copy counts table structure for sample \"" .
                                                                                                                $sample->{file} . "\" (" . $! . ")") and next;
@@ -787,14 +788,7 @@ sub quality { # Interprets CIGAR to get quality score at a given position of rea
         
         }
         
-        if ($rpos == $pos) {
-            
-            return if ($ops{$op}->[1] &&
-                       !$ops{$op}->[0]);
-            
-            return(unpack("C*", substr($row->[10], $qpos, 1)) - 33);
-            
-        }
+        return(unpack("C*", substr($row->[10], $qpos, 1)) - 33) if ($rpos == $pos);
          
     }
 
