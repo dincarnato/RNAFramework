@@ -73,7 +73,7 @@ do {
                 "p|processors=i"             => \$threads,
                 "g|img"                      => \$img,
                 "s|svg"                      => \$svg,
-                "t|temperature=s"            => \$t,
+                "T|temperature=s"            => \$t,
                 "sl|slope=s"                 => \$slope,
                 "in|intercept=s"             => \$intercept,
                 "md|maximum-distance=i"      => \$maxdist,

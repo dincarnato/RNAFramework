@@ -24,6 +24,7 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Data::IO::Sequence;
+use Data::Sequence::Utils;
 use RNA::Utils;
 use Term::Table;
 
