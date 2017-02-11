@@ -18,7 +18,6 @@
 
 use strict;
 use Config;
-use ExtUtils::Installed;
 use File::Basename;
 use File::Path qw(mkpath rmtree);
 use FindBin qw($Bin);
@@ -51,8 +50,7 @@ my ($output, $ct, $input, $method,
     $maxdist, $constmethod, $constconversion, $beta,
     $modslope, $modintercept, $installed, $queue,
     $overwrite, $error, $help, $tmpdir,
-    $ignore, $madetmp, @xml, @pool,
-    %modules);
+    $ignore, $madetmp, @xml, @pool);
 
 my %results : shared;
 %results = ( folded   => 0,
@@ -115,11 +113,10 @@ $maxdist //= 0;
 $viennarna //= which("RNAfold");
 $rnastructure //= which("Fold");
 $data //= $ENV{DATAPATH};
+$installed = eval { require RNA; 1; };
 
 $output =~ s/\/?$/\//;
 $tmpdir =~ s/\/?$/\//;
-$installed = ExtUtils::Installed->new();
-%modules = map {$_ => 1} $installed->modules();
 
 ##
 # Input validation
@@ -167,7 +164,7 @@ if ($constmethod == 2) { # Zarringhalam et al., 2012
 }
 
 die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
-    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless(exists $modules{RNA});
+    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless($installed);
  
 print "\n[+] Checking method's requirements...";
 
@@ -297,8 +294,6 @@ print "\n\n[+] All done.\n\n";
 sub fold { # Threads
     
     my $queue = shift;
-
-    require RNA;
     
     select(undef, undef, undef, threads->tid() / 100);
     
