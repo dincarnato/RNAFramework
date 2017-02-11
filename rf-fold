@@ -235,9 +235,6 @@ if (!-e $tmpdir) {
 }
 else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
 
-$queue = Thread::Queue->new();
-@pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
-
 print "\n[+] Importing XML file(s) [0 imported]";
 
 if (-d $input) {
@@ -267,6 +264,8 @@ warn "\n\n  [!] Ignoring XML reactivity data files. Predicting MFE unconstrained
 
 print "\n[+] Building RNA structurome [Last: none]";
 
+$queue = Thread::Queue->new();
+@pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
 $queue->enqueue($_) for (@xml);
 $queue->enqueue((undef) x $threads);
 $_->join() for (@pool);
