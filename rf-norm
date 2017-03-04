@@ -128,7 +128,7 @@ $hasctrl = $config->scoremethod() =~ /^[24]$/ ? 0 : 1;
 die "\n\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 die "\n\n  [!] Error: Provided treated sample RC file doesn't exist\n\n" if (!-e $treated);
 
-if (defined $untreated) { print "\n  [!] Warning: Rouskin normalization method has been chosen. Ignoring untreated sample file...\n" if (!$hasctrl); }
+if (defined $untreated) { print "\n  [!] Warning: " . $config->scoremethod() . " scoring method has been chosen. Ignoring untreated sample file...\n" if (!$hasctrl); }
 else {
     
     if ($hasctrl) {

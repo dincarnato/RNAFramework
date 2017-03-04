@@ -262,10 +262,11 @@ else { # Single xml file
     
 warn "\n\n  [!] Ignoring XML reactivity data files. Predicting MFE unconstrained structures...\n" if ($ignore);
 
-print "\n[+] Building RNA structurome [Last: none]";
-
 $queue = Thread::Queue->new();
 @pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
+
+print "\n[+] Building RNA structurome [Last: none]";
+
 $queue->enqueue($_) for (@xml);
 $queue->enqueue((undef) x $threads);
 $_->join() for (@pool);

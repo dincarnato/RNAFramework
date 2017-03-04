@@ -128,7 +128,7 @@ Attribute     | Possible values | Description
 -------------: | :------------: | :----------
 __tool__ | rf-norm | The tool that generated this XML file
 __scoring__ | Ding, Rouskin, Siegfried, or Zubradt | Scoring method
-__norm__ | 2-8%, Winsorising 90%, Box-plot | Normalization method
+__norm__ | 2-8%, Winsorising 90%, or Box-plot | Normalization method
 __reactive__ | \[ACGT\] | Reactive bases
 __win__ | Positive integer &ge; 3 | Normalization window's size (in nt)
 __offset__ | Positive integer &ge; 1 | Offset for normalization window sliding

@@ -37,7 +37,8 @@ my ($dbh, $sth, $assembly, $annotation,
     $prefix, $timeout, $help, $ret,
     $overwrite, $error, $name, $bowtie2,
     $list, $prebuilt, $codonly, $nconly,
-    @columns, %columns, %chromosomes, %ids);
+    $sed, @columns, %columns, %chromosomes,
+    %ids);
 
 @columns = qw(name chrom strand txStart
               txEnd cdsStart cdsEnd exonCount
@@ -73,6 +74,7 @@ $assembly //= "mm9";
 $annotation //= "refFlat";
 $bb //= $bowtie2 ? which("bowtie2-build") : which("bowtie-build");
 $bt //= which("bedtools");
+$sed = which("sed");
 
 if ($list ||
     $prebuilt) {
@@ -463,8 +465,11 @@ else {
     
     $ret = system($bt . " -fi \"" . $reference . "\" -fo \"" . $output . $prefix . ".fa\" -bed \"" . $output . $prefix . ".bed\" -name -s -split 2> \"" . $output . "logs/fastaFromBed.log\"");
     
-    die "\n\n  [!] Error: Transcripts sequence extraction failed." .
+    die "\n\n  [!] Error: Transcript sequences extraction failed." .
         "\n             Please check the log file and ensure that the installed bedTools version is >= 2.17.0.\n\n" if ($ret);
+        
+    # Added to remove strand information left by newer BEDTools versions
+    system($sed . " -i" . ($^O eq "darwin" ? " '' " : " ") . "'s/([\\+-])//g' \"" . $output . $prefix . ".fa\" 2>/dev/null") if ($sed);
     
     print "\n[+] Building Bowtie " . ($bowtie2 ? "v2" : "v1") . " transcriptome index from sequences. Please wait...";
     
