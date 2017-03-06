@@ -37,7 +37,7 @@ our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                      functions => [ qw(logarithm min max mean
                                        average geomean midrange stdev
                                        mode median round sum
-                                       product maprange intersect) ] );
+                                       product maprange intersect variance) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -262,11 +262,11 @@ sub midrange {
     
 }
 
-sub stdev {
+sub variance {
     
     my @values = @_;
     
-    my ($avg, $sq, $stdev);
+    my ($avg, $sq, $variance);
     $sq = 0;
     
     Core::Utils::throw("Values array is empty") if (!@values);
@@ -276,11 +276,13 @@ sub stdev {
     
     $avg = mean(@values);
     $sq += ($avg - $_) ** 2 for (@values);
-    $stdev = sqrt($sq / @values);
+    $variance = $sq / @values;
     
-    return($stdev);
+    return($variance);
     
 }
+
+sub stdev { return(sqrt(variance(@_))); }
 
 sub mode {
     
