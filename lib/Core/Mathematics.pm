@@ -275,8 +275,8 @@ sub variance {
     return(0) if (@values == 1);
     
     $avg = mean(@values);
-    $sq += $_ ** 2 for (@values);
-    $variance = ($sq / @values) - $avg;
+    $sq += ($avg - $_) ** 2 for (@values);
+    $variance = $sq / (@values - 1);
     
     return($variance);
     
