@@ -26,7 +26,7 @@ use base qw(Exporter);
 our @EXPORT = qw(pearson spearman dhyper phyper
                  fisher percentile quantile padjust
                  pchisq qnorm pnorm pcombine
-                 gini);
+                 gini ttest);
 
 use constant EPS   => 3e-7;
 use constant FPMIN => 1e-30;
@@ -857,6 +857,35 @@ sub betacf {
     
     return($h);
 
+}
+
+
+sub ttest { # Welch's t-test
+    
+    my @data = @_;
+    
+    for (@data) {
+        
+        Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY");
+        Core::Utils::throw("Less than 2 observations in ARRAY") if (@{$_} < 2);
+        
+    }
+    
+    Core::Utils::throw("Insufficient parameters") if (@data < 2);
+    Core::Utils::throw("Values ARRAY references are empty") if (@{$data[0]} <= 1);
+    
+    my ($df, $t, $p, @variance);
+    $df = @{$data[0]} + @{$data[1]} - 2;
+    @variance = (variance(@{$data[0]}), variance(@{$data[1]}));
+    
+    $df = (($variance[0] / @{$data[0]}) + ($variance[1]/ @{$data[1]})) ** 2;
+    $df /= ($variance[0] / @{$data[0]}) ** 2 / (@{$data[0]} - 1) + ($variance[1] / @{$data[1]}) ** 2 / (@{$data[1]} - 1);
+    
+    $t = (mean(@{$data[0]}) - mean(@{$data[1]})) / sqrt(($variance[0] / @{$data[0]}) + ($variance[1] / @{$data[1]}));
+    $p = betai(0.5 * $df, 0.5, $df / ($df + $t ** 2));
+    
+    return($t, $p);
+    
 }
 
 1;
