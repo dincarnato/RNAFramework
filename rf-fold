@@ -99,7 +99,7 @@ help() if ($help);
 # Default
 $madetmp = 0;
 $output //= "structurome/";
-$tmpdir //= "/tmp/";
+$tmpdir //= $output . "/tmp/";
 $method //= 1;
 $threads //= 1;
 $t //= 37.0;

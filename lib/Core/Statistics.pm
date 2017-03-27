@@ -139,7 +139,7 @@ sub _values2ranks {
         
     }
     
-    push(@ranks, sum(@{$sorted{$_}}) / @{$sorted{$_}}) for (@values);
+    push(@ranks, mean(@{$sorted{$_}})) for (@values);
  
     return(@ranks);
     
