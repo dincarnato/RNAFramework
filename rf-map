@@ -44,7 +44,8 @@ my ($tmp, $tmpdir, $output, $trim3,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
     $bnorc, $table, $bk, $cm,
-    $mp, $mo, @tmp, %spacer, %files);
+    $mp, $mo, @tmp, %spacer,
+    %files);
 
 do {
     
@@ -67,10 +68,11 @@ do {
                 "cp|clipped"              => \$clipped,
                 "b5|bowtie-trim5=i"       => \$trim5,
                 "b3|bowtie-trim3=i"       => \$trim3,
+                "bl|bowtie-seedlen=i"     => \$bseed,
                 "bv|bowtie-v=i"           => \$bv,
                 "bn|bowtie-n=i"           => \$bn,
                 "ba|bowtie-all"           => \$ba,
-                "bm|bowtie-max=i"	      => \$bm,
+                "bm|bowtie-max=i"         => \$bm,
                 "bi|bowtie-index=s"       => \$bi,
                 "bc|bowtie-chunkmbs=i"    => \$bc,
                 "bk|bowtie-multimap=i"    => \$bk,
