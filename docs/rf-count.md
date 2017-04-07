@@ -27,6 +27,7 @@ __-m__ *or* __--count-mutations__ | | Enables mutations count instead of RT-stop
 __-mq__ *or* __--min-quality__ | int | Minimum quality score value to consider a mutation (Phred+33, Default: __20__)
 __-nd__ *or* __--no-deletions__ | | Disables counting unambiguously mapped deletions as mutations (requires ``-m``)
 __-md__ *or* __--max-deletion-len__ | int | Ignores deletions longer than this number of nucleotides (requires ``-m``, Default: __3__)
+__-me__ *or* __--min-edit-distance__ | int | Discards reads with less than this number of mutations/deletions (Default: __0__)
 __-co__ *or* __--coverage-only__ | | Only calculates per-base coverage (disables RT-stops/mutations count)
 
 <br/>
