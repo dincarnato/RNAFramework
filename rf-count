@@ -55,8 +55,8 @@ my ($tmp, $tmpdir, $output, $wt,
     $mutcount, $seqio, $rcio, $includeclip,
     $nomapcount, $covonly, $nodel, $pp,
     $po, $fromhead, $minqual, $maxdel,
-    @bam_trim5, @tmp, @pool, %transcripts,
-    %spacer, %files);
+    $minmut, @bam_trim5, @tmp, @pool,
+    %transcripts, %spacer, %files);
 
 do {
     
@@ -81,7 +81,8 @@ do {
                 "pp|properly-paired"      => \$pp,
                 "po|paired-only"          => \$po,
                 "mq|min-quality=i"        => \$minqual,
-                "fh|from-header"          => \$fromhead ) or help(1);
+                "fh|from-header"          => \$fromhead,
+                "me|min-edit-distance=i"  => \$minmut ) or help(1);
 
 };
 
@@ -99,6 +100,7 @@ $threads //= 1;
 $bam_trim5 //= 0;
 $minqual //= 20;
 $maxdel //= 3;
+$minmut //= 0;
 $samtools //= which("samtools");
 
 $tmpdir =~ s/\/?$/\//;
@@ -517,10 +519,14 @@ sub count {
                 $covonly) {  # Mutations count / Coverage only modes
                 
                 # Parse the MD flag only when edit distance != 0
-                if ($row !~ m/NM:i:0/ &&
-                    $mutcount) {
+                if ($mutcount &&
+                    $row !~ m/NM:i:0/) {
                     
-                    for (parsemd(\@row, $last{sequence})) {
+                    my @mutations = parsemd(\@row, $last{sequence});
+                    
+                    next if (@mutations < $minmut);
+                    
+                    for (@mutations) {
                     
                         $counts[$_]++;
                         $stats{substr($last{sequence}, $_, 1)}++;
@@ -845,6 +851,7 @@ sub help {
  -mq or --min-quality                        Minimum quality score value to consider a mutation (Phred+33, Default: 20)
  -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
  -md or --max-deletion-len    <int>          Ignores deletions longer than this number of nucleotides (requires -m, Default: 3)
+ -me or --min-edit-distance   <int>          Discards reads with less than this number of mutations/deletions (Default: 0)
  -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
  
  
