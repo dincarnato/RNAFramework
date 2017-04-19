@@ -104,7 +104,7 @@ $threads //= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
 $cutadapt //= which("cutadapt");
 $samtools //= which("samtools");
-$ca5 //= "CAAGTCTCAAGATGTCAGGCTGCTAG";
+$ca5 //= "GTTCAGAGTTCTACAGTCCGACGATC";
 $ca3 //= "TGGAATTCTCGGGTGCCAAGG";
 $cl //= 25;
 $cm //= 1;
@@ -612,7 +612,7 @@ sub help {
  -s  or --samtools             <string>       Path to SAMTools executable (Default: assumes SAMTools is in PATH)
  
  Cutadapt options
- -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: CAAGTCTCAAGATGTCAGGCTGCTAG)
+ -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
                                              Note: Sequence of 5' adapter will be automatically reverse-complemented
  -ca3 or --cutadapt-3adapter   <string>      Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG) 
  -cl  or --cutadapt-len        <int>         Minimum length to keep reads after clipping (>=10, Default: 25)
