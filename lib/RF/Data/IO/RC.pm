@@ -286,6 +286,10 @@ sub write {
         
         if ($self->mode() eq "w+") {
             
+            # An undefined issue exists with Perl's threads, that sometimes causes
+            # failure in index loading, thus we make a check and reload the index (just in case)
+            if (!keys %{$self->{_offsets}}) { $self->_loadindex(); }
+            
             $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!exists $self->{_lengths}->{$id});
             $self->throw("Sequence \"" . $id . "\" length differs from sequence in file \"" . $self->{file} . "\"") if ($length != $self->{_lengths}->{$id});
             
