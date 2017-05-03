@@ -91,6 +91,7 @@ else { die "\n\n  [!] Error: Options -r and -c work only with RC files\n\n" if (
                                                                                 $coverage); }
 
 # Default values
+$input =~ s/\/$//;
 $name = -d $input ? $input : fileparse($input, qr/\.[^.]*/);
 $name =~ s/\.(?:xml|rc)$//;
 $output = $name . ".wig" if (!$output);
