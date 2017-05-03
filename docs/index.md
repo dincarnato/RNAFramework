@@ -3,8 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[01-18-2017] rf-count v2.0.2b released (Major bug fixes):__<br/>__1.__ In mutation count mode, deletions were shifted downstream by 1 nt<br/>__2.__ When calculating reference coverage, additional coverage was erroneously added to the base following read's end mapping position<br/>__3.__ In mutation count and coverage only modes, reads mapping to the reverse strand were erroneously discarded<br/>__4.__ In mutation count mode, when filtering mutations by minimum quality, the wrong read position was considered
-
+    __[05-03-2017] rf-wiggle v2.0.2b released:__<br/>added the RF Wiggle tool for WIGGLE track files generation from both RC and XML files
 <br/>
 
 ## Introduction
