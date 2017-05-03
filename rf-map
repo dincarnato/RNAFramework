@@ -498,6 +498,15 @@ for (my $i = 0; $i < @tmp; $i++) {
     
 }
 
+if (!@tmp) {
+
+    cleanup();
+
+    die "\n\n  [!] Mapping failed for all samples." .
+        "\n      Please check the transcriptome assembly and try again.\n\n";
+    
+}
+
 print "\n\n[+] Sorting " . ($nobam ? "SAM" : "BAM") . " files...\n";
 
 $processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . ($nobam ? ".sam" : ".bam") . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
