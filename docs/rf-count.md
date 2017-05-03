@@ -12,7 +12,7 @@ Parameter         | Type | Description
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
 __-wt__ *or* __--working-threads__ | int | Number of working threads to use for each instance of SAMTools/Bowtie (Default: __1__).<br/>__Note:__ RT Counter executes 1 instance of SAMTools for each processor specified by ``-p``.  At least ``-p <processors>`` * ``-wt <threads>`` processors are required.
 __-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
-__-o__ *or* __--output-dir__ | string | Output directory for writing counts in RC (RNA Count) format (Default: rf_count/)
+__-o__ *or* __--output-dir__ | string | Output directory for writing counts in RC (RNA Count) format (Default: __rf_count/__)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads<br/>__Note:__ This option __must be avoided__ when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
 __-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes ``samtools`` is in PATH)

@@ -255,6 +255,8 @@ if (-d $input) {
 }
 else { # Single xml file
 
+    die "\n\n  [!] Error: Provided file lacks XML extension\n\n" if ($input !~ m/\.xml$/);
+
     print CLRRET . "[+] Importing XML file(s) [1 imported]";    
     push(@xml, $input);
     
@@ -532,7 +534,7 @@ sub help {
  Summary: Produces RNA secondary structures using structural probing data to guide folding
  
  Usage:   rf-fold [Options] XML_folder/                          # Whole transcriptome
-          rf-fold [Options] file.xml                             # Single transcript
+          rf-fold [Options] transcript.xml                       # Single transcript
  
  Options                                  Description
  -o  or --output-dir          <string>    Output directory (Default: structurome/)

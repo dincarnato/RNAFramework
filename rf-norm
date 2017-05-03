@@ -493,6 +493,18 @@ sub norm {
             if ($config->scoremethod() == 3) { @norm = map { $dcov[$_] >= $nan ? $norm[$_] : undef } 0 .. $#dcov; }
             
         }
+        
+        # This control has been added because in certain cases the coverage is above threshold, but the signal
+        # is limited to non-probed bases, thus the final reactivity profile is NaN for all bases.
+        # In such case, the transcript should be considered as non-covered, and excluded from output.
+        if (!grep {defined $_} @norm) {
+            
+            lock(%results);
+            $results{incov}++;
+                    
+            next;
+            
+        }
      
         $reactivity = join(",", map { defined $_ ? sprintf("%." . $decimals . "f", $_) : "NaN" } @norm);
         
