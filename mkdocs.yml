@@ -12,6 +12,7 @@ pages:
     - 'rf-modcall': 'rf-modcall.md'
     - 'rf-peakcall': 'rf-peakcall.md'
     - 'rf-combine': 'rf-combine.md'
+    - 'rf-wiggle': 'rf-wiggle.md'
     - 'Application cases': 'cases.md'
 markdown_extensions:
     - markdown.extensions.admonition
