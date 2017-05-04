@@ -13,7 +13,7 @@ The __score__ is a measure of the RT-stop enrichment in the CMCT treated (or low
 The __ratio__ is a relative quantitation of the modification stoichiometry at a given position in the CMCT treated (or low dNTP) sample.<br/>
 
 !!! warning "Warning"
-    When processing SAM/BAM files from with RF Count &Psi;-seq/Pseudo-seq or 2OMe-seq experiments, use of the ``--no-mapped-count`` parameter must be avoided, otherwise RF ModCall will not be able to perform library size scaling.<br/>
+    When processing SAM/BAM files from &Psi;-seq/Pseudo-seq or 2OMe-seq experiments with RF Count, __avoid using__ the ``--no-mapped-count`` parameter, otherwise RF ModCall will not be able to perform library size scaling.<br/>
     
 # Usage
 To list the required parameters, simply type:
