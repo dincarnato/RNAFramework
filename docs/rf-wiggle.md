@@ -11,7 +11,7 @@ $ rf-wiggle -h
 
 Parameter         | Type | Description
 ----------------: | :--: |:------------
-__-o__ *or* __--output-dir__ | string | Output WIGGLE file (Default: __<input>.wig__)
+__-o__ *or* __--output-dir__ | string | Output WIGGLE file (Default: __&lt;input&gt;.wig__)
 __-ow__ *or* __--overwrite__ | | Overwrites output file (if the specified file already exists)
 __-c__ *or* __--coverage__ | | Reports per-base coverage instead of RT-stop/mutation count<br/>__Note:__ this option only works for RC files.
 __-r__ *or* __--ratio__ | | Reports per-base ratio between RT-stop/mutation count and coverage<br/>__Note:__ this option only works for RC files.
