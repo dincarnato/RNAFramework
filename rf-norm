@@ -725,7 +725,7 @@ sub help {
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)
  -s  or --max-score           <float>               Score threshold for capping raw reactivities (>0, Default: 10)
  
- Scoring method #1 options (Siegfried et al., 2014)
+ Scoring method #3 options (Siegfried et al., 2014)
  -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (<=1, Default: 0.05 [5%])
  
 HELP

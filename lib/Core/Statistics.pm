@@ -64,7 +64,7 @@ sub pearson {
     }
 
     $n += (($data[0]->[$_] - $avgx) * ($data[1]->[$_] - $avgy)) for (0 .. $size - 1);
-    $r = $n / ($size * $stdevx * $stdevy);
+    $r = $n / (($size - 1) * $stdevx * $stdevy);
     $p = _pcorr($r, $size);
 
     return($r, $p);
