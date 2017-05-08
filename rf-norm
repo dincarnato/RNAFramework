@@ -46,7 +46,7 @@ my ($help, $output, $overwrite, $configfile,
     $index, $config, $error, $threads,
     $rc, $queue, $hasctrl, $decimals,
     $nan, $remap, $denatured, $maxumut,
-    $raw, @index, @pool, @ids);
+    $raw, $suffix, @index, @pool, @ids);
 
 my %results : shared;
 %results = ( cov      => 0,
@@ -97,6 +97,7 @@ $nan //= 10;
 $maxumut //= 0.05;
 $normwin //= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
 $winoffset //= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
+$suffix = $raw ? "_raw/" : "_norm/";
 
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
@@ -159,7 +160,7 @@ if (!defined $output) {
     $did = fileparse($denatured, qr/\.[^.]*/) if (defined $denatured);
     $tid = fileparse($treated, qr/\.[^.]*/);
     
-    $output = $config->scoremethod() =~ /^[24]$/ ? $tid . "_norm/" : ($config->scoremethod() == 3 ? $tid . "_vs_" . $uid . "_" . $did . "_norm/" : $tid . "_vs_" . $uid . "_norm/");
+    $output = ($config->scoremethod() =~ /^[24]$/ ? $tid : ($config->scoremethod() == 3 ? $tid . "_vs_" . $uid : $tid . "_vs_" . $uid)) . $suffix;
     
 }
 else { $output =~ s/\/?$/\//; }

@@ -29,8 +29,9 @@ use Term::Constants qw(:screen);
 
 $|++;
 
-my ($input, $output, $coverage, $overwrite,
-    $ratio, $rcio, $name, $isxml, $help, @input);
+my ($coverage, $overwrite, $ratio, $help,
+    $processed);
+$processed = 0;
 
 do {
     
@@ -38,11 +39,8 @@ do {
 
     GetOptions( "h|help"       => \$help,
                 "c|coverage"   => \$coverage,
-                "o|output=s"   => \$output,
                 "ow|overwrite" => \$overwrite,
                 "r|ratio"      => \$ratio ) or help(1);
-    
-    $input = $ARGV[0];
 
 };
 
@@ -52,156 +50,163 @@ help() if ($help);
 # Input validation
 ##
 
-die "\n  [!] Error: No sample RC/XML file or folder provided\n\n" if (!$input);
-die "\n  [!] Error: Provided path doesn't exist\n\n" if (!-e $input);
+die "\n  [!] Error: No sample RC/XML file or folder provided\n\n" if (!@ARGV);
+for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 
-print "\n[+] Importing input file(s) [0 imported]";
+print "\n[+] Processing input file(s) [Current: none]";
 
-if (!-d $input) { # Input is a file
+foreach my $input (@ARGV) {
     
-    if ($input =~ m/\.(xml|rc)$/) { $isxml = 1 if ($1 eq "xml"); }
-    else { die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n"; }
-        
-    print CLRRET . "[+] Importing input file(s) [1 imported]";
-    push(@input, $input);
+    my ($name, $rcio, $isxml, $output,
+        @input);
     
-}
-else {
+    print CLRRET . "[+] Processing input file(s) [Current: " . $input . "]";
     
-    opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
-    while(my $file = readdir($dh)) {
+    if (!-d $input) { # Input is a file
         
-        next if ($file !~ m/\.xml$/);
-        
-        push(@input, $input . "/" . $file);
-        print CLRRET . "[+] Importing input file(s) [" . scalar(@input) . " imported]";
+        if ($input =~ m/\.(xml|rc)$/) { $isxml = 1 if ($1 eq "xml"); }
+        else { die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n"; }
+            
+        push(@input, $input);
         
     }
-    closedir($dh);
-    
-    die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless(@input);
-    
-    $isxml = 1;
-    
-}
-
-if (!$isxml) { die "\n\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio &&
-                                                                                       $coverage); }
-else { die "\n\n  [!] Error: Options -r and -c work only with RC files\n\n" if ($ratio ||
-                                                                                $coverage); }
-
-# Default values
-$input =~ s/\/$//;
-$name = -d $input ? $input : fileparse($input, qr/\.[^.]*/);
-$name =~ s/\.(?:xml|rc)$//;
-$output = $name . ".wig" if (!$output);
-
-if (-e $output) {
-
-    if ($overwrite) {
+    else {
         
-        unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n";
+        opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
+        while(my $file = readdir($dh)) {
+            
+            next if ($file !~ m/\.xml$/);
+            
+            push(@input, $input . "/" . $file);
+            
+        }
+        closedir($dh);
+        
+        die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless(@input);
+        
+        $isxml = 1;
         
     }
-    else { die "\n\n  [!] Error: Output file already exists." .
-               "\n      Please use -ow (or --overwrite) to overwrite it\n\n"; }
     
-}
-
-print "\n[+] Generating WIGGLE output track...";
-
-open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output WIGGLE file (" . $! . ")\n\n";
-select((select($wh), $|=1)[0]);
-
-print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
-
-if ($isxml) {
+    if (!$isxml) { die "\n\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio &&
+                                                                                           $coverage); }
     
-    my $failed = 0;
+    # Default values
+    $input =~ s/\/$//;
+    $name = -d $input ? $input : fileparse($input, qr/\.[^.]*/);
+    $name =~ s/\.(?:xml|rc)$//;
+    $output = $name . ".wig" if (!$output);
     
-    foreach my $xml (@input) {
-        
-        my ($xmlref, $id, $reactivity, $i,
-            @reactivity);
-        
-        eval { $xmlref = XML::LibXML->load_xml(location => $xml); };
-        
-        if ($@) {
-
-            $failed++;
+    if (-e $output) {
+    
+        if ($overwrite) {
             
-            undef($@);
+            unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n";
             
-            next;
+        }
+        else { die "\n\n  [!] Error: Output file already exists." .
+                   "\n      Please use -ow (or --overwrite) to overwrite it\n\n"; }
+        
+    }
+    
+    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output WIGGLE file (" . $! . ")\n\n";
+    select((select($wh), $|=1)[0]);
+    
+    print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
+    
+    if ($isxml) {
+        
+        my $failed = 0;
+        
+        foreach my $xml (@input) {
+            
+            my ($xmlref, $id, $reactivity, $i,
+                @reactivity);
+            
+            eval { $xmlref = XML::LibXML->load_xml(location => $xml); };
+            
+            if ($@) {
+    
+                $failed++;
+                
+                undef($@);
+                
+                next;
+                
+            }
+            
+            $i = 0;
+            $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
+            $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
+            $reactivity =~ s/\s+?//g;
+            @reactivity = split(/,/, $reactivity);
+            
+            next if (!sum(grep {$_ !~ m/^NaN$/i} @reactivity));
+            
+            print $wh "variableStep chrom=" . $id . "\n";
+            
+            for (@reactivity) {
+                
+                $i++;
+                
+                print $wh $i . " " . $_ . "\n" if ($_ &&
+                                                   !isnan($_));
+                
+            }
             
         }
         
-        $i = 0;
-        $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
-        $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
-        $reactivity =~ s/\s+?//g;
-        @reactivity = split(/,/, $reactivity);
-        
-        next if (!sum(grep {$_ !~ m/^NaN$/i} @reactivity));
-        
-        print $wh "variableStep chrom=" . $id . "\n";
-        
-        for (@reactivity) {
+        if ($failed) {
             
-            $i++;
+            die "\n\n  [!] Error: Parsing failed for all XML files." .
+                "\n      Please check your input and try again\n\n" if ($failed == @input);
             
-            print $wh $i . " " . $_ . "\n" if ($_ &&
-                                               !isnan($_));
+            warn "\n\n  [!] Warning: Parsing failed for " . $failed . " XML files.\n";
+            
+        }
+        
+    }
+    else {
+    
+        eval { $rcio = RF::Data::IO::RC->new(file => $input); };
+        
+        if ($@) { die "\n\n  [!] Error: Imported file doesn't appear to be a valid RC file\n\n"; }
+        
+        while(my $entry = $rcio->read()) {
+            
+            next if (($coverage && !sum($entry->coverage())) ||
+                     (!$coverage && !sum($entry->counts())));
+            
+            my $i = 0;
+            
+            print $wh "variableStep chrom=" . $entry->id() . "\n";
+            
+            my (@counts, @coverage);
+            @counts = $entry->counts();
+            @coverage = $entry->coverage();
+            
+            for (0 .. $#coverage) {
+                
+                $i++;
+            
+                if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n" if ($coverage[$_]); }
+                elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($coverage[$_] &&
+                                                                                               $counts[$_]); }
+                else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
+            
+            }
             
         }
         
     }
     
-    if ($failed) {
-        
-        die "\n\n  [!] Error: Parsing failed for all XML files." .
-            "\n      Please check your input and try again\n\n" if ($failed == @input);
-        
-        warn "\n\n  [!] Warning: Parsing failed for " . $failed . " XML files.\n";
-        
-    }
-    
-}
-else {
+    close($wh);
 
-    eval { $rcio = RF::Data::IO::RC->new(file => $input); };
-    
-    if ($@) { die "\n\n  [!] Error: Imported file doesn't appear to be a valid RC file\n\n"; }
-    
-    while(my $entry = $rcio->read()) {
-        
-        next if (($coverage && !sum($entry->coverage())) ||
-                 (!$coverage && !sum($entry->counts())));
-        
-        my $i = 0;
-        
-        print $wh "variableStep chrom=" . $entry->id() . "\n";
-        
-        my (@counts, @coverage);
-        @counts = $entry->counts();
-        @coverage = $entry->coverage();
-        
-        for (0 .. $#coverage) {
-            
-            $i++;
-        
-            if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n" if ($coverage[$_]); }
-            elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($coverage[$_] &&
-                                                                                           $counts[$_]); }
-            else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
-        
-        }
-        
-    }
+    $processed++;
     
 }
 
-close($wh);
+print CLRRET . "[+] Processing input file(s) [Total: " . $processed . "]";
 
 print "\n[+] All done.\n\n";
 
@@ -222,7 +227,6 @@ sub help {
           rf-wiggle [Options] XML_folder/
  
  Options                                     Description
- -o  or --output       <string>              Output WIGGLE file (Default: <input>.wig)
  -ow or --overwrite                          Overwrites output file (if the specified file already exists)
  -c  or --coverage                           Reports per-base coverage instead of RT-stop/mutation count
                                              Note: this option only works for RC files
