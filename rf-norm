@@ -102,7 +102,6 @@ $suffix = $raw ? "_raw/" : "_norm/";
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
                                                                                           $decimals > 10);
-die "\n  [!] Error: Coverage threshold for reporting positions as NaN must be an integer greater than 0" if ($nan < 1);
 
 print "\n[+] Parsing configuration...";
 

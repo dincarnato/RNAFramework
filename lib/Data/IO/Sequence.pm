@@ -96,7 +96,7 @@ sub _findformat {
             # In case is Vienna format and free energy is appended to structure
             $line =~ s/\s*\([\+-]?\d+\.\d+\)$//;
             
-            $format = "Fasta" if (isseq($line) &&
+            $format = "Fasta" if (isseq($line, "-") &&
                                   !defined $format);
             $format = "Vienna" if (isdotbracket($line));
             
