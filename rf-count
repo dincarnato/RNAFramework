@@ -418,10 +418,10 @@ print "\n[+] Calculating per-base " . ($mutcount ? "mutation counts" : "RT-stops
 $qcounter = Thread::Queue->new();
 $qresults = Thread::Queue->new();
 
-@pool = map{ threads->create(\&count, $qcounter, $qresults) } 1 .. $threads;
-
 $qcounter->enqueue($_) for (@tmp);
 $qcounter->enqueue((undef) x $threads);
+
+@pool = map{ threads->create(\&count, $qcounter, $qresults) } 1 .. $threads;
 
 $_->join() for(@pool);
 

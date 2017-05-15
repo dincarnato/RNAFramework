@@ -159,11 +159,10 @@ print scalar(@ids) . " transcripts loaded." .
 $qcaller = Thread::Queue->new();
 $qresults = Thread::Queue->new();
 
-@pool = map{ threads->create(\&call, $qcaller, $qresults) } 1 .. $threads;
-
 $qcaller->enqueue($_) for (@ids);
 $qcaller->enqueue((undef) x $threads);
 
+@pool = map{ threads->create(\&call, $qcaller, $qresults) } 1 .. $threads;
 $_->join() for(@pool);
 
 if ($results{peaks}) {

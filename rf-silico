@@ -194,11 +194,12 @@ $io = Data::IO::Sequence->new(file => $multifasta);
 print "\n[+] Calculating base-pairing probabilities [Last: none]";
 
 $queue = Thread::Queue->new();
-@pool = map{ threads->create(\&partcalc, $queue) } 1 .. $threads;
 
 while(my $entry = $io->read()) { $queue->enqueue($entry); }
 
 $queue->enqueue((undef) x $threads);
+
+@pool = map{ threads->create(\&partcalc, $queue) } 1 .. $threads;
 $_->join() for (@pool);
 
 print "\n[+] Partition folding statistics:\n" .

@@ -224,11 +224,10 @@ print scalar(@ids) . " transcripts loaded." .
 
 $queue = Thread::Queue->new();
 
-@pool = map{ threads->create(\&norm, $queue) } 1 .. $threads;
-
 $queue->enqueue($_) for (@ids);
 $queue->enqueue((undef) x $threads);
 
+@pool = map{ threads->create(\&norm, $queue) } 1 .. $threads;
 $_->join() for(@pool);
 
 print "\n[+] Normalization statistics:\n" .

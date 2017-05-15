@@ -149,11 +149,10 @@ print "\n[+] Combining reactivities [Last: none]";
 
 $queue = Thread::Queue->new();
 
-@pool = map{ threads->create(\&combine, $queue) } 1 .. $threads;
-
 $queue->enqueue($_) for (keys %xml);
 $queue->enqueue((undef) x $threads);
 
+@pool = map{ threads->create(\&combine, $queue) } 1 .. $threads;
 $_->join() for(@pool);
 
 print "\n[+] Combination statistics:\n" .
