@@ -341,8 +341,6 @@ if ($hashead != @tmp) {
     open(my $hh, ">", $tmphead) or die "\n\n  [!] Error: Unable to write temporary SAM header (" . $! . ")\n\n";
     select((select($hh), $|=1)[0]);
     
-    print $hh "\@HD\tVN:1.0\tSO:unsorted\n";
-    
     $header .= "\@SQ\tSN:" . $_ . "\tLN:" . $transcripts{$_} . "\n" for (sort keys %transcripts);
     
     print $hh $header;
