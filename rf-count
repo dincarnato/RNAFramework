@@ -328,7 +328,7 @@ if ($hashead != @tmp) {
     $tmphead = $tmpdir . $tmp . "_header.sam";
     $header = "\@HD\tVN:1.0\tSO:unsorted\n";
     
-    print "\n[+] SAM header is missing for " . (@tmp - $hashead) . " samples. Re-heading...\n";
+    print "\n[+] SAM header is missing for " . (scalar(@tmp) - $hashead) . " samples. Re-heading...\n";
     
     open(my $hh, ">", $tmphead) or die "\n\n  [!] Error: Unable to write temporary SAM header (" . $! . ")\n\n";
     select((select($hh), $|=1)[0]);
