@@ -55,8 +55,8 @@ my ($tmp, $tmpdir, $output, $wt,
     $mutcount, $seqio, $rcio, $includeclip,
     $nomapcount, $covonly, $nodel, $pp,
     $po, $fromhead, $minqual, $maxdel,
-    $minmut, @bam_trim5, @tmp, @pool,
-    %transcripts, %spacer, %files);
+    $minmut, $hashead, @bam_trim5, @tmp,
+    @pool, %transcripts, %spacer, %files);
 
 do {
     
@@ -202,12 +202,13 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
     
-    push(@tmp, { path   => $sample,
-                 file   => $file,
-                 type   => guess_type($sample),
-                 head   => undef,
-                 trim5  => 0,
-                 nreads => 0 });
+    push(@tmp, { path    => $sample,
+                 file    => $file,
+                 type    => guess_type($sample),
+                 head    => undef,
+                 trim5   => 0,
+                 nreads  => 0,
+                 hashead => 0});
     
     $files{$file} = $#tmp;
     $spacer{$file} = length($file);
@@ -286,6 +287,9 @@ foreach my $sample (@tmp) {
     
         chomp($row); 
     
+        $hashead++;
+        $sample->{hashead} = 1;
+    
         if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)$/) {
             
             my ($id, $length) = ($1, $2);
@@ -310,10 +314,48 @@ foreach my $sample (@tmp) {
     close($fh);
          
     die "\n\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
-        "\n             Please re-map your dataset using the same reference, or provide a different reference by the -f (or --fasta) parameter.\n\n" unless($inheader);
+        "\n             Please re-map your dataset using the same reference, or provide a different reference by the -f (or --fasta) parameter.\n\n" if (!$inheader &&
+                                                                                                                                                         $sample->{hashead});
         
     warn "\n\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
          "\n               All transcripts absent in reference will be skipped.\n" if ($inheader != keys(%transcripts));
+    
+}
+
+if ($hashead != @tmp) {
+    
+    my ($tmphead, $header);
+    $tmphead = $tmpdir . $tmp . "_header.sam";
+    $header = "\@HD\tVN:1.0\tSO:unsorted\n";
+    
+    print "\n[+] SAM header is missing for " . (@tmp - $hashead) . " samples. Re-heading...\n";
+    
+    open(my $hh, ">", $tmphead) or die "\n\n  [!] Error: Unable to write temporary SAM header (" . $! . ")\n\n";
+    select((select($hh), $|=1)[0]);
+    
+    print $hh "\@HD\tVN:1.0\tSO:unsorted\n";
+    
+    $header .= "\@SQ\tSN:" . $_ . "\tLN:" . $transcripts{$_} . "\n" for (sort keys %transcripts);
+    
+    print $hh $header;
+    
+    close($hh);
+    
+    $header =~ s/\n/\\n/g;
+    
+    foreach my $sample (@tmp) {
+        
+        next if ($sample->{hashead});
+        
+        print "\n  [-] Re-heading sample \"" . $sample->{file} . "\"";
+        
+        # Unfortunately SAMTools cannot re-head SAM files, just BAM files, so we need a different approach
+        if ($sample->{type} eq "SAM") { system("sed -i '1s/^/$header/' " . $sample->{path}); }
+        else { system("samtools reheader -i " . $tmphead . " " . $sample->{path}); }
+        
+    }
+    
+    print "\n";
     
 }
 
