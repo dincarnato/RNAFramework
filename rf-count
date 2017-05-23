@@ -312,13 +312,16 @@ foreach my $sample (@tmp) {
     
     }
     close($fh);
+    
+    if ($sample->{hashead}) {
          
-    die "\n\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
-        "\n             Please re-map your dataset using the same reference, or provide a different reference by the -f (or --fasta) parameter.\n\n" if (!$inheader &&
-                                                                                                                                                         $sample->{hashead});
-        
-    warn "\n\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
-         "\n               All transcripts absent in reference will be skipped.\n" if ($inheader != keys(%transcripts));
+        die "\n\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
+            "\n             Please re-map your dataset using the same reference, or provide a different reference by the -f (or --fasta) parameter.\n\n" if (!$inheader);
+            
+        warn "\n\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
+             "\n               All transcripts absent in reference will be skipped.\n" if ($inheader != keys(%transcripts));
+         
+    }
     
 }
 
