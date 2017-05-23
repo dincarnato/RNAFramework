@@ -283,12 +283,17 @@ foreach my $sample (@tmp) {
     my $inheader = 0;
     
     open(my $fh, $samtools . " view -H " . $sample->{path} . " 2>&1 |") or die "\n\n  [!] Error: Unable to read SAM/BAM header from sample \"" . $sample->{file} . "\" (" . $! . ")\n\n";
+    
+    if (!eof($fh)) {
+        
+        $hashead++;
+        $sample->{hashead} = 1;
+        
+    }
+    
     while (my $row = <$fh>) {
     
         chomp($row); 
-    
-        $hashead++;
-        $sample->{hashead} = 1;
     
         if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)$/) {
             
