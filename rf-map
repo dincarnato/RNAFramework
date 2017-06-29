@@ -480,8 +480,8 @@ for (my $i = 0; $i < @tmp; $i++) {
     @stats = bowtie_log($tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log");
     $total = sum(@stats[0..2]);
     
-    # die "\n  [!] All reads for sample \"" . $sample->{file} . "\" have failed to map." .
-    #     "\n      Please check the transcriptome assembly and try again.\n\n" if ($stats[3] == 0);
+    die "\n  [!] Bowtie log processing failed." .
+        "\n      Please ensure that your Bowtie installation works properly and try again.\n\n" if (!$total);
     
     @stats = map { sprintf("%.2f", $_ / $total * 100) . "\%" } @stats;
     
