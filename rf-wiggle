@@ -23,35 +23,48 @@ use XML::LibXML;
 
 use lib $Bin . "/lib";
 
+use Core::Utils;
 use Core::Mathematics qw(:all);
+use Data::Sequence::Utils;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 
 $|++;
 
 my ($coverage, $overwrite, $ratio, $help,
-    $processed);
-$processed = 0;
+    $keepbases, %stats);
+%stats = ( processed => 0, 
+           failed    => 0 );
 
 do {
     
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"       => \$help,
-                "c|coverage"   => \$coverage,
-                "ow|overwrite" => \$overwrite,
-                "r|ratio"      => \$ratio ) or help(1);
+    GetOptions( "h|help"          => \$help,
+                "c|coverage"      => \$coverage,
+                "ow|overwrite"    => \$overwrite,
+                "r|ratio"         => \$ratio,
+                "kb|keep-bases=s" => \$keepbases ) or help(1);
 
 };
 
 help() if ($help);
+
+# Default
+$keepbases //= "N";
 
 ##
 # Input validation
 ##
 
 die "\n  [!] Error: No sample RC/XML file or folder provided\n\n" if (!@ARGV);
+die "\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio &&
+                                                                      $coverage);
+die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i &&
+                                                !isiupac($keepbases));
 for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
+
+$keepbases = $keepbases =~ m/^all$/i ? "ACGU" : dna2rna(join("", sort(uniq(iupac2nt(rna2dna($keepbases))))));
 
 print "\n[+] Processing input file(s) [Current: none]";
 
@@ -59,13 +72,17 @@ foreach my $input (@ARGV) {
     
     my ($name, $rcio, $isxml, $output,
         @input);
+    $name = $input;
+    $name =~ s/\/$//;
+    $name = fileparse($name, qr/\.[^.]*/);
+    $name =~ s/\.(?:xml|rc)$//;
+    $output = $name . ".wig" if (!$output);
     
-    print CLRRET . "[+] Processing input file(s) [Current: " . $input . "]";
+    print CLRRET . "[+] Processing input file(s) [Current: " . $name . "]";
     
     if (!-d $input) { # Input is a file
         
-        if ($input =~ m/\.(xml|rc)$/) { $isxml = 1 if ($1 eq "xml"); }
-        else { die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n"; }
+        die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n" if ($input !~ m/\.(xml|rc)$/);
             
         push(@input, $input);
         
@@ -75,27 +92,16 @@ foreach my $input (@ARGV) {
         opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
         while(my $file = readdir($dh)) {
             
-            next if ($file !~ m/\.xml$/);
+            next if ($file !~ m/\.(xml|rc)$/);
             
             push(@input, $input . "/" . $file);
             
         }
         closedir($dh);
         
-        die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless(@input);
-        
-        $isxml = 1;
+        die "\n\n  [!] Error: Specified folder doesn't contain any RC/XML file\n\n" unless(@input);
         
     }
-    
-    if (!$isxml) { die "\n\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio &&
-                                                                                           $coverage); }
-    
-    # Default values
-    $input =~ s/\/$//;
-    $name = -d $input ? $input : fileparse($input, qr/\.[^.]*/);
-    $name =~ s/\.(?:xml|rc)$//;
-    $output = $name . ".wig" if (!$output);
     
     if (-e $output) {
     
@@ -113,21 +119,21 @@ foreach my $input (@ARGV) {
     select((select($wh), $|=1)[0]);
     
     print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
-    
-    if ($isxml) {
         
-        my $failed = 0;
+    foreach my $file (@input) {
+
+        $stats{processed}++;
         
-        foreach my $xml (@input) {
-            
+        if ($file =~ m/\.xml$/) {
+        
             my ($xmlref, $id, $reactivity, $i,
-                @reactivity);
+                $sequence, @reactivity);
             
-            eval { $xmlref = XML::LibXML->load_xml(location => $xml); };
+            eval { $xmlref = XML::LibXML->load_xml(location => $file); };
             
             if ($@) {
     
-                $failed++;
+                $stats{failed}++;
                 
                 undef($@);
                 
@@ -137,6 +143,7 @@ foreach my $input (@ARGV) {
             
             $i = 0;
             $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
+            $sequence = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
             $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
             $reactivity =~ s/\s+?//g;
             @reactivity = split(/,/, $reactivity);
@@ -144,6 +151,8 @@ foreach my $input (@ARGV) {
             next if (!sum(grep {$_ !~ m/^NaN$/i} @reactivity));
             
             print $wh "variableStep chrom=" . $id . "\n";
+            
+            undef($reactivity[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
             
             for (@reactivity) {
                 
@@ -155,58 +164,74 @@ foreach my $input (@ARGV) {
             }
             
         }
-        
-        if ($failed) {
+        else {
             
-            die "\n\n  [!] Error: Parsing failed for all XML files." .
-                "\n      Please check your input and try again\n\n" if ($failed == @input);
+            eval { $rcio = RF::Data::IO::RC->new(file => $input); };
             
-            warn "\n\n  [!] Warning: Parsing failed for " . $failed . " XML files.\n";
+            if ($@) { 
             
-        }
-        
-    }
-    else {
-    
-        eval { $rcio = RF::Data::IO::RC->new(file => $input); };
-        
-        if ($@) { die "\n\n  [!] Error: Imported file doesn't appear to be a valid RC file\n\n"; }
-        
-        while(my $entry = $rcio->read()) {
-            
-            next if (($coverage && !sum($entry->coverage())) ||
-                     (!$coverage && !sum($entry->counts())));
-            
-            my $i = 0;
-            
-            print $wh "variableStep chrom=" . $entry->id() . "\n";
-            
-            my (@counts, @coverage);
-            @counts = $entry->counts();
-            @coverage = $entry->coverage();
-            
-            for (0 .. $#coverage) {
+                $stats{failed}++;
                 
-                $i++;
-            
-                if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n" if ($coverage[$_]); }
-                elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($coverage[$_] &&
-                                                                                               $counts[$_]); }
-                else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
+                undef($@);
+                
+                next;
             
             }
             
+            while(my $entry = $rcio->read()) {
+                
+                next if (($coverage && !sum($entry->coverage())) ||
+                         (!$coverage && !sum($entry->counts())));
+                
+                my ($i, $sequence, @counts, @coverage);
+                $i = 0;
+                $sequence = $entry->sequence();
+                @counts = $entry->counts();
+                @coverage = $entry->coverage();
+                
+                print $wh "variableStep chrom=" . $entry->id() . "\n";
+                
+                while($sequence =~ m/[^$keepbases]/g) {
+                    
+                    undef($counts[$-[0]]);
+                    undef($coverage[$-[0]]);
+                    
+                }
+                
+                for (0 .. $#coverage) {
+                    
+                    $i++;
+                
+                    if ($coverage[$_]) {
+                
+                        if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n"; }
+                        elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($counts[$_]); }
+                        else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
+                    
+                    }
+                
+                }
+                
+            }
+            
         }
-        
+    
     }
     
     close($wh);
-
-    $processed++;
     
 }
 
-print CLRRET . "[+] Processing input file(s) [Total: " . $processed . "]";
+print CLRRET . "[+] Processing input file(s) [Total: " . $stats{processed} . "]";
+
+if ($stats{failed}) {
+    
+    die "\n\n  [!] Error: Parsing failed for all files." .
+        "\n      Please check your input and try again\n\n" if ($stats{failed} == $stats{processed});
+    
+    warn "\n\n  [!] Warning: Parsing failed for " . $stats{failed} . " files.\n\n";
+    
+}
 
 print "\n[+] All done.\n\n";
 
@@ -224,7 +249,7 @@ sub help {
  
  Usage:   rf-wiggle [Options] Sample.rc
           rf-wiggle [Options] transcript.xml
-          rf-wiggle [Options] XML_folder/
+          rf-wiggle [Options] RC_XML_folder/
  
  Options                                     Description
  -ow or --overwrite                          Overwrites output file (if the specified file already exists)
@@ -232,6 +257,7 @@ sub help {
                                              Note: this option only works for RC files
  -r  or --ratio                              Reports per-base ratio between RT-stop/mutation count and coverage
                                              Note: this option only works for RC files
+ -kb or --keep-bases        <string>         Bases to report in the WIGGLE file (Default: N)
  
 HELP
     
