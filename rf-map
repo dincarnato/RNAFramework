@@ -125,7 +125,13 @@ $bma //= 2;
 $tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
 $bc = 2147483647 if ($bc > 2147483647);
-$ca5 = revcomp($ca5) if (isdna($ca5));
+
+if (isdna(join("", split(/,/, $ca5)))) {
+    
+    my @ca5 = split(/,/, $ca5);
+    @ca5 = map { revcomp($_) } @ca5;
+    
+}
 
 ##
 # Input validation
@@ -136,9 +142,9 @@ die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n"
                                                                                      $wt < 1);
 # Cutadapt validation
 die "\n  [!] Error: No 5' adapter's sequence provided\n\n"if (!defined $ca5);
-die "\n  [!] Error: Invalid 5' adapter's sequence\n\n" if (!isdna($ca5));
+die "\n  [!] Error: Invalid 5' adapter's sequence\n\n" if (!isdna(join("", split(/,/, $ca5))));
 die "\n  [!] Error: No 3' adapter's sequence provided\n\n"if (!defined $ca3);
-die "\n  [!] Error: Invalid 3' adapter's sequence\n\n" if (!isdna($ca3));
+die "\n  [!] Error: Invalid 3' adapter's sequence\n\n" if (!isdna(join("", split(/,/, $ca3))));
 die "\n  [!] Error: No minimum read length provided\n\n" if (!defined $cl);
 die "\n  [!] Error: Minimum read length should be an integer >= 10\n\n" if ($cl < 10);
 die "\n  [!] Error: Minimum adapter alignment should be an integer > 0\n\n" if ($cm < 1);
@@ -630,8 +636,10 @@ sub help {
  
  Cutadapt options
  -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
-                                             Note: Sequence of 5' adapter will be automatically reverse-complemented
- -ca3 or --cutadapt-3adapter   <string>      Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG) 
+                                             Note #1: Sequence of 5' adapter will be automatically reverse-complemented.
+                                             Note #2: Multiple adapter sequences can be provided as a comma-separated list.
+ -ca3 or --cutadapt-3adapter   <string>      Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG)
+                                             Note: Multiple adapter sequences can be provided as a comma-separated list.
  -cl  or --cutadapt-len        <int>         Minimum length to keep reads after clipping (>=10, Default: 25)
  -cm  or --cutadapt-min-align  <int>         Minimum alignment in nt to adapter's sequence (>0, Default: 1)
  -cp  or --clipped                           Assumes that the provided FastQ files have been already clipped
