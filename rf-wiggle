@@ -145,6 +145,7 @@ foreach my $input (@ARGV) {
             $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
             $sequence = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
             $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
+            $sequence =~ s/\s+?//g;
             $reactivity =~ s/\s+?//g;
             @reactivity = split(/,/, $reactivity);
             
