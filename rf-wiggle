@@ -64,7 +64,7 @@ die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i &&
                                                 !isiupac($keepbases));
 for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 
-$keepbases = $keepbases =~ m/^all$/i ? "ACGU" : dna2rna(join("", sort(uniq(iupac2nt(rna2dna($keepbases))))));
+$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : dna2rna(join("", sort(uniq(iupac2nt(rna2dna($keepbases))))));
 
 print "\n[+] Processing input file(s) [Current: none]";
 
