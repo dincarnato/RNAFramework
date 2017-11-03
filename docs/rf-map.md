@@ -22,7 +22,6 @@ __-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: 
  | | __Cutadapt options__
 __-ca5__ *or* __--cutadapt-5adapter__ | string | Sequence of 5' adapter to clip (Default: __CAAGTCTCAAGATGTCAGGCTGCTAG__, Illumina Small RNA 5’ Adapter)<br/>__Note #1:__ Sequence of 5' adapter will be automatically reverse-complemented<br/>__Note #2:__ Multiple adapter sequences can be provided as a comma-separated list
 __-ca3__ *or* __--cutadapt-3adapter__ | string | Sequence of 3' adapter to clip (Default: __TGGAATTCTCGGGTGCCAAGG__, Illumina Small RNA 3’ Adapter)<br/>__Note:__ Multiple adapter sequences can be provided as a comma-separated list
-
 __-cl__ *or* __--cutadapt-len__ | int | Minimum length to keep reads after clipping (&ge;10, Default: __25__)
 __-cm__ *or* __--cutadapt-min-align__ | int | Minimum alignment in nt to adapter’s sequence (&gt;0, Default: __1__)
 __-cp__ *or* __--clipped__ | | Assumes that reads have been already clipped
