@@ -21,7 +21,7 @@ In step III, a window is sled along the RNA, and MFE folding is performed, inclu
 At this stage, if step I has been peformed, pseudoknotted base-pairs are added back to the structure, and the free energy is computed. Along with the predicted structure, the windowed method also produces a WIGGLE track file containing per-base Shannon entropies.<br/>Regions with higher Shannon entropies are likely to form alternative structures, while those with low Shannon entropies correspond to regions with well-defined RNA structures, or persistent single-strandedness (Siegfried *et al*., 2014).<br/>
 Shannon entropy is calculated as: <br/>
 
-<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo><msub><mi>p</mi><mi>i&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i</mi></msub></math>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo><msub><mi>p</mi><mi>i&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i</mi></msub></math><br/>
 where *p<sub>i</sub>* is the probability of base *i* of being base-paired.
 <br/><br/>
 
@@ -92,11 +92,11 @@ __-sk__ *or* __--shapeknots__ | string | Path to ``ShapeKnots`` executable (Defa
 
 !!! note "Information"
     For additional details relatively to ShapeKnots pseudoknots detection parameters, please refer to Hajdin *et al.*, 2013 (PMID: [23503844](https://www.ncbi.nlm.nih.gov/pubmed/23503844)).
-<br/><br/>  
+<br/> 
 ## Output dot-plot files
 When options ``-dp`` or ``-dpa`` are provided, RF Fold produces a dot-plot file for each transcript being analyzed, with the following structure:<br/>
 
-```text
+```
 1549                                   # RNA's length
 i       j       -log10(Probability)	   # Header 
 8       254     0.459355416499312
@@ -119,4 +119,4 @@ i       j       -log10(Probability)	   # Header
 1499    1508    0.0137510190884233
 1500    1507    0.0402352346970943
 ```
-where *i* and *j* are the positions (1-based) of the bases involved in a given base-pair, followed by the -log<sub>10</sub> of their base-pairing probability. These files can be easily viewed using the __Integrative Genomics Viewer (IGV)__ (for additional details, please refer to the official <a href="http://software.broadinstitute.org/software/igv/">Broad Institute's IGV page</a>).
+where *i* and *j* are the positions (1-based) of the bases involved in a given base-pair, followed by the -log<sub>10</sub> of their base-pairing probability.<br/>These files can be easily viewed using the __Integrative Genomics Viewer (IGV)__ (for additional details, please refer to the official <a href="http://software.broadinstitute.org/software/igv/">Broad Institute's IGV page</a>).
