@@ -12,10 +12,11 @@ sub new {
     my %parameters = @_ if (@_);
     
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ id       => undef,
-                   sequence => undef,
-                   counts   => [],
-                   coverage => [] }, \%parameters);
+    $self->_init({ id         => undef,
+                   sequence   => undef,
+                   counts     => [],
+                   coverage   => [],
+                   readscount => 0 }, \%parameters);
     
     $self->_validate();
     $self->{sequence} = uc(rna2dna($self->{sequence})) if (defined $self->{sequence});
@@ -34,6 +35,7 @@ sub _validate {
     $self->throw("Coverage must be provided as an ARRAY reference") if (ref($self->{coverage}) ne "ARRAY");
     $self->throw("Different number of elements for RT-stops and coverage arrays") if (@{$self->{counts}} != @{$self->{coverage}});
     $self->throw("Number of elements for RT-stops and coverage arrays differs from sequence length") if (@{$self->{counts}} != length($self->{sequence}));
+    $self->throw("Transcript's mapped reads must be a positive integer") if (!isint($self->{readscount}));
     
 }
 
@@ -44,6 +46,8 @@ sub sequence { return($_[0]->{sequence}); }
 sub counts { return(wantarray() ? @{$_[0]->{counts}} : $_[0]->{counts}); }
 
 sub coverage { return(wantarray() ? @{$_[0]->{coverage}} : $_[0]->{coverage}); }
+
+sub readscount { return($_[0]->{readscount}); }
 
 sub meancoverage { return(mean(@{$_[0]->{coverage}})); }
 

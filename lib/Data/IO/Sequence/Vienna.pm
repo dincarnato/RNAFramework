@@ -18,12 +18,39 @@ package Data::IO::Sequence::Vienna;
 
 use strict;
 use Fcntl qw(SEEK_SET);
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Structure;
 use Data::Sequence::Utils;
 use RNA::Utils;
 
 use base qw(Data::IO::Sequence);
+
+sub new {
+    
+    my $class = shift;
+    my %parameters = @_ if (@_);
+    
+    my $self = $class->SUPER::new(%parameters);
+    $self->_init({ pseudoknots  => 0,
+                   noncanonical => 0,
+                   lonelypairs  => 0 }, \%parameters);
+    
+    $self->_validate();
+    
+    return ($self);
+    
+}
+
+sub _validate {
+    
+    my $self = shift;
+    
+    $self->SUPER::_validate();
+    
+    $self->throw("Pseudoknots parameter must be BOOL") if (!isbool($self->{pseudoknots}));
+    
+}
 
 sub read {
     
@@ -44,7 +71,13 @@ sub read {
         if (exists $self->{_index}->{$tsid}) { seek($fh, $self->{_index}->{$tsid}, SEEK_SET); }
         else {
             
-            if (keys %{$self->{_index}}) { $self->throw("Cannot find sequence \"" . $tsid . "\" in file"); }
+            if (keys %{$self->{_index}}) {
+                
+                $self->warn("Cannot find sequence \"" . $tsid . "\" in file");
+            
+                return;
+                
+            }
             else { $self->throw("File is not indexed"); }
             
         }
@@ -68,8 +101,7 @@ sub read {
     chomp();
     
     foreach my $line (split(/\n/, $stream)) {
-        
-        $line = striptags($line);
+
         $line =~ s/[\s\r]//g;
         
         next if ($line =~ m/^\s*$/ ||
@@ -91,10 +123,10 @@ sub read {
         else {
         
             # In case free energy is appended to structure
-            if ($line =~ m/\s*\(([\+-]?\d+\.\d+)\)$/) {
+            if ($line =~ m/\s*\(\s*([\+-]?\d+\.\d+)\)$/) {
                 
                 $energy = $1;
-                $line =~ s/\s*\([\+-]?\d+\.\d+\)$//;
+                $line =~ s/\s*\(\s*[\+-]?\d+\.\d+\)$//;
                 
                 if (isdotbracket($line)) {
                     
@@ -133,7 +165,7 @@ sub read {
         }
         
     }
-    
+
     return($self->read()) if (!defined $sequence ||
                               !defined $structure ||
                               length($sequence) != length($structure) ||
@@ -144,17 +176,31 @@ sub read {
     $self->throw("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
                                                                                                                          $self->{_index}->{$id} != $offset);
     
-    $self->{_index}->{$id} = $offset;
-    push(@{$self->{_prev}}, $offset);
+    if (exists $self->{_index}->{$id}) {
+        
+        my @offsets = map { $self->{_index}->{$_} } sort {$self->{_index}->{$a} <=> $self->{_index}->{$b}} keys %{$self->{_index}};
+        @{$self->{_prev}} = grep { $_ <= $offset } @offsets;
+        
+    }
+    else {
+        
+        $self->{_index}->{$id} = $offset;
+        push(@{$self->{_prev}}, $offset);
+        
+    }
     
-    $object = Data::Sequence::Structure->new( id          => $id,
-                                              name        => $header,
-                                              gi          => $gi,
-                                              accession   => $accession,
-                                              version     => $version,
-                                              sequence    => $sequence,
-                                              description => $description,
-                                              structure   => $structure );
+    $object = Data::Sequence::Structure->new( id           => $id,
+                                              name         => $header,
+                                              gi           => $gi,
+                                              accession    => $accession,
+                                              version      => $version,
+                                              sequence     => $sequence,
+                                              description  => $description,
+                                              structure    => $structure,
+                                              energy       => $energy,
+                                              pseudoknots  => $self->{pseudoknots},
+                                              noncanonical => $self->{noncanonical},
+                                              lonelypairs  => $self->{lonelypairs} );
     
     return($object);
     
@@ -165,7 +211,49 @@ sub write {
     my $self = shift;
     my @sequences = @_ if (@_);
     
-    $self->throw("Not implemented");
+    $self->throw("Filehandle isn't in write/append mode") unless ($self->mode() =~ m/^w\+?$/);
+    
+    foreach my $sequence (@sequences) {
+    
+        if (!blessed($sequence) ||
+            !$sequence->isa("Data::Sequence::Structure")) {
+            
+            $self->warn("Method requires a valid Data::Sequence::Structure object");
+            
+            next;
+            
+        }
+    
+        my ($fh, $id, $seq, $db,
+            $energy);
+        $fh = $self->{_fh};
+        $seq = $sequence->sequence();
+        $db = $sequence->structure() || "." x length($seq);
+        $energy = $sequence->energy() || 0;
+    
+        if (!defined $seq) {
+            
+            $self->warn("Empty Data::Sequence::Structure object");
+            
+            next;
+            
+        }
+    
+        $self->{_lastid} = 1 unless($self->{_lastid});
+    
+        if (!defined $sequence->id()) {
+            
+            $id = "Structure_" . $self->{_lastid};
+            $self->{_lastid}++;
+        
+        }
+        else { $id = $sequence->id(); }
+    
+        print $fh ">" . $id . "\n" .
+                  $seq . "\n" .
+                  $db . " (" . sprintf("%.2f", $energy) . ")\n";
+        
+    }
     
 }
 

@@ -11,3 +11,7 @@ $ rf-compare -h
 Parameter         | Type | Description
 ----------------: | :--: |:------------
 __-r__ *or* __--reference__ | string | Path to a file containing reference structures in Vienna format (dot-bracket)
+__-x__ *or* __--relaxed__ | | Uses relaxed criteria (described in Deigan *et al.*, 2009) to calculate PPV and sensitivity
+__-kn__ *or* __--keep-noncanonical__ | | Keeps non-canonical basepairs in reference structure
+__-kp__ *or* __--keep-pseudoknots__ | | Keeps pseudoknotted basepairs in reference structure
+__-kl__ *or* __--keep-lonelypairs__ | | Keeps lonely basepairs (helices of length 1 bp) in reference structure

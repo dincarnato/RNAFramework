@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Mod Call (v2.0.0b)
+# RF Mod Call (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -350,7 +350,7 @@ sub help {
     
     die <<HELP;
  
- RF Mod Call (v2.0.0b)
+ RF Mod Call (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

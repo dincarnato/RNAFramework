@@ -31,7 +31,7 @@ sub read {
     
     my ($fh, $stream, $header, $id,
         $description, $gi, $accession, $version,
-        $sequence, $object, $offset);
+        $sequence, $object, $offset, $gb);
     
     $self->throw("Filehandle isn't in read mode") unless ($self->mode() eq "r");
     
@@ -42,7 +42,13 @@ sub read {
         if (exists $self->{_index}->{$tsid}) { seek($fh, $self->{_index}->{$tsid}, SEEK_SET); }
         else {
             
-            if (keys %{$self->{_index}}) { $self->throw("Cannot find sequence \"" . $tsid . "\" in file"); }
+            if (keys %{$self->{_index}}) {
+                
+                $self->warn("Cannot find sequence \"" . $tsid . "\" in file");
+                
+                return;
+                
+            }
             else { $self->throw("File is not indexed"); }
             
         }
@@ -92,6 +98,7 @@ sub read {
     else { $id = $header; }
     
     if ($id =~ m/gi\|(\d+)\|/) { $gi = $1; }
+    if ($id =~ m/gb\|(\w+)\|/) { $gb = $1; }
     if ($id =~ m/ref\|([\w\.]+)\|/) {
         
         $accession = $1;
@@ -112,16 +119,26 @@ sub read {
                               !isseq($sequence, "-"));
     
     # Index building at runtime
-    
     $self->throw("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
                                                                                                                          $self->{_index}->{$id} != $offset);
     
-    $self->{_index}->{$id} = $offset;
-    push(@{$self->{_prev}}, $offset);
+    if (exists $self->{_index}->{$id}) {
+        
+        my @offsets = map { $self->{_index}->{$_} } sort {$self->{_index}->{$a} <=> $self->{_index}->{$b}} keys %{$self->{_index}};
+        @{$self->{_prev}} = grep { $_ <= $offset } @offsets;
+        
+    }
+    else {
+        
+        $self->{_index}->{$id} = $offset;
+        push(@{$self->{_prev}}, $offset);
+        
+    }
     
     $object = Data::Sequence->new( id          => $id,
                                    name        => $header,
                                    gi          => $gi,
+                                   gb          => $gb,
                                    accession   => $accession,
                                    version     => $version,
                                    sequence    => $sequence,

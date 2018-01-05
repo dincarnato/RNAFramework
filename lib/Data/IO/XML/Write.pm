@@ -272,7 +272,7 @@ sub _validatetag {
         $tag =~ s/ /_/g;  # Remove spaces
         
         $self->throw("Tag name cannot begin with the reserved word \"XML\"") if ($tag =~ m/^XML/i);
-        $self->throw("Tag name can contain only letters, digits, and underscores") if ($tag !~ m/^\w+$/);
+        print "\ntag: $tag\n" and $self->throw("Tag name can contain only letters, digits, hyphens and underscores") if ($tag !~ m/^[\w-]+$/);
         $self->throw("Tag name must begin with a letter or an underscore") if ($tag =~ m/^\d/);
         
     }

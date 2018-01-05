@@ -8,7 +8,8 @@ use RF::Data::RC;
 
 use base qw(Data::IO);
 
-use constant EOF => "\x5b\x65\x66\x72\x74\x63\x5d";
+use constant EOF => "\x5b\x65\x6f\x66\x72\x63\x5d";
+use constant VERSION => 1;
 
 our (%bases);
 
@@ -89,8 +90,8 @@ sub _loadindex {
             read($ih, $data, $idlen);
             $id = substr($data, 0, -1); # Removes the "\x00" string terminator
 
-            read($ih, $data, 4);
-            $offset = unpack("L<", $data);
+            read($ih, $data, 8);
+            $offset = unpack("Q<", $data);
             $self->{_offsets}->{$id} = $offset; # Stores the offset for ID
             
             # Validates offset
@@ -116,7 +117,7 @@ sub _loadindex {
             $length);
         $offset = 0;
         
-        while($offset < (-s $self->{file}) - 15) { # While the 8 + 7 bytes of total mapped reads + EOF Marker are reached
+        while($offset < (-s $self->{file}) - 17) { # While the 8 + 2 + 7 bytes of total mapped reads + RC version + EOF Marker are reached
             
             read($fh, $data, 4);
             $idlen = unpack("L<", $data);
@@ -130,7 +131,7 @@ sub _loadindex {
             $self->{_offsets}->{$id} = $offset;
             $self->{_lengths}->{$id} = $length if ($self->mode() eq "w+");
             
-            $offset += 4 * ($length * 2 + 2) + length($id) + 1 + ($length + ($length % 2)) / 2;
+            $offset += 4 * ($length * 2 + 3) + length($id) + 1 + ($length + ($length % 2)) / 2;
             
             seek($fh, $offset, SEEK_SET); 
             
@@ -146,7 +147,7 @@ sub _loadindex {
                 
                 print $ih pack("L<", length($id) + 1) .                 # len_transcript_id (int32_t)
                           $id . "\0" .                                  # transcript_id (char[len_transcript_id])
-                          pack("L<", $self->{_offsets}->{$id});         # offset in count table (int32_t)
+                          pack("Q<", $self->{_offsets}->{$id});         # offset in count table (int32_t)
                 
             }
          
@@ -156,12 +157,11 @@ sub _loadindex {
         
     }
     
-    seek($fh, -15, SEEK_END);
+    seek($fh, -17, SEEK_END);
     read($fh, $n, 8);
     
     # Unpack the 64bit int
-    @n = unpack("L<*", $n);
-    $self->mappedreads(($n[0] << 32) + $n[1]);
+    $self->mappedreads(unpack("Q<", $n));
     
     $self->reset();
     
@@ -174,7 +174,7 @@ sub read {
     
     my ($fh, $data, $idlen, $id,
         $length, $sequence, $entry, $eightbytes,
-        @stops, @coverage);
+        $mappedreads, @stops, @coverage);
     
     $self->throw("Filehandle isn't in read mode") unless ($self->mode() eq "r");
     
@@ -196,8 +196,8 @@ sub read {
     }
     
     # Checks whether RTCEOF marker has been reached
-    read($fh, $eightbytes, 15);
-    seek($fh, tell($fh) - 15, SEEK_SET);
+    read($fh, $eightbytes, 17);
+    seek($fh, tell($fh) - 17, SEEK_SET);
     
     # The first 4 bytes are the number of mapped reads in the experiment
     if (substr($eightbytes, -7) eq EOF) {
@@ -235,10 +235,14 @@ sub read {
     read($fh, $data, 4 * $length);
     @coverage = unpack("L<*", $data);
     
-    $entry = RF::Data::RC->new( id       => $id,
-                                sequence => $sequence,
-                                counts   => \@stops,
-                                coverage => \@coverage );
+    read($fh, $data, 4);
+    $mappedreads = unpack("L<", $data);
+    
+    $entry = RF::Data::RC->new( id         => $id,
+                                sequence   => $sequence,
+                                counts     => \@stops,
+                                coverage   => \@coverage,
+                                readscount => $mappedreads );
     
     return($entry);
     
@@ -247,17 +251,17 @@ sub read {
 sub write {
     
     my $self = shift;
-    my @sequences = @_ if (@_);
+    my @entries = @_ if (@_);
     
     my ($fh, @offsets);
     $fh = $self->{_fh};
     
     $self->throw("Filehandle isn't in write\/append mode") unless ($self->mode() =~ m/^w/);
     
-    foreach my $sequence (@sequences) {
+    foreach my $entry (@entries) {
     
-        if (!blessed($sequence) ||
-            !$sequence->isa("RF::Data::RC")) {
+        if (!blessed($entry) ||
+            !$entry->isa("RF::Data::RC")) {
             
             $self->warn("Method requires a valid RF::Data::RC object");
             
@@ -265,13 +269,14 @@ sub write {
             
         }
     
-        my ($id, $seq, $length, @counts,
-            @coverage);
-        $id = $sequence->id();
-        $seq = join("", map{sprintf("%x", $bases{$_})} split(//, $sequence->sequence()));
+        my ($id, $seq, $length, $mappedreads,
+            @counts, @coverage);
+        $id = $entry->id();
+        $seq = join("", map{sprintf("%x", $bases{$_})} split(//, $entry->sequence()));
         $length = length($seq);
-        @counts = $sequence->counts();
-        @coverage = $sequence->coverage();
+        $mappedreads = $entry->readscount();
+        @counts = $entry->counts();
+        @coverage = $entry->coverage();
     
         if (!defined $seq ||
             !defined $id ||
@@ -301,14 +306,15 @@ sub write {
                   $id . "\0" .                              # transcript_id (char[len_transcript_id])
                   pack("L<", length($seq)) .                # len_seq (uint32_t)
                   pack("H*", $seq) .                        # seq (uint8_t[(len_seq+1)/2])
-                  pack("L<*", @counts, @coverage);          # stops, cov (uint32_t[len_seq x 2])
+                  pack("L<*", @counts, @coverage),          # stops, cov (uint32_t[len_seq x 2])
+                  pack("L<", $mappedreads);
         
         if ($self->{buildindex} &&
             $self->{mode} ne "w+") {
              
             $self->{_offsets}->{$id} = $self->{_lastoffset};
             push(@offsets, $self->{_lastoffset});
-            $self->{_lastoffset} += 4 * ($length * 2 + 2) + length($id) + 1 + ($length + ($length % 2)) / 2;
+            $self->{_lastoffset} += 4 * ($length * 2 + 3) + length($id) + 1 + ($length + ($length % 2)) / 2;
             
         }
         
@@ -340,9 +346,10 @@ sub close {
     
         my $fh = $self->{_fh};
         
-        seek($fh, -15, SEEK_END) if ($self->mode() eq "w+");
+        seek($fh, -17, SEEK_END) if ($self->mode() eq "w+");
         
-        print $fh pack("L<*", ($self->{mappedreads} >> 32), ($self->{mappedreads} & 0xFFFFFFFF)) .  # Total mapped reads (64bit int packed as 2x uint32_t)
+        print $fh pack("Q<", $self->{mappedreads}) .  # Total mapped reads (64bit int)
+                  pack("S<", VERSION) .
                   EOF; # EOF Marker
         
         if ($self->{buildindex} &&
@@ -355,7 +362,7 @@ sub close {
                 
                 print $ih pack("L<", length($id) + 1) .                 # len_transcript_id (uint32_t)
                           $id . "\0" .                                  # transcript_id (char[len_transcript_id])
-                          pack("L<", $self->{_offsets}->{$id});         # offset in count table (uint32_t)
+                          pack("Q<", $self->{_offsets}->{$id});         # offset in count table (uint64_t)
                           
             }
             

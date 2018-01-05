@@ -26,7 +26,7 @@ use base qw(Exporter);
 our @EXPORT = qw(pearson spearman dhyper phyper
                  fisher percentile quantile padjust
                  pchisq qnorm pnorm pcombine
-                 gini ttest);
+                 gini ttest chisq);
 
 use constant EPS   => 3e-7;
 use constant FPMIN => 1e-30;
@@ -57,9 +57,9 @@ sub pearson {
     if (!$stdevx ||
 	!$stdevy) { 
 
-	Core::Utils::warn("Standard deviation is 0");
-
-	return(nan, 1); 
+		Core::Utils::warn("Standard deviation is 0");
+	
+		return(nan, 1); 
 
     }
 
@@ -211,6 +211,32 @@ sub dhyper {   # Hypergeometicd returns the probability of having EXACTLY $i suc
    
     return(exp($loghyp1 - $loghyp2));
     
+}
+
+sub chisq {
+	
+    # Contingency matrix:
+    #
+    #      n11  n12
+    #      n21  n22
+    #
+	
+	my ($n11, $n12, $n21, $n22, $twosided) = @_;
+	
+	if ($n11 * $n12 * $n21 * $n22 == 0) {
+            
+        Core::Utils::warn("chisq() function returned a NaN");
+            
+        return(nan, nan);
+            
+    }
+	
+	my ($n, $chisq);
+	$n = $n11 + $n12 + $n21 + $n22;
+	$chisq = ($n * (abs($n11 * $n22 - $n12 * $n21) - 0.5 * $n) ** 2) / (($n11 + $n12) * ($n21 + $n22) * ($n11 + $n21) * ($n12 + $n22));
+	
+	return($chisq, pchisq($chisq));
+	
 }
 
 sub fisher {

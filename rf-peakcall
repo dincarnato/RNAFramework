@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Peak Call (v2.0.0b)
+# RF PeakCall (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -43,7 +43,7 @@ my ($help, $output, $overwrite, $win,
     $control, $ip, $index, $enrich,
     $threads, $rc, $qcaller, $qresults,
     $decimals, $offset, $mergedist, @index,
-    @pool, @ids);
+    @pool, @ids, @imeans);
 
 my %results : shared;
 %results = ( cov      => 0,
@@ -92,8 +92,8 @@ $mediancov //= 0;
 
 die "\n  [!] Error: No IP sample RC file provided\n\n" if (!defined $ip);
 die "\n  [!] Error: Provided IP sample RC file doesn't exist\n\n" if (!-e $ip);
-die "\n  [!] Error: No control sample RC file provided\n\n" if (!defined $control);
-die "\n  [!] Error: Provided control sample RC file doesn't exist\n\n" if (!-e $control);
+die "\n  [!] Error: Provided control sample RC file doesn't exist\n\n" if (defined $control &&
+                                                                           !-e $control);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
                                                                                           $decimals > 10);
@@ -110,14 +110,15 @@ die "\n  [!] Error: Mean coverage value must be >= 0\n\n" if (!ispositive($meanc
 die "\n  [!] Error: Median coverage value must be numeric\n\n" if (!isnumeric($mediancov));
 die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($mediancov));
 
+warn "\n  [!] Warning: No control sample RC file provided. Background will be estimated on IP sample only.\n" if (!defined $control);
 
 if (!defined $output) {
     
     my ($cid, $iid);
-    $cid = fileparse($control, qr/\.[^.]*/);
+    $cid = fileparse($control, qr/\.[^.]*/) if (defined $control);
     $iid = fileparse($ip, qr/\.[^.]*/);
     
-    $output = $iid . "_vs_" . $cid . ".bed";
+    $output = (defined $control ? $iid . "_vs_" . $cid : $iid) . ".bed";
     
 }
 else { $output =~ s/(\.bed)?$/.bed/; }
@@ -141,7 +142,7 @@ if (!@index) {
     print "\n[+] Regenerating RTI index files...";
     
     $rc = RF::Data::IO::RC->new( file       => $control,
-                                 buildindex => 1 );
+                                 buildindex => 1 ) if (defined $control);
     
 }
 
@@ -188,7 +189,7 @@ if ($results{peaks}) {
 
 print "\n[+] Calling statistics:\n" .
       "\n  [*] Covered transcripts:   " . $results{cov} . " total" .
-      "\n                             " . $results{pass} . " enriched in IP vs. control sample" .
+      "\n                             " . $results{pass} . " transcripts with detected enrichment" .
       "\n                             " . $results{peaks} . " called peaks" .
       "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffcseq} + $results{nocov} + $results{nocid}) . " total" .
       "\n                             " . $results{incov} . " insufficient coverage" .
@@ -204,7 +205,7 @@ sub call {
     my ($crc, $irc, $attributes, $scale);
     
     $crc = RF::Data::IO::RC->new( file  => $control,
-                                  index => @index ? $index[0] : $control . ".rci" );
+                                  index => @index ? $index[0] : $control . ".rci" ) if (defined $control);
     
     $irc = RF::Data::IO::RC->new( file  => $ip,
                                   index => @index ? $index[-1] : $ip . ".rci"); 
@@ -212,51 +213,50 @@ sub call {
     while (my $id = $qcaller->dequeue()) {
         
         my ($ientry, $sequence, $imedian, $cmedian,
-            $last, @icov, @ccov, @peaks,
-            @pvalues);
+            $last, @icov, @ccov, @pvalues,
+            @wins);
         $ientry = $irc->read($id);
         $imedian = $ientry->mediancoverage();
         $sequence = $ientry->sequence();
         @icov = $ientry->coverage();
         
-        if (my $centry = $crc->read($id)) {
-            
-            $cmedian = $centry->mediancoverage();
-            
-            if ($centry->sequence() ne $sequence) {
-                
-                lock(%results);
-                $results{diffcseq}++;
+        if (defined $control) {
         
+            if (my $centry = $crc->read($id)) {
+                
+                $cmedian = $centry->mediancoverage();
+                
+                if ($centry->sequence() ne $sequence) {
+                    
+                    lock(%results);
+                    $results{diffcseq}++;
+            
+                    next;
+                    
+                }
+                
+                if ($centry->meancoverage() < $meancov ||
+                    $cmedian < $mediancov) {
+                    
+                    lock(%results);
+                    $results{incov}++;
+            
+                    next;
+                    
+                }
+                
+                @ccov = $centry->coverage();
+                
+            }
+            else {
+            
+                lock(%results);
+                $results{nocid}++;
+                
                 next;
                 
             }
-            
-            if ($centry->meancoverage() < $meancov ||
-                $cmedian < $mediancov) {
-                
-                lock(%results);
-                $results{incov}++;
         
-                next;
-                
-            }
-            
-            @ccov = $centry->coverage();
-            
-            { lock(%results);
-              $results{cov}++;
-              
-              print CLRRET . "[+] Calling peaks [Last: $id]"; }
-            
-        }
-        else {
-        
-            lock(%results);
-            $results{nocid}++;
-            
-            next;
-            
         }
         
         for (my $i = 0; $i < $#icov; $i += $offset) {
@@ -273,35 +273,56 @@ sub call {
             }
             else { $end = $start + $win; }
             
-            $cmean = mean(@ccov[$start .. $end]);
             $imean = mean(@icov[$start .. $end]);
-            $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)) / (($cmean + $pseudocount) / ($cmedian + $pseudocount)), 2);
             
-            next if ($score < $enrich); # Requires minimum enrichment in IP sample vs. Ctrl
+            if (defined $control) {
             
-            $p =  fisher(round($imean), round($imedian), round($cmean), round($cmedian), 1);
+                $cmean = mean(@ccov[$start .. $end]);
+                $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)) / (($cmean + $pseudocount) / ($cmedian + $pseudocount)), 2);
+            
+            }
+            else { $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)), 2); }
         
-            next if (!isnumeric($p) ||  # Avoid NaN and p-value >= cutoff
-                     $p >= $pvalue);
-        
-            push(@peaks, { coords => [$start, $end],
-                           score  => [$score],
-                           pvalue => [$p] });
-            push(@pvalues, $p);
+            push(@wins, { coords => [$start, $end],
+                          score  => [$score],
+                          imean  => $imean,
+                          cmean  => $cmean,
+                          pvalue => undef });
         
         }
+        
+        { lock(%results);
+          $results{cov}++;
+                  
+          print CLRRET . "[+] Calling peaks [Last: $id]"; }
+            
+        @imeans = map { $_->{imean} } @wins;
+        
+        foreach my $win (@wins) {
+            
+            my $p = defined $control ? fisher(round($win->{imean}), round($imedian), round($win->{cmean}), round($cmedian), 1) :
+                                       fisher(round($win->{imean}), round($imedian), round(mean(@imeans)), round($imedian), 1);
+            $win->{pvalue} = $p;
+            
+        }
+        
+        @pvalues = grep { isnumeric($_) } (map { $_->{pvalue} } @wins);
         
         next if (!@pvalues);
     
         @pvalues = padjust(\@pvalues); # Benjamini-Hochberg adjusted p-values
         
-        # Delete peaks whose corrected p-value is greater than cutoff
-        for (my $i = 0; $i < @pvalues; $i++) {
+        foreach my $win (@wins) { $win->{pvalue} = [ shift(@pvalues) ] if (isnumeric($win->{pvalue})); }    # Update p-values with BH adjusted p-values
         
-            if ($pvalues[$i] >= $pvalue) {
+        # Delete peaks whose corrected p-value is greater than cutoff
+        # or whose enrichment is lower than cutoff
+        for (my $i = 0; $i < @wins; $i++) {
+        
+            if (!isnumeric($wins[$i]->{pvalue}->[0]) ||
+                $wins[$i]->{pvalue}->[0] >= $pvalue ||
+                $wins[$i]->{score}->[0] < $enrich) {
                 
-                splice(@pvalues, $i, 1);
-                splice(@peaks, $i, 1);
+                splice(@wins, $i, 1);
                 
                 $i--;
                 
@@ -309,11 +330,11 @@ sub call {
         
         }
         
-        next if (!@peaks);
+        next if (!@wins);
         
-        $last = shift(@peaks);
+        $last = shift(@wins);
         
-        while(my $current = shift(@peaks)) {
+        while(my $current = shift(@wins)) {
         
             if (intersect($current->{coords}, [$last->{coords}->[0], $last->{coords}->[1] + $mergedist])) {
                 
@@ -354,7 +375,7 @@ sub help {
     
     die <<HELP;
  
- RF Peak Call (v2.0.0b)
+ RF PeakCall (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -372,7 +393,8 @@ sub help {
                                                 If no RCI index is provided, it will be created at runtime, and stored in
                                                 the same folder of the control, and IP samples.
  -p  or --processors       <int>                Number of processors to use (Default: 1)
- -o  or --output           <string>             Output file (Default: <IP>_vs_<Control>.bed)
+ -o  or --output           <string>             Output file (Default: <IP>_vs_<Control>.bed if a control RC file is provided, or
+                                                                      <IP>.bed if only IP RC file is provided)
  -ow or --overwrite                             Overwrites output file (if the specified file already exists)
  -w  or --window           <int>                Window's size for peak calling (>=10, Default: 150)
  -f  or --offset           <int>                Offset for window sliding (>=1, Default: Window's size / 2)
@@ -387,3 +409,4 @@ sub help {
 HELP
     
 }
+

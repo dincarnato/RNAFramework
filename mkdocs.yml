@@ -8,7 +8,6 @@ pages:
     - 'rf-norm': 'rf-norm.md'
     - 'rf-fold': 'rf-fold.md'
     - 'rf-compare': 'rf-compare.md'
-    - 'rf-silico': 'rf-silico.md'
     - 'rf-modcall': 'rf-modcall.md'
     - 'rf-peakcall': 'rf-peakcall.md'
     - 'rf-combine': 'rf-combine.md'

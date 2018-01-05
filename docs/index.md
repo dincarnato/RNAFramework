@@ -3,8 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[05-03-2017] rf-wiggle v2.0.2b released:__<br/>added the RF Wiggle tool for WIGGLE track files generation from both RC and XML files
-<br/>
+    __[05-01-2018] RNA Framework v2.5 [major release]:__<br/>- New tool RF JackKnife introduced to perform jackknifing (grid search) of optimal slope/intercept folding parameters<br/>- Changed the RC format's standard (from now on RNA Framework will support backward compatibility for obsolete RC files, however RC files generated using previous versions of the RNA Framework are no longer supported)<br/>- Introduced RF Fold support for windowed folding and pseudoknots prediction (entire API rewrite to support pseudoknotted base-pairs)<br/>- RF PeakCall now supports the analysis of immunoprecipitation experiments lacking a control/input sample<br/>- Removed RF Norm support for Siegfried *et al*., 2014 data normalization method<br/>
 
 ## Introduction
 
@@ -57,7 +56,8 @@ Please see <http://www.gnu.org/licenses/> for more information.
     1. DBD::mysql  
     2. LWP::UserAgent  
     3. RNA (installed by the __ViennaRNA__ package)  
-    4. XML::LibXML  
+    4. XML::LibXML
+    5. Config::Simple  
 
 
 ## Installation

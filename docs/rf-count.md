@@ -11,9 +11,9 @@ Parameter         | Type | Description
 ----------------: | :--: |:------------
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
 __-wt__ *or* __--working-threads__ | int | Number of working threads to use for each instance of SAMTools/Bowtie (Default: __1__).<br/>__Note:__ RT Counter executes 1 instance of SAMTools for each processor specified by ``-p``.  At least ``-p <processors>`` * ``-wt <threads>`` processors are required.
-__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
 __-o__ *or* __--output-dir__ | string | Output directory for writing counts in RC (RNA Count) format (Default: __rf_count/__)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __<output-dir>/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
 __-nm__ *or* __--no-mapped-count__ | | Disables counting of total mapped reads<br/>__Note:__ This option __must be avoided__ when processing SAM/BAM files from &Psi;-seq/Pseudo-seq and 2OMe-seq experiments.
 __-s__ *or* __--samtools__ | string | Path to ``samtools`` executable (Default: assumes ``samtools`` is in PATH)
 __-r__ *or* __--sorted__ | | In case SAM/BAM files are passed, assumes that they are already sorted lexicographically by transcript ID, and numerically by position
@@ -67,7 +67,7 @@ For more information, please refer to Smola *et al*., 2015 (PMID: [26426499](htt
 <br/><br/>
 ## RC (RNA Count) format
 
-RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, and per-base read coverage. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
+RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, per-base read coverage, and total number of mapped reads. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
 
 Field             | Description    |  Type
 ----------------: | :------------: | :----------
@@ -77,15 +77,17 @@ __len\_seq__ | Length of sequence | uint32\_t
 __seq__ | 4-bit encoded sequence: 'ACGTN' -> \[0,4] (High nybble first) | uint8\_t\[(len_seq+1)/2]
 __counts__ | Transcript's per base RT-stops (or mutations) | uint32\_t[len\_seq]
 __coverage__ | Transcript's per base coverage | uint32\_t[len\_seq]
+__n<sub>t</sub>__ | Transcript's mapped reads | unint64\_t
 
-RC files EOF stores the number of total mapped reads (uint64\_t packed as 2 x uint32\_t), and is structured as follows:
+RC files EOF stores the number of total mapped reads, and is structured as follows:
 
 Field             | Description    |  Type
 ----------------: | :------------: | :----------
-__n<sub>1</sub>__ | Total experiment mapped reads &gt;&gt; 32 | uint32\_t
-__n<sub>2</sub>__ | Total experiment mapped reads & 0xFFFFFFFF | uint32\_t
-__marker__ | EOF marker (\\x5b\\x65\\x66\\x72\\x74\\x63\\x5d) | char[7]
+__n__ | Total experiment mapped reads | uint64\_t
+__version__ | RC file version | uint16\_t
+__marker__ | EOF marker (\\x5b\\x65\\x6f\\x66\\x72\\x63\\x5d) | char[7]
 
+The current RC standard's version is __1__.<br/>
 RCI (RC Index) files enable random access to transcript data within RC files.<br/>
 The RCI index is structured as follows:
 
@@ -93,4 +95,7 @@ Field             | Description    |  Type
 ----------------: | :------------: | :----------
 __len\_transcript\_id__ | Length of the transcript ID (plus 1, including NULL) | uint32\_t
 __transcript\_id__ | Transcript ID (NULL terminated) | char[len\_transcript\_id]
-__offset__ | Offset of transcript in the RC file | uint32\_t
+__offset__ | Offset of transcript in the RC file | uint64\_t
+
+!!! note "Information"
+    All values are forced to be in little-endian byte-order.

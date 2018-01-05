@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Map (v2.0.0b)
+# RF Map (v2.5)
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -97,10 +97,10 @@ help() if ($help);
 # Default values
 $madetmp = 0;
 $tmp //= randalphanum(0xf);
-$tmpdir //= "/tmp/";
 $output //= "rf_map/";
-$wt //= 1;
-$threads //= 1;
+$tmpdir //= $output . "/tmp/";
+$wt ||= 1;
+$threads ||= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
 $cutadapt //= which("cutadapt");
 $samtools //= which("samtools");
@@ -114,7 +114,7 @@ $bc //= 128;
 $bm //= 1;
 $bn //= $bowtie2 ? 1 : 2;
 $bseed //= $bowtie2 ? 22 : 28;
-$bN //= 0;
+$bN //= 1;
 $bD //= 15;
 $bR //= 2;
 $bmp //= "6,2";
@@ -138,8 +138,9 @@ if (isdna(join("", split(/,/, $ca5)))) {
 ##
 
 die "\n  [!] Error: No sample FastQ file provided\n\n" if (!@ARGV);
-die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) ||
-                                                                                     $wt < 1);
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if ($wt < 1);
+
 # Cutadapt validation
 die "\n  [!] Error: No 5' adapter's sequence provided\n\n"if (!defined $ca5);
 die "\n  [!] Error: Invalid 5' adapter's sequence\n\n" if (!isdna(join("", split(/,/, $ca5))));
@@ -491,7 +492,7 @@ for (my $i = 0; $i < @tmp; $i++) {
     
     @stats = map { sprintf("%.2f", $_ / $total * 100) . "\%" } @stats;
     
-    print "\n  [*] Sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : ($ba ? "]" : "; Suppressed: " . $stats[2] . "]"));
+    print "\n  [*] Sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : "; Suppressed: " . $stats[2] . "]");
     
     if ($stats[3] == 0) {
         
@@ -539,14 +540,16 @@ print "\n\n[+] All done.\n\n";
 
 sub cleanup {
     
-    if ($madetmp) {
+    unlink(glob($tmpdir . $tmp . "*"));
+    
+    if ($madetmp &&
+        isdirempty($tmpdir)) {
     
         rmtree($tmpdir, { safe      => 1,
                           keep_root => 0,
                           error     => \$error });
         
     }
-    else { unlink(glob($tmpdir . $tmp . "*")); }
     
 }
 
@@ -612,7 +615,7 @@ sub help {
     
     die <<HELP;
  
- RF Map (v2.0.0b)
+ RF Map (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -626,8 +629,8 @@ sub help {
  -wt or --working-threads      <int>          Number of working threads to use for each instance of the aligner software (Default: 1).
                                               Note: RF Map executes 1 instance of the aligner for each processor specified by -p.
                                                     At least -p <processors> * -wt <threads> processors are required.
- -t  or --tmp-dir              <string>       Temporary directory (Default: /tmp)
  -o  or --output-dir           <string>       Output directory (Default: rf_map/)
+ -t  or --tmp-dir              <string>       Temporary directory (Default: <output>/tmp)
  -ow or --overwrite                           Overwrites output directory (if the specified path already exists)
  -nb or --no-bam                              Disables mapped SAM files conversion to BAM format
  -b  or --bowtie               <string>       Path to Bowtie v1/v2 executable (Default: assumes Bowtie is in PATH)

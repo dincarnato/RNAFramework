@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Wiggle (v2.0.0b)
+# RF Wiggle (v2.5)
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -19,7 +19,6 @@ use strict;
 use File::Basename;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
-use XML::LibXML;
 
 use lib $Bin . "/lib";
 
@@ -27,6 +26,7 @@ use Core::Utils;
 use Core::Mathematics qw(:all);
 use Data::Sequence::Utils;
 use RF::Data::IO::RC;
+use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
 
 $|++;
@@ -85,6 +85,7 @@ foreach my $input (@ARGV) {
         die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n" if ($input !~ m/\.(xml|rc)$/);
             
         push(@input, $input);
+        $isxml = 1 if ($input =~ m/\.xml$/);
         
     }
     else {
@@ -95,6 +96,7 @@ foreach my $input (@ARGV) {
             next if ($file !~ m/\.(xml|rc)$/);
             
             push(@input, $input . "/" . $file);
+            $isxml = 1 if ($file =~ m/\.xml$/);
             
         }
         closedir($dh);
@@ -126,10 +128,9 @@ foreach my $input (@ARGV) {
         
         if ($file =~ m/\.xml$/) {
         
-            my ($xmlref, $id, $reactivity, $i,
-                $sequence, @reactivity);
+            my ($xmlref, $i, $sequence, @reactivity);
             
-            eval { $xmlref = XML::LibXML->load_xml(location => $file); };
+            eval { $xmlref = RF::Data::IO::XML->new(file => $file); };
             
             if ($@) {
     
@@ -142,17 +143,13 @@ foreach my $input (@ARGV) {
             }
             
             $i = 0;
-            $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
-            $sequence = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
-            $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
-            $sequence =~ s/\s+?//g;
-            $reactivity =~ s/\s+?//g;
-            @reactivity = split(/,/, $reactivity);
+            $sequence = $xmlref->sequence();
+            @reactivity = $xmlref->reactivity();
             
             next if (!sum(grep {$_ !~ m/^NaN$/i} @reactivity));
             
-            print $wh "variableStep chrom=" . $id . "\n";
-            
+            print $wh "variableStep chrom=" . $xmlref->id() . "\n";
+           
             undef($reactivity[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
             
             for (@reactivity) {
@@ -242,7 +239,7 @@ sub help {
     
     die <<HELP;
  
- RF Wiggle (v2.0.2b)
+ RF Wiggle (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

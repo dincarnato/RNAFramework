@@ -17,6 +17,7 @@
 package Data::IO::Sequence;
 
 use strict;
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 use RNA::Utils;
@@ -30,6 +31,7 @@ sub new {
     
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ format   => "AUTO",
+                   nrows    => 100,
                    _offsets => [],
                    _pack    => undef,
                    _index   => {},
@@ -63,7 +65,10 @@ sub _validate {
 
     $self->SUPER::_validate();
 
-    $self->throw("Invalid format \"" . $self->{format} . "\"") unless ($self->{format} =~ m/^Fasta|AUTO$/i);
+    $self->throw("Invalid format \"" . $self->{format} . "\"") unless ($self->{format} =~ m/^Fasta|Vienna|C(?:onnectivity)?T(?:able)?|AUTO$/i);
+    $self->throw("Number of rows must be a positive integer > 0") if (!ispositive($self->{nrows}) ||
+                                                                      !isint($self->{nrows}) ||
+                                                                      !$self->{nrows});
     
 }
 
@@ -71,9 +76,8 @@ sub _loadformat {
     
     my $self = shift;
     
-    if ($self->{format} eq "AUTO") { $self->{format} = $self->_findformat(); }
-    else { $self->_fixformat(); }
-    
+    $self->_fixformat();
+    $self->{format} = $self->_findformat() if ($self->{format} eq "AUTO");
     $self->loadpackage(ref($self) . "::" . $self->{format});
     
 }
@@ -82,33 +86,68 @@ sub _findformat {
     
     my $self = shift;
     
-    my ($format, $index, $fastalike);
+    my ($format, $index, $fastalike, @rows);
     $index = 0;
     $fastalike = 0;
     
+    # Read nrows lines from the file
     open(my $fh, "<", $self->{data});
     foreach my $line (<$fh>) {
         
         chomp($line);
         
-        if ($fastalike) {
-            
-            # In case is Vienna format and free energy is appended to structure
-            $line =~ s/\s*\([\+-]?\d+\.\d+\)$//;
-            
-            $format = "Fasta" if (isseq($line, "-") &&
-                                  !defined $format);
-            $format = "Vienna" if (isdotbracket($line));
-            
-        }
-        else { $fastalike = 1 if ($line =~ m/^>/); }
+        next unless($line);
         
-        last if ($index > 100); # Just parse the first 100 rows to guess format
+        push(@rows, $line);
         
         $index++;
         
+        last if ($index > $self->{nrows});
+        
     }
     close($fh);
+    
+    for(my $i = 0; $i < @rows; $i++) {
+        
+        my $line = $rows[$i];
+        
+        if ($fastalike) {
+            
+            if (isseq($line, "-")) {
+                
+                $format = "Fasta";
+                
+                if ($i + 1 < @rows) {
+                    
+                    my $line2 = $rows[$i+1];
+                    $line2 =~ s/\s*\(\s*[\+-]?\d+\.\d+\)$//; # In case is Vienna format and free energy is appended to structure
+                            
+                    $format = "Vienna" if (isdotbracket($line2));
+                
+                }
+                
+            }
+            
+        }
+        else {
+            
+            if ($line =~ m/^>/) { $fastalike = 1; }
+            else {
+                
+                my @line = split(" ", $line);
+                
+                $format = "CT" if (@line == 6 && isna($line[1]) && length($line[1]) == 1 &&
+                                   isint($line[0]) && ispositive($line[0]) && $line[0] >= 1 &&
+                                   $line[2] == $line[0] - 1 && $line[3] == $line[0] + 1 && $line[5] == $line[0] &&
+                                   isint($line[4]) && ispositive($line[4]));
+                
+            }
+            
+        }
+        
+        last if (defined $format);
+        
+    }
     
     return($format);
     
@@ -119,6 +158,8 @@ sub _fixformat {
     my $self = shift;
     
     $self->{format} = "Fasta" if ($self->{format} =~ m/^fasta$/i);
+    $self->{format} = "Vienna" if ($self->{format} =~ m/^vienna$/i);
+    $self->{format} = "CT" if ($self->{format} =~ m/^c(?:onnectivity)?t(?:able)?$/i);
     $self->{format} = "AUTO" if ($self->{format} =~ m/^auto$/i);
     
 }

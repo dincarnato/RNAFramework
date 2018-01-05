@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Fold (v2.0.0b)
+# RF Fold (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -18,14 +18,15 @@
 
 use strict;
 use Config;
+use Cwd;
 use File::Basename;
 use File::Path qw(mkpath rmtree);
+use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
 use threads::shared;
 use Thread::Queue;
-use XML::LibXML;
 
 use lib $Bin . "/lib";
 
@@ -34,9 +35,13 @@ use Core::Statistics;
 use Core::Utils;
 use Data::IO::Sequence;
 use Data::Sequence;
+use Data::Sequence::Structure;
 use Data::Sequence::Utils;
 use RNA::Utils;
+use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
+
+use constant MINWINLENGTH => 50; # Minimum window length for windowed folding
 
 die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads and try again\n\n" unless(exists $Config{useithreads});
@@ -50,15 +55,36 @@ my ($output, $ct, $input, $method,
     $maxdist, $constmethod, $constconversion, $beta,
     $modslope, $modintercept, $installed, $queue,
     $overwrite, $error, $help, $tmpdir,
-    $ignore, $madetmp, @xml, @pool);
+    $ignore, $madetmp, $hc, $vrfoldparams, $rsfoldparams,
+    $windowed, $cwd, $partition, $probplot,
+    $partwin, $partstep, $wintrim, $foldwin,
+    $foldstep, $dp, $sh, $pk,
+    $pkwin, $pkstep, $p1, $p2,
+    $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
+    $dpa, $shapeknots, $pkmethod, $skparams,
+    $keeptmp, @xml, @pool, %lambda);
 
 my %results : shared;
 %results = ( folded   => 0,
              parseerr => 0,
              consterr => 0,
              folderr  => 0,
-             db2cterr => 0,
-             fastaerr => 0 );
+             fastaerr => 0,
+             pkerr    => 0 );
+%lambda = ( "2"  => 0,
+            "3"  => 24,
+            "4"  => 24,
+            "5"  => 34,
+            "6"  => 24,
+            "7"  => 35,
+            "8"  => 58,
+            "9"  => 82,
+            "10" => 65,
+            "11" => 527,
+            "12" => 2447,
+            "13" => 4199,
+            "14" => 6564,
+            "15" => 12540 );
 
 do {
     
@@ -67,17 +93,16 @@ do {
     GetOptions( "h|help"                     => \$help,
                 "o|output-dir=s"             => \$output,
                 "ow|overwrite"               => \$overwrite,
-                "t|tmp-dir=s"                => \$tmpdir,
                 "ct|connectivity-table"      => \$ct,
                 "m|folding-method=i"         => \$method,
                 "p|processors=i"             => \$threads,
                 "g|img"                      => \$img,
                 "s|svg"                      => \$svg,
-                "T|temperature=s"            => \$t,
+                "t|temperature=s"            => \$t,
                 "sl|slope=s"                 => \$slope,
                 "in|intercept=s"             => \$intercept,
                 "md|maximum-distance=i"      => \$maxdist,
-                "v|viennarna=s"              => \$viennarna,
+                "vrf|vienna-rnafold=s"       => \$viennarna,
                 "f|cutoff=s"                 => \$cutoff,
                 "nlp|no-lonely-pairs"        => \$nlp,
                 "ngu|no-closing-gu"          => \$ngu,
@@ -86,9 +111,33 @@ do {
                 "bf|beta-factor=s"           => \$beta,
                 "ms|model-slope=s"           => \$modslope,
                 "mi|model-intercept=s"       => \$modintercept,
-                "r|rnastructure=s"           => \$rnastructure,
-                "dp|data-path=s"             => \$data,
-                "i|ignore-reactivity"        => \$ignore ) or help(1);
+                "rs|rnastructure=s"          => \$rnastructure,
+                "d|data-path=s"              => \$data,
+                "i|ignore-reactivity"        => \$ignore,
+                "hc|hard-constraint"         => \$hc,
+                "w|windowed"                 => \$windowed,
+                "fw|fold-window=i"           => \$foldwin,
+                "fo|fold-offset=i"           => \$foldstep,
+                "wt|window-trim=i"           => \$wintrim,
+                "pw|partition-window=i"      => \$partwin,
+                "po|partition-offset=i"      => \$partstep,
+                "dp|dotplot"                 => \$dp,
+                "dpa|dotplot-all"            => \$dpa,
+                "kt|keep-tmp"                => \$keeptmp,
+                "sh|shannon-entropy"         => \$sh,
+                "pk|pseudoknots"             => \$pk,
+                "pt|partition=s"             => \$partition,
+                "pp|probabilityplot=s"       => \$probplot,
+                "vrs|vienna-rnasubopt=s"     => \$rnasubopt,
+                "kw|pseudoknot-window=i"     => \$pkwin,
+                "ko|pseudoknot-offset=i"     => \$pkstep,
+                "kp1|pseudoknot-penality1=s" => \$p1,
+                "kp2|pseudoknot-penality2=s" => \$p2,
+                "kc|pseudoknot-cutoff=s"     => \$pkcutoff,
+                "ks|pseudoknot-suboptimal=i" => \$pksubopt,
+                "kh|pseudoknot-helices=i"    => \$pkmax,
+                "km|pseudoknot-method=i"     => \$pkmethod,
+                "sk|shapeknots=s"            => \$shapeknots ) or help(1);
     
     $input = $ARGV[0];
 
@@ -98,10 +147,11 @@ help() if ($help);
 
 # Default
 $madetmp = 0;
-$output //= "structurome/";
-$tmpdir //= $output . "/tmp/";
-$method //= 1;
-$threads //= 1;
+$cwd = cwd();
+$output ||= "structurome/";
+$tmpdir ||= $output . "/tmp/";
+$method ||= 1;
+$threads ||= 1;
 $t //= 37.0;
 $cutoff //= 0.7;
 $slope //= 1.8;
@@ -110,8 +160,25 @@ $constmethod //= 1;
 $constconversion //= 1;
 $beta //= 0.5;
 $maxdist //= 0;
+$partwin //= 600;
+$partstep //= 200;
+$wintrim //= 100;
+$foldwin //= 600;
+$foldstep //= 200;
+$pkwin //= 600;
+$pkstep //= 200;
+$p1 //= 0.35;
+$p2 //= 0.65;
+$pkcutoff //= 0.5;
+$pkmax ||= 100;
+$pksubopt ||= 1000;
+$pkmethod ||= 1;
 $viennarna //= which("RNAfold");
-$rnastructure //= which("Fold");
+$rnasubopt //= which("RNAsubopt");
+$rnastructure //= which("Fold-smp") || which("Fold");
+$shapeknots //= which("ShapeKnots-smp") || which("ShapeKnots");
+$partition //= which("partition-smp") || which("partition");
+$probplot //= which("ProbabilityPlot");
 $data //= $ENV{DATAPATH};
 $installed = eval { require RNA; 1; };
 
@@ -129,13 +196,40 @@ die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" 
 die "\n  [!] Error: Invalid folding method\n\n" unless($method =~ m/^[12]$/);
 die "\n  [!] Error: Temperature must be a positive value\n\n" unless(ispositive($t));
 die "\n  [!] Error: Temperature must be comprised between 0 and 100 degree Celsius\n\n" if ($t > 100);
-die "\n  [!] Error: Invalid slope value\n\n" unless(isnumeric($slope));
-die "\n  [!] Error: Invalid intercept value\n\n" unless(isnumeric($intercept));
+die "\n  [!] Error: Invalid slope value\n\n" unless(isreal($slope));
+die "\n  [!] Error: Invalid intercept value\n\n" unless(isreal($intercept));
 die "\n  [!] Error: Maximum distance value must be a positive integer\n\n" if (!ispositive($maxdist));
 die "\n  [!] Error: No closing GU parameter requires folding method 1 (ViennaRNA)\n\n" if ($ngu &&
                                                                                            $method != 1);
 die "\n  [!] Error: No lonely pairs parameter requires folding method 1 (ViennaRNA)\n\n" if ($nlp &&
                                                                                              $method != 1);
+die "\n  [!] Error: Invalid constraint conversion method\n\n" if ($constconversion !~ m/^[1-5]$/);
+die "\n  [!] Error: Reactivity cutoff must be a value >0 and <= 1" if (!ispositive($cutoff) ||
+                                                                       !$cutoff ||
+                                                                       $cutoff > 1);
+
+if ($windowed) {
+    
+    die "\n  [!] Error: Folding window's size must be an integer >= 50\n\n" unless($foldwin >= MINWINLENGTH);
+    die "\n  [!] Error: Folding window's sliding offset cannot be greater than window's size\n\n" if ($foldstep > $foldwin);
+    die "\n  [!] Error: Parition function window's size must be an integer >= 50\n\n" unless($partwin >= MINWINLENGTH);
+    die "\n  [!] Error: Partition function window's sliding offset cannot be greater than window's size\n\n" if ($partstep > $partwin);
+    die "\n  [!] Error: Partition function window's trimming value cannot exceed half of" .
+        "\n             the difference between window's size and sliding offset size\n\n" if ($wintrim > int(($partwin - $partstep) / 2));
+        
+    if ($pk) {
+        
+        die "\n  [!] Error: Invalid pseudoknots prediction method\n\n" unless($pkmethod =~ m/^[12]$/);
+        die "\n  [!] Error: Pseudoknot window's size must be an integer >= 50\n\n" unless($pkwin >= MINWINLENGTH);
+        die "\n  [!] Error: Pseudoknot window's sliding offset cannot be greater than window's size\n\n" if ($pkstep > $pkwin);
+        die "\n  [!] Error: Pseudoknot penality 1 must be numeric\n\n" unless(isnumeric($p1));
+        die "\n  [!] Error: Pseudoknot penality 2 must be numeric\n\n" unless(isnumeric($p2));
+        die "\n  [!] Error: Pseudoknot reactivity cutoff must be a value >0 and <= 1" if (!ispositive($pkcutoff) ||
+                                                                                          $pkcutoff > 1);
+        
+    }
+    
+}
 
 if ($constmethod == 2) { # Zarringhalam et al., 2012
     
@@ -192,9 +286,83 @@ else { # RNAstructure
     elsif (!-e $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold doesn't exist\n\n"; }
     elsif (!-x $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold is not executable\n\n"; }
 
+    if ($windowed) {
+        
+        if (!defined $partition) { die "\n\n  [!] Error: RNAstructure partition is not in PATH\n\n"; }
+        elsif (!-e $partition) { die "\n\n  [!] Error: RNAstructure partition doesn't exist\n\n"; }
+        elsif (!-x $partition) { die "\n\n  [!] Error: RNAstructure partition is not executable\n\n"; }
+        
+        if (!defined $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not in PATH\n\n"; }
+        elsif (!-e $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot doesn't exist\n\n"; }
+        elsif (!-x $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not executable\n\n"; }
+        
+    }
+    
     $ENV{DATAPATH} = $data;
-    $t += 273.15; # RNAstructure expects a temperature in Kelvin degrees
 
+}
+
+if ($windowed &&
+    $pk) {
+    
+    if ($pkmethod == 1) {
+    
+        if (!defined $rnasubopt) { die "\n\n  [!] Error: RNAsubopt is not in PATH\n\n"; }
+        elsif (!-e $rnasubopt) { die "\n\n  [!] Error: RNAsubopt doesn't exist\n\n"; }
+        elsif (!-x $rnasubopt) { die "\n\n  [!] Error: RNAsubopt is not executable\n\n"; }
+        
+    }
+    else {
+        
+        if (!defined $shapeknots) { die "\n\n  [!] Error: ShapeKnots is not in PATH\n\n"; }
+        elsif (!-e $shapeknots) { die "\n\n  [!] Error: ShapeKnots doesn't exist\n\n"; }
+        elsif (!-x $shapeknots) { die "\n\n  [!] Error: ShapeKnots is not executable\n\n"; }
+        
+    }
+    
+}
+
+# Setting folding parameters
+if ($method == 1 ||
+    ($windowed &&
+     $pk)) { # ViennaRNA
+        
+    $vrfoldparams = " -T " . $t;
+    $vrfoldparams .= " --noLP" if ($nlp);
+    $vrfoldparams .= " --noClosingGU" if ($ngu);
+    
+    if (!$ignore) {
+    
+        if ($constmethod == 1) {  # Deigan et al., 2009 (ViennaRNA 'D')
+            
+            $vrfoldparams .= " --shapeMethod=Dm" . $slope . "b" . $intercept;
+            
+        }
+        else {  # Zarringhalam et al., 2012 (ViennaRNA 'Z')
+            
+            $vrfoldparams .= " --shapeMethod=Zb" . $beta . " --shapeConversion=";
+            
+            if ($constconversion == 1) { $vrfoldparams .= "S"; }                                             # ViennaRNA 'S'
+            elsif ($constconversion == 2) { $vrfoldparams .= "M"}                                            # ViennaRNA 'M'
+            elsif ($constconversion == 3) { $vrfoldparams .= "C" . $cutoff; }                                # ViennaRNA 'C'
+            elsif ($constconversion == 4) { $vrfoldparams .= "Ls" . $modslope . "i" . $modintercept; }       # ViennaRNA 'L'
+            else { $vrfoldparams .= "Os" . $modslope . "i" . $modintercept; }                                # ViennaRNA 'O'
+        
+        }  
+        
+    }
+    
+    $vrfoldparams .= " --maxBPspan=" . $maxdist if ($maxdist);
+
+}
+
+if ($method == 2) { # RNAstructure
+    
+    $rsfoldparams .= " -si " . $intercept . " -sm " . $slope if (!$ignore);
+    $skparams = $rsfoldparams;
+    $rsfoldparams .= " -md " . $maxdist if ($maxdist);
+    $rsfoldparams .= " -t " . ($t + 273.15);         # RNAstructure expects a temperature in Kelvin degrees
+    
 }
 
 # Output directory tree
@@ -219,7 +387,18 @@ if (-e $output) {
 mkpath($output . "structures", { mode  => 0755,
                                  error => \$error });
 mkpath($output . "images", { mode  => 0755,
-                             error => \$error }) if ($img); 
+                             error => \$error }) if ($img);
+
+if ($windowed) {
+
+    mkpath($output . "dotplot", { mode  => 0755,
+                                  error => \$error }) if ($dp ||
+                                                          $dpa);
+    
+    mkpath($output . "shannon", { mode  => 0755,
+                                  error => \$error }) if ($sh);
+    
+}
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -235,6 +414,10 @@ if (!-e $tmpdir) {
 }
 else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
 
+# Sets all paths to absolute, before changing working directory to temp dir
+$output = File::Spec->rel2abs($output) . "/";
+$tmpdir = File::Spec->rel2abs($tmpdir) . "/";
+
 print "\n[+] Importing XML file(s) [0 imported]";
 
 if (-d $input) {
@@ -244,7 +427,7 @@ if (-d $input) {
         
         next if ($file !~ m/\.xml$/);
         
-        push(@xml, $input . "/" . $file);
+        push(@xml, File::Spec->rel2abs($input . "/" . $file));
         print CLRRET . "[+] Importing XML file(s) [" . scalar(@xml) . " imported]";
         
     }
@@ -258,11 +441,13 @@ else { # Single xml file
     die "\n\n  [!] Error: Provided file lacks XML extension\n\n" if ($input !~ m/\.xml$/);
 
     print CLRRET . "[+] Importing XML file(s) [1 imported]";    
-    push(@xml, $input);
+    push(@xml, File::Spec->rel2abs($input));
     
 }
     
 warn "\n\n  [!] Ignoring XML reactivity data files. Predicting MFE unconstrained structures...\n" if ($ignore);
+
+chdir($tmpdir);  # Change the working directory before starting threads
 
 $queue = Thread::Queue->new();
 
@@ -273,6 +458,8 @@ $queue->enqueue((undef) x $threads);
 
 @pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
 $_->join() for (@pool);
+
+chdir($cwd);  # Reset to original working directory
 
 my $ioerr = @xml;
 $ioerr -= $_ for (values %results);
@@ -286,27 +473,27 @@ print "\n[+] Folding statistics:\n" .
       "\n                             " . $results{folderr} . " folding failed" .
       "\n                             " . $ioerr . " I/O error";
       
-print "\n                             " . $results{db2cterr} . " dot-bracket to CT conversion failed" if ($ct);
+print "\n                             " . $results{pkerr} . " pseudoknotted folding failed" if ($pk);
 
 rmtree($tmpdir, { safe      => 1,
                   keep_root => 0,
-                  error     => \$error }) if ($madetmp);
+                  error     => \$error }) if ($madetmp &&
+                                              !$keeptmp);
 
 print "\n\n[+] All done.\n\n";
 
 sub fold { # Threads
     
     my $queue = shift;
-    
-    select(undef, undef, undef, threads->tid() / 100);
-    
+
+    TRANSCRIPT:
     while(my $xml = $queue->dequeue()) {
        
         my ($sequence, $id, $structure, $cmd,
-            $xmlref, $tmp, $ret, $reactivity,
-            @reactivity);
+            $xmlref, $ret, $entry, @dotplot,
+            @shannon, @reactivity, @dotplotall);
        
-        eval { $xmlref = XML::LibXML->load_xml(location => $xml); };
+        eval { $xmlref = RF::Data::IO::XML->new(file => $xml); };
         
         if ($@) {
 
@@ -319,137 +506,668 @@ sub fold { # Threads
             
         }
         
-        $id = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
-        $sequence = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
-        $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
-        
-        $sequence =~ s/\s+?//g;
-        $reactivity =~ s/\s+?//g;
-        $sequence = dna2rna($sequence);
-        @reactivity = split(/,/, $reactivity);
-        $tmp = $tmpdir . $id . "_" . threads->tid();
-        
-        if (!$ignore) {
-        
-            if (xml2shape($tmp, \@reactivity)) { # Generates temporary SHAPE constraint file
+        $id = $xmlref->id();
+        $sequence = $xmlref->sequence();
+        @reactivity = $xmlref->reactivity();
+            
+        if ($windowed) { # Windowed folding
+            
+            my (@windows, @constraint, @pkpairs, @keptpairs,
+                %pairprobs, %npairs, %seenwins);
+            
+            @constraint = (".") x length($sequence); # Initializes the constraint vector
+            
+            ######### Pseudoknots detection block ##########
+            
+            if ($pk) { # Pseudoknot detection
                 
-                lock(%results);
-                $results{consterr}++;
+                my (%pkpairs);
                 
-                next;
-                
-            }
-            
-        }
-        
-        if (seq2fasta($tmp, $id, $sequence)) { # Generates temporary fasta file
-            
-            lock(%results);
-            $results{fastaerr}++;
-            
-            next;
-            
-        }
-       
-        if ($method == 1) { # ViennaRNA
-        
-            $cmd = $viennarna . " --noPS -i '" . $tmp . ".fa'";
-            
-            if (!$ignore) {
-            
-                $cmd .= " --shape='" . $tmp . ".shape'";
-            
-                if ($constmethod == 1) {  # Deigan et al., 2009 (ViennaRNA 'D')
+                # 3 windows on 5'-end
+                foreach my $i (0, 50, 100) {
                     
-                    $cmd .= " --shapeMethod=Dm" . $slope . "b" . $intercept;
+                    my ($end, $file, $seq, @win);
+                    $end = $pkwin - $i - 1 > $#reactivity ? $#reactivity : $pkwin - $i - 1;
+                    
+                    next if ($end < MINWINLENGTH - 1); 
+                    next if (exists $seenwins{"0-" . $end});
+                    
+                    $seenwins{"0-" . $end} = 1;
+                    
+                    $seq = substr($sequence, 0, $end + 1);
+                    @win = @reactivity[0 .. $end];
+                    $file = $id . "_0-" . $end . "_" . threads->tid();
+                    
+                    my $win = pkdetect( file       => $file,
+                                        sequence   => $seq,
+                                        reactivity => \@win,
+                                        pos        => 0,
+                                        constraint => "." x @win );   
+                   
+                    if (!$win) {               
+                   
+                        lock(%results);
+                        $results{pkerr}++;
+                        
+                        unlink(glob($file . "*")) unless($keeptmp);
+                        
+                        next TRANSCRIPT;
+                        
+                    }
+                   
+                    $pkpairs{$_}->{pairs}++ for (keys %{$win});
+                    push(@windows, [0, $end]);
                     
                 }
-                else {  # Zarringhalam et al., 2012 (ViennaRNA 'Z')
-                    
-                    $cmd .= " --shapeMethod=Z" . $beta . " --shapeConversion=";
-                    
-                    if ($constconversion == 1) { $cmd .= "S"; }                                             # ViennaRNA 'S'
-                    elsif ($constconversion == 2) { $cmd .= "M"}                                            # ViennaRNA 'M'
-                    elsif ($constconversion == 3) { $cmd .= "C" . $cutoff; }                                # ViennaRNA 'C'
-                    elsif ($constconversion == 4) { $cmd .= "Ls" . $modslope . "i" . $modintercept; }       # ViennaRNA 'L'
-                    else { $cmd .= "Os" . $modslope . "i" . $modintercept; }                                # ViennaRNA 'O'
                 
-                }  
+                undef(%seenwins);
+                
+                if (@reactivity > $pkwin) {
+                
+                    # Along transcript
+                    for (my $i = $pkstep; $i < @reactivity; $i += $pkstep) {
+                        
+                        my ($end, $seq, $file, @win);
+                        $end = $i + $pkwin - 1; 
+                        
+                        last if ($end > $#reactivity);
+                        
+                        $seq = substr($sequence, $i, $end - $i + 1);
+                        @win = @reactivity[$i .. $end];
+                        $file = $id . "_" . $i . "-" . $end . "_" . threads->tid();
+                        
+                        my $win = pkdetect( file       => $file,
+                                            sequence   => $seq,
+                                            reactivity => \@win,
+                                            pos        => $i,
+                                            constraint => "." x @win );
+                        
+                        if (!$win) {               
+                       
+                            lock(%results);
+                            $results{pkerr}++;
+                            
+                            unlink(glob($file . "*")) unless($keeptmp);
+                            
+                            next TRANSCRIPT;
+                            
+                        }
+                         
+                        $pkpairs{$_}->{pairs}++ for (keys %{$win});
+                        push(@windows, [$i, $end]);
+                           
+                    }
+                
+                }
+                
+                undef(%seenwins);
+                
+                # 3 windows on 3'-end
+                foreach my $i (0, 50, 100) {
+                    
+                    my ($start, $file, $seq, @win);
+                    $start = @reactivity - $pkwin + $i < 0 ? 0 : @reactivity - $pkwin + $i;
+                    
+                    next if ($start > @reactivity - MINWINLENGTH);
+                    next if (exists $seenwins{$start . "-" . $#reactivity});
+                    
+                    $seenwins{$start . "-" . $#reactivity} = 1;
+                    
+                    $seq = substr($sequence, $start, @reactivity - $start + 1);
+                    @win = @reactivity[$start .. $#reactivity];
+                    $file = $id . "_" . $start . "-" . $#reactivity . "_" . threads->tid();
+                    
+                    my $win = pkdetect( file       => $file,
+                                        sequence   => $seq,
+                                        reactivity => \@win,
+                                        pos        => $start,
+                                        constraint => "." x @win );
+                    
+                    if (!$win) {               
+                   
+                        lock(%results);
+                        $results{pkerr}++;
+                        
+                        unlink(glob($file . "*")) unless($keeptmp);
+                        
+                        next TRANSCRIPT;
+                        
+                    }
+                     
+                    $pkpairs{$_}->{pairs}++ for (keys %{$win});
+                    push(@windows, [$start, $#reactivity]);
+                    
+                }
+
+                # Discard pseudoknotted pairs in < 0.50 of windows
+                foreach my $pair (keys %pkpairs) {
+                    
+                    my ($i, $j, $n1, $n2);
+                    ($i, $j) = split(/-/, $pair);
+                    
+                    for (@windows) { $n1++ if ($i >= $_->[0] &&
+                                               $i <= $_->[1]);
+                                     $n2++ if ($j >= $_->[0] &&
+                                               $j <= $_->[1]); }
+                    
+                    # If pseudoknotted pair is present in > 0.50 windows
+                    push(@pkpairs, [$i, $j]) if ($pkpairs{$pair}->{pairs} / $n1 > 0.5 &&
+                                                 $pkpairs{$pair}->{pairs} / $n2 > 0.5);
+                    
+                }
+                
+                undef(@windows);
+                undef(%seenwins);
                 
             }
             
-            $cmd .= " --maxBPspan=" . $maxdist if ($maxdist);
+            ######### End of pseudoknots detection block ##########
             
-            $ret = `$cmd 2>/dev/null`;
-            $structure = (split(/\n/, $ret))[2]; # Only extracts dot-bracket structure
-            $structure =~ s/\s.+?$//;            # Removes free energy
-        
+            ######### Partition function block ##########
+            
+            # Partition function in 3 windows on 5' end
+            foreach my $i (0, 50, 100) {
+                
+                my ($end, $file, $seq, @win);
+                $end = $partwin - $i - 1 > $#reactivity ? $#reactivity : $partwin - $i - 1;
+                
+                next if ($end < MINWINLENGTH - 1);
+                next if (exists $seenwins{"0-" . $end});
+                    
+                $seenwins{"0-" . $end} = 1;
+                
+                $seq = substr($sequence, 0, $end + 1);
+                @win = @reactivity[0 .. $end];
+                $file = $id . "_0-" . $end . "_" . threads->tid();
+                
+                my ($win, $shannon) = partition( file       => $file,
+                                                 sequence   => $seq,
+                                                 reactivity => \@win,
+                                                 pos        => 0,
+                                                 trim5      => 0,
+                                                 trim3      => $wintrim,
+                                                 pseudoknot => pkconstraint(0, \@pkpairs),
+                                                 constraint => "." x @win );   
+               
+                if (!$win) {               
+               
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($file . "*")) unless($keeptmp);
+                    
+                    next TRANSCRIPT;
+                    
+                }
+               
+                push(@{$pairprobs{$_}->{pairs}}, $win->{$_}) for (keys %{$win});
+                push(@{$shannon[$_]}, $shannon->{$_}) for (keys %{$shannon});
+                push(@windows, [0, $end - $wintrim]);
+                
+            }
+            
+            undef(%seenwins);
+            
+            # Partition function along sequence (5' and 3' ends are computed separately)
+            if (@reactivity > $partwin) {
+            
+                for (my $i = $partstep; $i < @reactivity; $i += $partstep) {
+                    
+                    my ($end, $seq, $file, @win);
+                    $end = $i + $partwin - 1; #> $#reactivity ? $#reactivity : $i + $partwin - 1;
+                    
+                    last if ($end > $#reactivity);
+                    
+                    $seq = substr($sequence, $i, $end - $i + 1);
+                    @win = @reactivity[$i .. $end];
+                    $file = $id . "_" . $i . "-" . $end . "_" . threads->tid();
+                    
+                    my ($win, $shannon) = partition( file       => $file,
+                                                     sequence   => $seq,
+                                                     reactivity => \@win,
+                                                     pos        => $i,
+                                                     trim5      => $wintrim,
+                                                     trim3      => $wintrim,
+                                                     pseudoknot => pkconstraint($i, \@pkpairs),
+                                                     constraint => "." x @win );
+                    
+                    if (!$win) {               
+                   
+                        lock(%results);
+                        $results{folderr}++;
+                        
+                        unlink(glob($file . "*")) unless($keeptmp);
+                        
+                        next TRANSCRIPT;
+                        
+                    }
+                     
+                    push(@{$pairprobs{$_}->{pairs}}, $win->{$_}) for (keys %{$win});
+                    push(@{$shannon[$_]}, $shannon->{$_}) for (keys %{$shannon});
+                    push(@windows, [$i + $wintrim, $end - $wintrim]);
+                       
+                }
+            
+            }
+            
+            undef(%seenwins);
+            
+            # Partition function in 3 windows on 3' end
+            foreach my $i (0, 50, 100) {
+                
+                my ($start, $file, $seq, @win);
+                $start = @reactivity - $partwin + $i < 0 ? 0 : @reactivity - $partwin + $i;
+                
+                next if ($start > @reactivity - MINWINLENGTH);
+                next if (exists $seenwins{$start . "-" . $#reactivity});
+                    
+                $seenwins{$start . "-" . $#reactivity} = 1;
+                
+                $seq = substr($sequence, $start, @reactivity - $start + 1);
+                @win = @reactivity[$start .. $#reactivity];
+                $file = $id . "_" . $start . "-" . $#reactivity . "_" . threads->tid();
+                
+                my ($win, $shannon) = partition( file       => $file,
+                                                 sequence   => $seq,
+                                                 reactivity => \@win,
+                                                 pos        => $start,
+                                                 trim5      => $wintrim,
+                                                 trim3      => 0,
+                                                 pseudoknot => pkconstraint($start, \@pkpairs),
+                                                 constraint => "." x @win );
+                
+                if (!$win) {               
+               
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($file . "*")) unless($keeptmp);
+                    
+                    next TRANSCRIPT;
+                    
+                }
+                
+                push(@{$pairprobs{$_}->{pairs}}, $win->{$_}) for (keys %{$win});
+                push(@{$shannon[$_]}, $shannon->{$_}) for (keys %{$shannon});
+                push(@windows, [$start + $wintrim, $#reactivity]);
+                
+            }
+           
+            @shannon = map { mean(@{$_}) } @shannon; # Shannon entropy vector (for now not used)
+            
+            # Builds constraint with pairs > 0.99 probability
+            foreach my $pair (sort keys %pairprobs) {
+                
+                my ($i, $j) = split(/-/, $pair);
+                
+                for (@windows) { $pairprobs{$pair}->{n}++ if ($i >= $_->[0] &&
+                                                              $i <= $_->[1] &&
+                                                              $j >= $_->[0] &&
+                                                              $j <= $_->[1]); }
+                
+                # If average p(i,j) is >= 0.99
+                if (sum(@{$pairprobs{$pair}->{pairs}}) / $pairprobs{$pair}->{n} >= 0.99) {
+                    
+                    $constraint[$i] = "(";
+                    $constraint[$j] = ")";
+                    
+                }
+                
+            }
+            
+            ######### End of partition function block ##########
+            
+            undef(@windows);
+            undef(%seenwins);
+
+            ######### MFE folding block ##########
+            
+            # MFE folding in 5 windows on 5' end
+            foreach my $i (-100, -50, 0, 50, 100) {
+                
+                my ($end, $file, $seq, $constraint,
+                    @win);
+                $end = $foldwin - $i - 1 > $#reactivity ? $#reactivity : $foldwin - $i - 1;
+                
+                next if ($end < MINWINLENGTH - 1);
+                next if (exists $seenwins{"0-" . $end});
+                    
+                $seenwins{"0-" . $end} = 1;
+                
+                $seq = substr($sequence, 0, $end + 1);
+                @win = @reactivity[0 .. $end];
+                $constraint = fixdotbracket(join("", @constraint[0 .. $end]));
+                $constraint = rmlonelypairs($constraint) if ($nlp);
+                $file = $id . "_0-" . $end . "_" . threads->tid();
+                
+                my $win = winfold( file       => $file,
+                                   sequence   => $seq,
+                                   reactivity => \@win,
+                                   pos        => 0,
+                                   constraint => $constraint,
+                                   pseudoknot => pkconstraint(0, \@pkpairs) );   
+               
+                if (!$win) {               
+               
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($file . "*")) unless($keeptmp);
+                    
+                    next TRANSCRIPT;
+                    
+                }
+
+                $npairs{$_}->{pairs}++ for (keys %{$win});
+                push(@windows, [0, $end]);
+                
+            }
+            
+            undef(%seenwins);
+            
+            # MFE folding along sequence (5' and 3' ends are computed separately)
+            if (@reactivity > $foldwin) {         
+            
+                for (my $i = $foldstep; $i < @reactivity; $i += $foldstep) {
+                    
+                    last if ($i + $foldwin - 1 > $#reactivity);
+                    
+                    my ($end, $seq, $file, $constraint,
+                        @win);
+                    $end = $i + $foldwin - 1; #> $#reactivity ? $#reactivity : $i + $partwin - 1;
+                    $seq = substr($sequence, $i, $end - $i + 1);
+                    @win = @reactivity[$i .. $end];
+                    $constraint = fixdotbracket(join("", @constraint[$i .. $end]));
+                    $constraint = rmlonelypairs($constraint) if ($nlp);
+                    $file = $id . "_" . $i . "-" . $end . "_" . threads->tid();
+                    
+                    my $win = winfold( file       => $file,
+                                       sequence   => $seq,
+                                       reactivity => \@win,
+                                       pos        => $i,
+                                       constraint => $constraint,
+                                       pseudoknot => pkconstraint($i, \@pkpairs) );
+                    
+                    if (!$win) {               
+                   
+                        lock(%results);
+                        $results{folderr}++;
+                        
+                        unlink(glob($file . "*")) unless($keeptmp);
+                        
+                        next TRANSCRIPT;
+                        
+                    }
+                       
+                    $npairs{$_}->{pairs}++ for (keys %{$win});
+                    push(@windows, [$i, $end]);
+                       
+                }
+            
+            }
+            
+            undef(%seenwins);
+            
+            # MFE folding in 5 windows on 3' end
+            foreach my $i (-100, -50, 0, 50, 100) {
+                
+                my ($start, $file, $seq, $constraint,
+                    @win);
+                $start = @reactivity - $foldwin + $i < 0 ? 0 : @reactivity - $foldwin + $i;
+                
+                next if ($start > @reactivity - MINWINLENGTH);
+                next if (exists $seenwins{$start . "-" . $#reactivity});
+                    
+                $seenwins{$start . "-" . $#reactivity} = 1;
+                
+                $seq = substr($sequence, $start, @reactivity - $start + 1);
+                @win = @reactivity[$start .. $#reactivity];
+                $constraint = fixdotbracket(join("", @constraint[$start .. $#reactivity]));
+                $constraint = rmlonelypairs($constraint) if ($nlp);
+                $file = $id . "_" . $start . "-" . $#reactivity . "_" . threads->tid();
+                
+                my $win = winfold( file       => $file,
+                                   sequence   => $seq,
+                                   reactivity => \@win,
+                                   pos        => $start,
+                                   constraint => $constraint,
+                                   pseudoknot => pkconstraint($start, \@pkpairs) );
+                
+                if (!$win) {               
+               
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($file . "*")) unless($keeptmp);
+                    
+                    next TRANSCRIPT;
+                    
+                }
+               
+                $npairs{$_}->{pairs}++ for (keys %{$win});
+                push(@windows, [$start, $#reactivity]);
+                
+            }
+            
+            # Builds structure with pairs in > 0.50 of windows
+            foreach my $pair (sort {(split(/-/, $a))[0] <=> (split(/-/, $b))[0]} keys %npairs) {
+                
+                my ($i, $j, $n1, $n2);
+                ($i, $j) = split(/-/, $pair);
+                
+                for (@windows) { $n1++ if ($i >= $_->[0] &&
+                                           $i <= $_->[1]);
+                                 $n2++ if ($j >= $_->[0] &&
+                                           $j <= $_->[1]); }
+                
+                # If pair(i,j) is present in > 0.50 windows
+                if ($npairs{$pair}->{pairs} / $n1 > 0.5 &&
+                    $npairs{$pair}->{pairs} / $n2 > 0.5) {
+                    
+                    push(@keptpairs, [$i, $j]);
+                    
+                    push(@dotplot, [++$i, ++$j, -logarithm(mean(@{$pairprobs{$pair}->{pairs}}), 10)]) if ($dp &&
+                                                                                                          exists $pairprobs{$pair});
+                    
+                }
+                
+            }
+            
+            if ($dpa) {
+                
+                foreach my $pair (keys %pairprobs) {
+                    
+                    my ($i, $j) = split(/-/, $pair);
+                    push(@dotplotall, [++$i, ++$j, -logarithm(mean(@{$pairprobs{$pair}->{pairs}}), 10)]);
+                    
+                }
+            
+                @dotplotall = sort {$a->[0] <=> $b->[0]} @dotplotall;
+            
+            }
+            
+            ######### End of MFE folding block ##########
+            
+            $entry = Data::Sequence::Structure->new( id          => $id,
+                                                     sequence    => $sequence,
+                                                     basepairs   => [ @keptpairs, @pkpairs ],
+                                                     pseudoknots => 1);
+            $entry->energy(sprintf("%.2f", RNA::energy_of_struct($sequence, $entry->structure())));
+            
         }
-        elsif ($method == 2) { # RNAstructure
+        else { # Whole molecule folding
+        
+            my ($tmp, $io);
+            $tmp = $id . "_" . threads->tid();
+        
+            if (!$ignore) {
             
-            $cmd = $rnastructure . " '" . $tmp . ".fa' '" . $tmp . ".ct' -t " . $t;
-            $cmd .= " -si " . $intercept . " -sm " . $slope . " -sh '" . $tmp . ".shape'" if (!$ignore);
-            $cmd .= " -md " . $maxdist if ($maxdist);
+                if (!xml2shape($tmp, \@reactivity)) { # Generates temporary SHAPE constraint file
+                    
+                    lock(%results);
+                    $results{consterr}++;
+                    
+                    next;
+                    
+                }
+                
+                if ($hc) { 
+                    
+                    if (!applyhardconstraint($tmp, hardbases(@reactivity), "." x length($sequence))) { # Generates the hard-constraint file
+                        
+                        lock(%results);
+                        $results{consterr}++;
+                        
+                        next;
+                        
+                    }
+                    
+                }
+                
+            }
             
-            $ret = `$cmd 2>&1`;
-            
-            if ($ret !~ m/Single strand folding complete\./ ||
-                $ret =~ m/incorrect|error/i) { # Something went wrong during RNAstructure execution
+            if (!seq2fasta($tmp, $id, $sequence)) { # Generates temporary FASTA file
                 
                 lock(%results);
-                $results{folderr}++;
-                
-                unlink(glob($tmp . "*"));
+                $results{fastaerr}++;
                 
                 next;
                 
             }
+           
+            if ($method == 1) { # ViennaRNA
             
-            ($structure, $sequence, undef) = ct2db($tmp . ".ct");
-            
-        }
-        
-        if (isdotbracket($structure)) {
+                $cmd = $viennarna . " --infile='" . $tmp . ".fa' --outfile='" . $id . ".fold'"; # Will be saved as $tmp_$id.fold
                 
-            my ($file, $energy);
-            $file = $output . "structures/" . $id . "." . ($ct ? "ct" : "db");
-            $energy = sprintf("%.2f", RNA::energy_of_struct($sequence, $structure));
-            
-            open(my $wh, ">" . $file) or next;
-            select((select($wh), $|=1)[0]);
-            
-            if ($ct) {
-        
-                if (my $ctout = db2ct($sequence, $structure)) { print $wh "  " . length($sequence) . "  ENERGY = " . $energy . "  " . $id . "\n" . $ctout; }
-                else {
-                
-                    lock(%results);
-                    $results{db2cterr}++;
+                if (!$ignore) {
                     
-                    unlink(glob($tmp . "*"));
+                    $cmd .= " --shape='" . $tmp . ".shape'";
+                    $cmd .= " -C" if ($hc);
+                    
+                }
+                
+                $ret = `$cmd $vrfoldparams 2>/dev/null`;
+            
+            }
+            elsif ($method == 2) { # RNAstructure
+                
+                $cmd = $rnastructure . " '" . $tmp . ".fa' '" . $id . ".ct'";
+                
+                if (!$ignore) {
+                    
+                    $cmd .= " -sh '" . $tmp . ".shape'";
+                    $cmd .= " -C '" . $tmp . ".constraint'" if ($hc);
+                    
+                }
+                 
+                $ret = `$cmd $rsfoldparams 2>&1`;
+                
+                if ($ret !~ m/Single strand folding complete\./ ||
+                    $ret =~ m/incorrect|error/i) { # Something went wrong during RNAstructure execution
+                    
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($tmp . "*")) unless($keeptmp);
                     
                     next;
                     
                 }
                 
             }
-            else {
+            
+            eval { $io = Data::IO::Sequence->new( file        => $id . ($method == 1 ? ".fold" : ".ct"),
+                                                  lonelypairs => $nlp ? 0 : 1 ); };
+            
+            if ($@) {
                 
-                print $wh ">" . $id . "\n" .
-                          $sequence . "\n" .
-                          $structure . " (" . $energy . ")\n";
+                lock(%results);
+                $results{folderr}++;
+                    
+                next;
                 
             }
             
-            close($wh);
+            $entry = $io->read();
+            
+            unlink(glob($tmp . "*")) unless($keeptmp);
+        
+        }
+        
+        if (defined $entry) { 
+                
+            my ($file, $energy, $io);
+            $file = $output . "structures/" . $id . "." . ($ct ? "ct" : "db");
+            
+            # Fix the ID changed by ViennaRNA
+            $entry->id($id) if ($method == 1);
+            
+            eval { $io = Data::IO::Sequence->new( file   => $file,
+                                                  mode   => "w",
+                                                  format => $ct ? "CT" : "Vienna" ); };
+            
+            if ($@) {
+                
+                lock(%results);
+                $results{folderr}++;
+                    
+                next;
+                
+            }
+            
+            $io->write($entry);
+            $io->close();
+            
+            if ($windowed) {
+                
+                if ($dp) {
+                
+                    open(my $wh, ">" . $output . "dotplot/" . $id . ".dp") or next;
+                    select((select($wh), $|=1)[0]);
+                    print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
+                    print $wh join("\t", @{$_}) . "\n" for (@dotplot);
+                    close($wh);
+                
+                }
+                
+                if ($dpa) {
+                
+                    open(my $wh, ">" . $output . "dotplot/" . $id . ".all.dp") or next;
+                    select((select($wh), $|=1)[0]);
+                    print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
+                    print $wh join("\t", @{$_}) . "\n" for (@dotplotall);
+                    close($wh);
+                
+                }
+                
+                if ($sh) {
+                    
+                    my $i = 0;
+                    
+                    open(my $wh, ">" . $output . "shannon/" . $id . ".wig") or next;
+                    select((select($wh), $|=1)[0]);
+                    
+                    print $wh "track type=wiggle_0 name=\"" . $id . " Shannon entropy\"\n" .
+                              "variableStep chrom=" . $id . "\n";
+                    
+                    for (@shannon) {
+                        
+                        $i++;
+                        print $wh $i . " " . $_ . "\n" if ($_);
+                        
+                    }
+                    
+                    close($wh);
+                    
+                }
+                
+            }
                 
         }
         else {
             
             lock(%results);
             $results{folderr}++;
-            
-            unlink(glob($tmp . "*"));
             
             next;
             
@@ -469,9 +1187,427 @@ sub fold { # Threads
         
         }
         
-        unlink(glob($tmp . "*"));
+    }
+    
+}
+
+##
+#  Pseudoknots detection
+#
+#  pkdetect( file       => <temporary file prefix>,
+#            sequence   => <window sequence>,
+#            reactivity => <ARRAY ref of win reactivities>,
+#            pos        => <true position> );
+##
+
+sub pkdetect {
+    
+    my %parameters = @_;
+    
+    my ($ret, $fastafile, $cmd, $energy,
+        $pktollerance, $mfetollerance, $io, $count,
+        @subopt, @results, @hardconstraint, @pkpairs,
+        %pkpairs, %mfepaired, %candidatepk);
+    $count = 0;
+    $fastafile = $parameters{file} . ".fa";
+    @hardconstraint = @{hardbases(@{$parameters{reactivity}})} if (!$ignore &&
+                                                                   $hc);
+    
+    # Writes temporary constraint file and sequence
+    return unless(seq2fasta($parameters{file}, $parameters{file}, $parameters{sequence}));
+    if (!$ignore) { return unless(xml2shape($parameters{file}, $parameters{reactivity})); }
+    return unless(applyhardconstraint($parameters{file}, \@hardconstraint, $parameters{constraint}, $pkmethod));
+    
+    if ($pkmethod == 1) {
+    
+        # Step I: calculate MFE structure
+        if ($method == 1) { # ViennaRNA
+            
+            $cmd = $viennarna . " --infile='" . $fastafile . "' --outfile='" . $parameters{file} . ".fold'";
+            $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
+            $cmd .= " -C" if (!$ignore &&
+                               $hc);
+            
+            $ret = `$cmd $vrfoldparams 2>/dev/null`;
+            
+        }
+        else { # RNAstructure
+    
+            $cmd = $rnastructure . " '" . $fastafile . "' '" . $parameters{file} . ".ct'";
+            $cmd .= " -sh '" . $parameters{file} . ".shape'" if (!$ignore);
+            $cmd .= " -C '" . $parameters{file} . ".constraint'" if (!$ignore &&
+                                                                      $hc);
+            
+            $ret = `$cmd $rsfoldparams 2>&1`;
+            
+            return if ($ret !~ m/Single strand folding complete\./);
+            
+        }
+        
+        eval { $io = Data::IO::Sequence->new( file        => $parameters{file} . ($method == 1 ? ".fold" : ".ct"),
+                                              lonelypairs => $nlp ? 0 : 1); };
+        
+        if ($@) { return; }
+        
+        if (my $entry = $io->read()) {
+        
+            $cmd = $rnasubopt . " -p " . $pksubopt;
+            $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
+            $cmd .= " -C" if (!$ignore &&
+                               $hc);
+            
+            $energy = $entry->energy() || RNA::energy_of_struct($entry->sequence(), $entry->structure());
+            $mfetollerance = $energy - ($energy * ($entry->length() > 100 ? 0.25 : 0.2));
+            $pktollerance = $energy - ($energy * 0.1);
+        
+            foreach my $helix ($entry->helices()) { %mfepaired = (%mfepaired, map { $_ => 1 } ($helix->h5bases(), $helix->h3bases())); }
+        
+            foreach my $line (split(/\n/, `cat '$fastafile' | $cmd $vrfoldparams`)) {
+        
+                next if (!isdotbracket($line));
+                
+                my $suboptenergy = RNA::energy_of_struct($entry->sequence(), $line);
+                
+                push(@subopt, $line) if ($suboptenergy < $mfetollerance);
+                
+            }
+            
+            @subopt = uniq(@subopt);
+            
+            foreach my $subopt (@subopt) {
+    
+                foreach my $helix (@{(listhelices($subopt))[0]}) {
+                    
+                    my ($pairedinmfe, $h5, $h3, @tmpsubopt, @pkbases);
+                    @tmpsubopt = split(//, $subopt);
+                    @pkbases = (@{$helix->{h5bases}}, @{$helix->{h3bases}});
+                    $pairedinmfe += $mfepaired{$_} for (@pkbases);
+                    
+                    next if ($pairedinmfe / @pkbases >= 0.5);
+                    
+                    $tmpsubopt[$_] = "." for (@pkbases);
+                    
+                    $candidatepk{join("-", @pkbases)} = { bases  => [$helix->{h5bases}, $helix->{h3bases}],
+                                                          energy => RNA::energy_of_struct($parameters{sequence}, $subopt) - RNA::energy_of_struct($parameters{sequence}, join("", @tmpsubopt)) };
+                    
+                }
+                
+            }
+            
+            undef(@subopt);
+            
+            foreach my $pk (sort {$candidatepk{$a}->{energy} <=> $candidatepk{$b}->{energy}} keys %candidatepk) {
+                
+                last if ($count == $pkmax);
+                
+                my ($constraint, $constfile, @constraint, @pkbases, %seen);
+                @pkbases = (@{$candidatepk{$pk}->{bases}->[0]}, @{$candidatepk{$pk}->{bases}->[1]});
+                @constraint = (".") x $entry->length();
+                $constraint[$_] = "x" for (@pkbases);
+                $constfile = $entry->id() . "_pkconstraint_" . $count;
+                
+                return unless(seq2fasta($constfile, $constfile, $entry->sequence()));
+                return unless(applyhardconstraint($constfile, [@hardconstraint, @pkbases], $parameters{constraint}, 1));
+                
+                $cmd = $rnasubopt . " -p 100";
+                $cmd .= " -C" if ($ignore ||
+                                  !$hc);
+                $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
+                
+                foreach my $line (split(/\n/, `cat '$constfile.fa' | $cmd $vrfoldparams`)) {
+                    
+                    next if (!isdotbracket($line));
+                    next if (exists $seen{$line});
+                    
+                    $seen{$line} = 1;
+                    my $suboptenergy = RNA::energy_of_struct($entry->sequence(), $line);
+                    
+                    if ($suboptenergy < $mfetollerance) {
+                        
+                        my (@pairs, @pkpairs);
+                        @pairs = listpairs($line);
+                        
+                        for (0 .. $#{$candidatepk{$pk}->{bases}->[0]}) {
+                            
+                            my ($i, $j) = ($candidatepk{$pk}->{bases}->[0]->[$_], $candidatepk{$pk}->{bases}->[1]->[$_]);
+                            push(@pkpairs, [$i, $j]);
+                            
+                        }
+                        
+                        push(@subopt, { pairs   => \@pairs,
+                                        pkpairs => \@pkpairs,
+                                        energy  => $suboptenergy + $candidatepk{$pk}->{energy} });
+                        
+                    }
+                    
+                }
+                
+                $count++;
+                
+            }
+            
+            foreach my $struct (sort {$a->{energy} <=> $b->{energy}} @subopt) {
+        
+                my ($dotbracket, $pkpairs, $pkregion, $noilregion,
+                    $ss, $ne, $il, $pkenergy, $ildb, @il);
+                ($dotbracket, $pkpairs) = rmpseudoknots($entry->sequence(), [@{$struct->{pairs}}, @{$struct->{pkpairs}}]);
+                
+                next unless(@{$pkpairs});
+                
+                $pkpairs = $struct->{pkpairs};
+                $pkregion = substr($dotbracket, $pkpairs->[0]->[0], $pkpairs->[0]->[1] - $pkpairs->[0]->[0] + 1);
+                ($ss) = $pkregion =~ tr/././;
+                $noilregion = fixdotbracket($pkregion);
+                $ne = scalar(@{(listhelices($noilregion))[0]});
+                $ildb = join("", map { substr($pkregion, $_, 1) eq substr($noilregion, $_, 1) ? "." : substr($pkregion, $_, 1) } 0 .. length($pkregion) - 1);
+                
+                while ($ildb =~ m/((?:(\(+.?\(*)|(\)+.?\)*)))/g) {
+                
+                    my ($helix, $length);
+                    $helix = $1;
+                    ($length) = $helix =~ tr/()/()/;
+                    push(@il, $length);
+                    
+                }
+                
+                $il += $lambda{($_ < 2 ? 2 : ($_ > 15 ? 15 : $_))} ** 2 for (@il);
+                
+                $pkenergy = $struct->{energy} + ($p1 * logarithm((6.5 ** 2) * $ss + (15 ** 2) * $ne, e) + $p2 * logarithm($il, e));
+                
+                push(@results, { pkpairs => $pkpairs,
+                                 energy     => $pkenergy }) if ($pkenergy < $pktollerance);
+                
+            }
+            
+            if (@results) {
+            
+                my $result = (sort {$a->{energy} <=> $b->{energy}} @results)[0];
+                @pkpairs = @{$result->{pkpairs}};
+            
+            }
+        
+        }
+        else { return; }
         
     }
+    else {
+        
+        $cmd = "'" . $fastafile . "' '" . $parameters{file} . ".ct' -p1 " . $p1 . " -p2 " . $p2;
+        $cmd .= " -sh '" . $parameters{file} . ".shape'" if (!$ignore);
+        #$cmd .= " -C '" . $parameters{file} . ".constraint'" if ($hc); # ShapeKnots takes -C parameter, but it is ignored
+        $ret = `$shapeknots $cmd $skparams 2>&1`;
+        
+        return if ($ret !~ m/#+\s+DONE\s+#+/m);
+        
+        # If the sequence is all single-stranded, ShapeKnots returns an empty CT file
+        if (-s $parameters{file} . ".ct") {
+            
+            eval { $io = Data::IO::Sequence->new( file        => $parameters{file} . ".ct",
+                                                  pseudoknots => 1,
+                                                  lonelypairs => $nlp ? 0 : 1); };
+            
+            if ($@) { return; }
+            
+            if (my $entry = $io->read()) { @pkpairs = $entry->pkpairs(); }
+            else { return; }
+            
+        }
+        
+    }
+    
+    if (!$ignore) { # Only pseudoknots for which average base reactivity is < than a cutoff are kept
+        
+        my @reactivity = grep { !isnan($_) } @{$parameters{reactivity}}[map {@$_} @pkpairs];
+        
+        if (mean(@reactivity) <= $pkcutoff) { $pkpairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@pkpairs); }
+                        
+    }
+    
+    unlink(glob($parameters{file} . "*")) unless($keeptmp);
+    
+    return(\%pkpairs);
+    
+}
+
+##
+#  Windowed folding function
+#
+#  winfold( file       => <temporary file prefix>,
+#           sequence   => <window sequence>,
+#           reactivity => <ARRAY ref of window reactivities>,
+#           pos        => <true position>,
+#           constraint => <base-pair constraint from windowed partition>,
+#           pseudoknot => <ARRAY of indexes of pseudoknotted bases> );
+##
+
+sub winfold {
+    
+    my %parameters = @_;
+    
+    my ($ret, $cmd, $io, @hardconstraint,
+        %pairs);
+    @hardconstraint = @{hardbases(@{$parameters{reactivity}})} if (!$ignore &&
+                                                                   $hc);
+    @hardconstraint = (@hardconstraint, @{$parameters{pseudoknot}}) if ($pk);
+    
+    # Writes temporary constraint file and sequence
+    return unless(seq2fasta($parameters{file}, $parameters{file}, $parameters{sequence}));
+    if (!$ignore) { return unless(xml2shape($parameters{file}, $parameters{reactivity})); }
+    return unless(applyhardconstraint($parameters{file}, \@hardconstraint, $parameters{constraint}));
+    
+    if ($method == 1) { # ViennaRNA
+        
+        $cmd = $viennarna . " --infile='" . $parameters{file} . ".fa' --outfile='" . $parameters{file} . ".fold' -C --enforceConstraint";
+        $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
+        
+        $ret = `$cmd $vrfoldparams 2>/dev/null`;
+        
+    }
+    else { # RNAstructure
+
+        $cmd = $rnastructure . " '" . $parameters{file} . ".fa' '" . $parameters{file} . ".ct' -C '" . $parameters{file} . ".constraint'";
+        $cmd .= " -sh '" . $parameters{file} . ".shape'" if (!$ignore);
+        
+        $ret = `$cmd $rsfoldparams 2>&1`;
+        
+        return if ($ret !~ m/Single strand folding complete\./);
+        
+    }
+    
+    eval { $io = Data::IO::Sequence->new( file        => $parameters{file} . ($method == 1 ? ".fold" : ".ct"),
+                                          lonelypairs => $nlp ? 0 : 1 ); };
+    
+    if ($@) { return; }
+    
+    if (my $entry = $io->read()) {
+    
+        foreach my $pair ($entry->basepairs()) { # i,j numbering is 0-based
+    
+            $_ += $parameters{pos} for (@{$pair});
+            $pairs{$pair->[0] . "-" . $pair->[1]} = 1;
+            
+        }
+    
+    }
+    else { return; }
+    
+    unlink(glob($parameters{file} . "*")) unless($keeptmp);
+    
+    return(\%pairs);
+    
+}
+
+##
+#  Windowed partition function calculation 
+#
+#  partition( file       => <temporary file prefix>,
+#             sequence   => <window sequence>,
+#             reactivity => <ARRAY ref of window reactivities>,
+#             pos        => <true position>,
+#             trim5      => <n bases to trim from win 5'>,
+#             trim3      => <n bases to trim from win 3'>,
+#             pseudoknot => <ARRAY ref of pseudoknotted base indexes> );
+##
+
+sub partition {
+    
+    my %parameters = @_;
+    
+    my ($ret, $cmd, @hardconstraint, %pairs,
+        %shannon);
+    @hardconstraint = @{hardbases(@{$parameters{reactivity}})} if (!$ignore &&
+                                                                   $hc);
+    @hardconstraint = (@hardconstraint, @{$parameters{pseudoknot}}) if ($pk);
+    
+    # Fill window's Shannon entropy with 0
+    %shannon = map { $_ => 0 } ($parameters{pos} + $parameters{trim5} .. $parameters{pos} + length($parameters{sequence}) - $parameters{trim3} - 1);
+  
+    # Writes temporary constraint file and sequence
+    return unless(seq2fasta($parameters{file}, $parameters{file}, $parameters{sequence}));
+    if (!$ignore) { return unless(xml2shape($parameters{file}, $parameters{reactivity})); }
+    return unless(applyhardconstraint($parameters{file}, \@hardconstraint, $parameters{constraint}));
+    
+    if ($method == 1) { # ViennaRNA
+    
+        $cmd = $viennarna . " -p --infile='" . $parameters{file} . ".fa'";
+        $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
+        $cmd .= " -C" if ((!$ignore &&
+                           $hc) ||
+                          $pk);
+        
+        $ret = `$cmd $vrfoldparams 2>/dev/null`;
+        
+        open(my $fh, "<", $parameters{file} . "_dp.ps") or return;
+        while(<$fh>) {
+            
+            if ($_ =~ m/^(\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
+                
+                my ($i, $j, $p) = ($1, $2, $3);
+               
+                next if ($i <= $parameters{trim5} ||
+                         $j >= length($parameters{sequence}) - $parameters{trim3});
+                
+                $i += $parameters{pos} - 1;         # Base numbering is 1-based
+                $j += $parameters{pos} - 1;         
+                $p = $p ** 2;                       # ViennaRNA returns sqrt(p(i,j))
+                
+                $pairs{$i . "-" . $j} = $p;
+                $shannon{$i} += $p * logarithm($p, 10);
+                $shannon{$j} += $p * logarithm($p, 10);
+                
+            }
+            
+        }
+        close($fh);
+        
+    }
+    else { # RNAstructure
+        
+        $cmd = $partition . " '" . $parameters{file} . ".fa' '" . $parameters{file} . ".pfs'";
+        $cmd .= " -sh '" . $parameters{file} . ".shape'" if (!$ignore);
+        $cmd .= " -C '" . $parameters{file} . ".constraint'" if ((!$ignore &&
+                                                                  $hc) ||
+                                                                 $pk);
+        
+        $ret = `$cmd $rsfoldparams 2>&1`;
+        
+        return if ($ret !~ m/Single strand partition function complete\./);
+        
+        $cmd = $probplot . " -t '" . $parameters{file} . ".pfs' '" . $parameters{file} . ".pfs.txt'";
+        $ret = `$cmd 2>&1`;
+        
+        return if ($ret !~ m/Probability dot plot complete\./);
+        
+        open(my $fh, "<", $parameters{file} . ".pfs.txt") or return;
+        while(<$fh>) {
+            
+            if ($_ =~ m/^(\d+)\t(\d+)\t([\d\.]+(?:e-\d+)?)$/) {
+                
+                my ($i, $j, $p) = ($1, $2, $3);
+                
+                next if ($i <= $parameters{trim5} ||
+                         $j >= length($parameters{sequence}) - $parameters{trim3});
+                
+                $i += $parameters{pos} - 1;         # Base numbering is 1-based
+                $j += $parameters{pos} - 1;
+                $p = 10 ** (-$p);                   # ProbabilityPLot returns -log10(p(i,j))
+                
+                $pairs{$i . "-" . $j} = $p;
+                $shannon{$i} += $p * logarithm($p, 10);
+                $shannon{$j} += $p * logarithm($p, 10);
+                
+            }
+            
+        }
+        close($fh);
+        
+    }
+    
+    $_ = -$_ for (values %shannon);
+    
+    unlink(glob($parameters{file} . "*")) unless($keeptmp);
+    
+    return(\%pairs, \%shannon);
     
 }
 
@@ -481,20 +1617,90 @@ sub xml2shape {
     
     my $i = 0;
     
-    open(my $wh, ">", $file . ".shape") or return(1);
+    open(my $wh, ">", $file . ".shape") or return();
     select((select($wh), $|=1)[0]);
     for (@{$reactivity}) {
         
         $i++;
         
-        next if (isnan($_));
+        #next if (isnan($_));
         
-        print $wh $i . " " . $_ . "\n";
+        print $wh $i . " " . (isnan($_) ? -999 : $_) . "\n";
         
     }
     close($wh);
     
-    return;
+    return(1);
+    
+}
+
+sub applyhardconstraint {
+    
+    my ($file, $hardbases, $constraint, $mode) = @_;
+    
+    $mode ||= $method;
+    $hardbases = [ sort {$a <=> $b} @{$hardbases} ];
+
+    if ($mode == 1) { # ViennaRNA
+    
+        my @constraint = split(//, $constraint);
+        $constraint[$_] = "x" for (@{$hardbases});
+        
+        # Appends constraint to FASTA file
+        open(my $wh, ">>", $file . ".fa") or return;
+        print $wh join("", @constraint);
+        close($wh);
+        
+        return(1);
+        
+    }
+    else { # RNAstructure
+
+        open(my $wh, ">", $file . ".constraint") or return();
+        select((select($wh), $|=1)[0]);
+        
+        print $wh "DS:\n-1\nSS:\n";
+        
+        print $wh ++$_ . "\n" for (@{$hardbases});
+        
+        print $wh "-1\nMod:\n-1\nPairs:\n";
+        
+        if ($constraint) { print $wh ++$_->[0] . " " . ++$_->[1] . "\n" for (listpairs($constraint)); } # RNAstructure numbering is 1-based 
+        
+        print $wh "-1 -1\nFMS:\n-1\nForbids:\n-1 -1";
+        
+        close($wh);
+        
+        return(1);
+        
+    }
+    
+}
+
+sub hardbases { # Returns 0-based coords of bases to be hard-constrained
+    
+    my (@positions);
+    
+    if ($hc &&
+        !$ignore) {
+    
+        foreach my $i (0 .. $#_) { push(@positions, $i) if (isnumeric($_[$i]) &&
+                                                            $_[$i] >= $cutoff); }
+    
+    }
+    
+    return(\@positions);
+
+}
+
+sub pkconstraint {
+    
+    my ($pos, $pk) = @_;
+    
+    my @positions = map {@$_} @{$pk};
+    @positions = grep { ispositive($_) } (map { $_ - $pos } @positions);
+    
+    return(\@positions);
     
 }
 
@@ -505,10 +1711,11 @@ sub seq2fasta {
     eval {
         
         my ($io, $fasta);
-        $io = Data::IO::Sequence->new( file   => $file . ".fa",
-                                       mode   => "w",
-                                       flush  => 1,
-                                       format => "fasta" );
+        $io = Data::IO::Sequence->new( file      => $file . ".fa",
+                                       mode      => "w",
+                                       overwrite => 1,
+                                       flush     => 1,
+                                       format    => "fasta" );
         $fasta = Data::Sequence->new( id       => $id,
                                       sequence => $sequence );
         
@@ -516,9 +1723,9 @@ sub seq2fasta {
         
     };
     
-    if ($@) { return(1); }
+    if ($@) { return(); }
     
-    return;
+    return(1);
     
 }
 
@@ -528,7 +1735,7 @@ sub help {
      
     die <<HELP;
  
- RF Fold (v2.0.0b)
+ RF Fold (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -551,11 +1758,15 @@ sub help {
  -sl or --slope               <float>     Sets slope used with structural probing data restraints (Default: 1.8 [kcal/mol])
  -in or --intercept           <float>     Sets intercept used with structural probing data restraints (Default: -0.6 [kcal/mol])
  -md or --maximum-distance    <int>       Sets the maximum pairing distance in nucleotides between transcript's residues (Default: 0 [No limit])
- -i  or --ignore-reactivity               Do not use reactivity data to guide folding (MFE unconstrained prediction)
+ -i  or --ignore-reactivity               Ignores XML reactivity data when performing folding (MFE unconstrained prediction)
+ -hc or --hard-constraint                 Besides performing soft-constraint folding, allows specifying a reactivity cutoff (specified by -f)
+                                          for hard-constraining a base to be single-stranded
+ -f  or --cutoff              <float>     Reactivity cutoff for constraining a position as unpaired (>0, Default: 0.7)
+ -w  or --windowed                        Enables windowed folding
  
  Folding method #1 options (ViennaRNA)
- -v   or --viennarna          <string>    Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
- -nlp or --no-lonely-pairs                Disallows lonely base-pairs (1 bp helices) inside predicted structure
+ -vrf or --vienna-rnafold     <string>    Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
+ -nlp or --no-lonelypairs                 Disallows lonely base-pairs (1 bp helices) inside predicted structure
  -ngu or --no-closing-gu                  Disallows G:U wobbles at the end of helices
  -cm  or --constraint-method  <int>       Method for converting reactivities into pseudo-energies (1-2, Default: 1): [1] Deigan et al., 2009
                                                                                                                      [2] Zarringhalam et al., 2012
@@ -564,19 +1775,50 @@ sub help {
     -cc or --constraint-conversion  <int>       Method for converting reactivities to pairing probabilities (1-5, Default: 1):
                                                 [1] Skip normalization step (reactivities are treated as pairing probabilities)
                                                 [2] Linear mapping according to Zarringhalam et al., 2012
-                                                [3] Use a cutoff to divide into paired and unpaired nucleotides
+                                                [3] Use a cutoff to divide into paired and unpaired nucleotides (specified by -f)
                                                 [4] Linear model for converting reactivities into probabilities of being unpaired
                                                 [5] Linear model for converting the logarithm of reactivities into probabilities
                                                     of being unpaired
     -bf or --beta-factor            <float>     Sets the magnitude of penalities for deviations from the observed pairing probabilities (Default: 0.5)
-    -f  or --cutoff                 <float>     Cutoff for constraining a position as unpaired (0-1, Default: 0.7, requires -cc 3)
     -ms or --model-slope            <float>     Sets the slope used by the linear model (Default: 0.68 [#4] or 1.6 [#5], requires -cc [45])
     -mi or --model-intercept        <float>     Sets the intercept used by the linear model (Default: 0.2 [#4] or -2.29 [#5], requires -cc [45])
  
  Folding method #2 options (RNAstructure)
- -r  or --rnastructure        <string>    Path to RNAstructure Fold executable (Default: assumes RNAstructure is in PATH)
- -dp or --data-path           <string>    Path to RNAstructure data tables (Default: assumes DATAPATH environment variable is already set)
+ -rs or --rnastructure        <string>    Path to RNAstructure Fold executable (Default: assumes Fold is in PATH)
+                                          Note: by default, Fold-smp will be used (if available).
+ -d  or --data-path           <string>    Path to RNAstructure data tables (Default: assumes DATAPATH environment variable is already set)
  
+ Windowed folding options
+ -pt  or --partition             <string>  Path to partition executable (Default: assumes partition is in PATH)
+                                           Note: by default, partition-smp will be used (if available).
+ -pp  or --probabilityplot       <string>  Path to ProbabilityPlot executable (Default: assumes ProbabilityPlot is in PATH)
+ -fw  or --fold-window           <int>     Window size (in nt) for performing MFE folding (>=50, Default: 600)
+ -fo  or --fold-offset           <int>     Offset (in nt) for MFE folding window sliding (Default: 200)
+ -pw  or --partition-window      <int>     Window size (in nt) for computing partition function (>=50, Default: 600)
+ -po  or --partition-offset      <int>     Offset (in nt) for partition function window sliding (Default: 200)
+ -wt  or --window-trim           <int>     Number of bases to trim from both ends of the partition windows to avoid end biases (Default: 100)
+ -dp  or --dotplot                         Enables generation of structure dot-plots only for base-pairs present in the final structure
+ -dpa or --dotplot-all                     Enables generation of structure dot-plots for any possible base-pair
+ -sh  or --shannon-entropy                 Enables generation of a WIGGLE track file with per-base Shannon entropies
+ -pk  or --pseudoknots                     Enables detection of pseudoknots (computationally intensive)
+ -kp1 or --pseudoknot-penality1  <float>   Pseudoknot penality P1 (Default: 0.35)
+ -kp2 or --pseudoknot-penality2  <float>   Pseudoknot penality P2 (Default: 0.65)
+ -kw  or --pseudoknot-window     <int>     Window size (in nt) for performing pseudoknots detection (Default: 600)
+ -ko  or --pseudoknot-offset     <int>     Offset (in nt) for pseudoknots detection window sliding (Default: 200)
+ -kc  or --pseudoknot-cutoff     <float>   Reactivity cutoff for retaining a pseudoknotted helix (0-1, Default: 0.5)
+ -km  or --pseudoknot-method     <int>     Algorithm for pseudoknots prediction (1-2, Default: 1): [1] RNA Framework
+                                                                                                   [2] ShapeKnots
+ |
+ +- RNA Framework pseudoknots detection algorithm options
+    -vrs or --vienna-rnasubopt      <string>    Path to ViennaRNA RNAsubopt executable (Default: assumes RNAsubopt is in PATH)
+    -ks  or --pseudoknot-suboptimal <int>       Number of suboptimal structures to evaluate for pseudoknots prediction (>0, Default: 1000)
+    -kh  or --pseudoknot-helices    <int>       Number of candidate pseudoknotted helices to evaluate (>0, Default: 100)
+
+ |
+ +- ShapeKnots pseudoknots detection algorithm options
+    -sk or --shapeknots             <string>    Path to ShapeKnots executable (Default: assumes ShapeKnots is in PATH)
+                                                Note: by default, ShapeKnots-smp will be used (if available).
+
 HELP
     
 }

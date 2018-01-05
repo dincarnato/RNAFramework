@@ -31,13 +31,14 @@ use base qw(Exporter);
 
 our @EXPORT = qw(isint isfloat isexp isinf
                  isnan isnumeric ispositive isnegative
-                 isreal);
+                 isreal isbool);
 
 our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                      functions => [ qw(logarithm min max mean
                                        average geomean midrange stdev
                                        mode median round sum
-                                       product maprange intersect variance) ] );
+                                       product maprange intersect variance
+                                       inrange) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -147,6 +148,16 @@ sub ispercentage {
             
             
     }
+    
+    return(1);
+    
+}
+
+sub isbool {
+    
+    my @values = @_;
+    
+    for (@values) { return if ($_ !~ m/^[01]$/); }
     
     return(1);
     
@@ -354,7 +365,7 @@ sub product {
     Core::Utils::throw("Values array is empty") if (!@values);
     Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
     
-    my ($product);
+    my $product = shift(@values);
     
     $product *= $_ for (@values);
     
@@ -396,6 +407,18 @@ sub intersect {
     return() if ($start > $end);
     
     return(1);
+    
+}
+
+sub inrange {
+    
+    my ($value, $range) = @_ if (@_);
+    
+    Core::Utils::throw("Range must be an ARRAY reference") if (ref($range) ne "ARRAY");
+    Core::Utils::throw("Range array is empty") if (!@{$range});
+    Core::Utils::throw("Value must be numeric") if (!isnumeric($value));
+    
+    return(1) if (intersect($range, [$value, $value]));
     
 }
                

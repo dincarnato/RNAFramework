@@ -28,7 +28,7 @@ our @EXPORT = qw(is checkparameters blessed clonehashref
                  clonearrayref clonefh uriescape uriunescape
                  unquotemeta striptags questionyn uniq
                  randint randnum randalpha randalphanum
-                 randmixed which);
+                 randmixed which isdirempty);
 
 sub uniq {
     
@@ -325,6 +325,15 @@ sub _fhmode {
     return($mode);
     
     
+}
+
+sub isdirempty {
+	
+	opendir(my $dh, $_[0]) or return;
+	return if (grep { !($_ =~ m/^\.\.?$/) } readdir($dh));
+	
+	return(1);
+	
 }
 
 1;

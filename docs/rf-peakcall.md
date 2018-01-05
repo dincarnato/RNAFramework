@@ -3,8 +3,9 @@ Analysis is performed by sliding a window of length *w* along the transcript, an
 
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>E</mi><mrow><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>=</mo><msub><mi>log</mi><mrow><mo>2</mo></mrow></msub><mfenced><mfrac><mstyle displaystyle="true"><mfrac bevelled="true"><mfenced><mrow><msub><mi>&#x3BC;</mi><mrow><mi>I</mi><mi>P</mi><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced><mfenced><mrow><mi>M</mi><msub><mi>d</mi><mrow><mi>I</mi><mi>P</mi></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced></mfrac></mstyle><mstyle displaystyle="true"><mfrac bevelled="true"><mfenced><mrow><msub><mi>&#x3BC;</mi><mrow><mi>C</mi><mi>t</mi><mi>r</mi><mi>l</mi><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced><mfenced><mrow><mi>M</mi><msub><mi>d</mi><mrow><mi>C</mi><mi>t</mi><mi>r</mi><mi>l</mi></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced></mfrac></mstyle></mfrac></mfenced></math>
 <br/>
-where *i* and *i+w* are the start and end position of the window, *&#x3BC;<sub>IP(i..i+w)</sub>* and *&#x3BC;<sub>Ctrl(i..i+w)</sub>* are respectively the mean coverage within the analyzed window in the IP and control samples, *Md<sub>IP</sub>* and *Md<sub>Ctrl</sub>* are respectively the median coverage on the whole transcript in the IP and control samples, and *p* is a pseudocount added to deal with non-covered regions/transcripts.<br/>
+where *i* and *i+w* are the start and end position of the window, *&#x3BC;<sub>IP(i..i+w)</sub>* and *&#x3BC;<sub>Ctrl(i..i+w)</sub>* are respectively the mean coverage within the analyzed window in the IP and control samples, *Md<sub>IP</sub>* and *Md<sub>Ctrl</sub>* are respectively the median coverage on the whole transcript in the IP and control samples, and *p* is a pseudocount added to deal with non-covered regions/transcripts.<br/>When a control sample is not provided, the signal enrichment is simply calculated as:<br/>
 
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>E</mi><mrow><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>=</mo><msub><mi>log</mi><mrow><mo>2</mo></mrow></msub><mfenced><mstyle displaystyle="true"><mfrac bevelled="true"><mfenced><mrow><msub><mi>&#x3BC;</mi><mrow><mi>I</mi><mi>P</mi><mo>(</mo><mi>i</mi><mo>.</mo><mo>.</mo><mi>i</mi><mo>+</mo><mi>w</mi><mo>)</mo></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced><mfenced><mrow><mi>M</mi><msub><mi>d</mi><mrow><mi>I</mi><mi>P</mi></mrow></msub><mo>+</mo><mi>p</mi></mrow></mfenced></mstyle></mfenced></math><br/>
 A p-value is then calculated for each window with detected enrichment above a defined cutoff, using a __Fisher's exact test__. Thus, the following 2x2 contingency matrix is defined for each cutoff-passing window:<br/>
 
  &nbsp; | n<sub>11</sub> | n<sub>12</sub>
@@ -12,6 +13,14 @@ A p-value is then calculated for each window with detected enrichment above a de
 __n<sub>21</sub>__ | *&#x3BC;<sub>IP(i..i+w)</sub>* | *Md<sub>IP</sub>*
 __n<sub>22</sub>__ | *&#x3BC;<sub>Ctrl(i..i+w)</sub>* | *Md<sub>Ctrl</sub>*
 
+If no control sample is provided, the contingency matrix is instead defined as:<br/>
+
+ &nbsp; | n<sub>11</sub> | n<sub>12</sub>
+-------------: | :------------:  | :------------:
+__n<sub>21</sub>__ | *&#x3BC;<sub>IP(i..i+w)</sub>* | *Md<sub>IP</sub>*
+__n<sub>22</sub>__ | *&#x3BC;<sub>IP windows</sub>* | *Md<sub>IP</sub>*
+
+where *&#x3BC;<sub>IP windows</sub>* is the average the mean values for each possible window in the IP sample.<br/>
 P-values are then subjected to Benjamini-Hochberg correction. Consecutive significantly enriched windows are then merged together, and p-values are combined using Stouffer's method.<br/>
 
 # Usage

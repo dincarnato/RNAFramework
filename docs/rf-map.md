@@ -12,9 +12,9 @@ Parameter         | Type | Description
 __-b2__ *or* __--bowtie2__ | | Uses Bowtie v2 for reads mapping (Default: __Bowtie v1__)
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
 __-wt__ *or* __--working-threads__ | int | Number of working threads to use for each instance of SAMTools/Bowtie (Default: __1__).<br/>__Note:__ RT Counter executes 1 instance of SAMTools/Bowtie for each processor specified by ``-p``.  At least ``-p <processors>`` * ``-wt <threads>`` processors are required.
-__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
 __-o__ *or* __--output-dir__ | string | Output directory for writing mapped reads in SAM/BAM format (Default: rf_map/)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
+__-t__ *or* __--tmp-dir__ | string | Path to a directory for temporary files creation (Default: __<output>/tmp__)<br/>__Note:__ If the provided directory does not exist, it will be created
 __-nb__ *or* __--no-bam__ | | Disables conversion of SAM files to BAM format
 __-b__ *or* __--bowtie__ | string | Path to ``bowtie`` (or ``bowtie2``) executable (Default: assumes ``bowtie``/``bowtie2`` is in PATH)
 __-c__ *or* __--cutadapt__ | string | Path to ``cutadapt`` executable (Default: assumes ``cutadapt`` is in PATH)

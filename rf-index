@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Index (v2.0.0b)
+# RF Index (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -17,7 +17,9 @@
 
 use strict;
 use DBI;
+use Digest::MD5 qw(md5_hex);
 use File::Path qw(mkpath rmtree);
+use File::Slurp;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use LWP::UserAgent;
@@ -96,7 +98,8 @@ if ($list ||
                           desc   => $index->findvalue("./description"),
                           file   => $index->findvalue("./file"),
                           folder => $index->findvalue("./folder"),
-                          date   => $index->findvalue("./date") };
+                          date   => $index->findvalue("./date"),
+                          md5    => $bowtie2 ? $index->findvalue("./md5/bowtie2") : $index->findvalue("./md5/bowtie1") };
         
         $table->row($id, $indexes{$id}->{name}, $indexes{$id}->{desc});
         
@@ -114,7 +117,7 @@ if ($list ||
         die "\n  [!] Error: Invalid prebuilt index ID." .
             "\n             Please use -l (or --list) to list available indexes\n\n" if (!exists $indexes{$prebuilt});
         
-        my ($url, $ua, $downloaded, $reply);
+        my ($url, $ua, $downloaded, $reply,);
         $url = "http://www.rnaframework.com/data/indexes/" . ($bowtie2 ? "bowtie2/" : "bowtie/") . $indexes{$prebuilt}->{file};
         $ua = LWP::UserAgent->new(timeout => $timeout);
         $ua->default_header("Accept" => "application/x-gzip");
@@ -184,9 +187,20 @@ if ($list ||
                 
         }
         
+        print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Checking MD5 checksum]";
+        
+        if (md5_hex(read_file($output . $indexes{$prebuilt}->{file})) ne $indexes{$prebuilt}->{md5}) {
+            
+            print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [FAIL]";
+            
+            die "\n\n  [!] Error: Index MD5 checksum validation failed." .
+                "\n             Please report the issue to: dincarnato[at]rnaframework.com.\n\n";
+            
+        }
+        
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Decompressing]";
         
-        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " 2>&1 > \"logs/decompression.log\"");
+        $ret = system("cd " . $output . " && tar -xzvf " . $indexes{$prebuilt}->{file} . " > \"logs/decompression.log\" 2>&1");
         
         die "\n\n  [!] Error: Index decompression failed." .
             "\n             Please check the log file and ensure that the \"tar\" utility is in PATH.\n\n" if ($ret);
@@ -494,7 +508,7 @@ sub help {
     
     die <<HELP;
  
- RF Index (v2.0.0b)
+ RF Index (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Combine (v2.0.0b)
+# RF Combine (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -24,7 +24,6 @@ use Getopt::Long qw(:config no_ignore_case);
 use threads;
 use threads::shared;
 use Thread::Queue;
-use XML::LibXML;
 
 use lib $Bin . "/lib";
 
@@ -32,6 +31,7 @@ use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
 use Data::IO::XML;
+use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
 
 die "\n  [!] Error: This program requires ithreads." .
@@ -192,18 +192,16 @@ sub combine {
                 my ($sequence2, $scoring2, $norm2, $win2,
                     $offset2, $remap2, $tool2, $algorithm2);
                 
-                $xmlref = XML::LibXML->load_xml(location => $file);
-                $tool2 = $xmlref->findnodes("/data/\@tool");
-                $sequence2 = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
-                $norm2 = $xmlref->findnodes("/data/\@norm")->to_literal();
-                $scoring2 = $xmlref->findnodes("/data/\@scoring")->to_literal();
-                $win2 = $xmlref->findnodes("/data/\@win")->to_literal();
-                $offset2 = $xmlref->findnodes("/data/\@offset")->to_literal();
-                $remap2 = $xmlref->findnodes("/data/\@remap")->to_literal();
-                $reactive2 = $xmlref->findnodes("/data/\@reactive")->to_literal() || $xmlref->findnodes("/data/\@keep")->to_literal();    
-                $algorithm2 = $xmlref->findnodes("/data/\@algorithm")->to_literal();
-            
-                $sequence2 =~ s/\s+?//g;
+                $xmlref = RF::Data::IO::XML->new(file => $file);
+                $tool2 = $xmlref->tool();
+                $sequence2 = $xmlref->sequence();
+                $norm2 = $xmlref->norm();
+                $scoring2 = $xmlref->scoring();
+                $win2 = $xmlref->window();
+                $offset2 = $xmlref->offset();
+                $remap2 = $xmlref->remap();
+                $reactive2 = $xmlref->reactive();    
+                $algorithm2 = $xmlref->algorithm();
 
                 $tool = $tool2 if (!defined $tool);
                 $sequence = $sequence2 if (!defined $sequence);
@@ -283,23 +281,16 @@ sub combine {
             
             if ($tool eq "rf-norm") {  # rf-norm
                 
-                my ($reactivity, @reactivity);
-                $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
-                $reactivity =~ s/\s+?//g;
-                @reactivity = split(/,/, $reactivity);
+                my @reactivity = $xmlref->reactivity();
                 
                 push(@{$values1[$-[0]]}, $reactivity[$-[0]]) while($sequence =~ m/[$reactive2]/g);
                 
             }
             elsif ($tool eq "rf-silico") {  # rf-silico
                 
-                my ($prob, $shannon, @prob, @shannon);
-                $prob = $xmlref->findnodes("/data/transcript/probability")->to_literal();
-                $shannon = $xmlref->findnodes("/data/transcript/shannon")->to_literal();
-                $prob =~ s/\s+?//g;
-                $shannon =~ s/\s+?//g;
-                @prob = split(/,/, $prob);
-                @shannon = split(/,/, $shannon);
+                my (@prob, @shannon);
+                @prob = $xmlref->probability();
+                @shannon = $xmlref->shannon();
                 
                 while($sequence =~ m/[$reactive2]/g) {
                     
@@ -311,14 +302,8 @@ sub combine {
             }
             else { # rf-modcall
                 
-                my ($score, $ratio, @score, @ratio);
-            
-                $score = $xmlref->findnodes("/data/transcript/score")->to_literal();
-                $ratio = $xmlref->findnodes("/data/transcript/ratio")->to_literal();
-                $score =~ s/\s+?//g;
-                $ratio =~ s/\s+?//g;
-                @values1 = split(/,/, $score);
-                @values2 = split(/,/, $ratio);
+                @values1 = $xmlref->score();
+                @values2 = $xmlref->ratio();
                 
             }
             
@@ -335,13 +320,13 @@ sub combine {
                 
         } 
         
-        @mean1 = map { ref($values1[$_]) eq "ARRAY" && !isnan(@{$values1[$_]}) ? mean(@{$values1[$_]}) : "NaN" } 0 .. length($sequence) - 1;
-        @stdev1 = map { ref($values1[$_]) eq "ARRAY" && !isnan(@{$values1[$_]}) ? stdev(@{$values1[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+        @mean1 = map { ref($values1[$_]) eq "ARRAY" && isnumeric(@{$values1[$_]}) ? sprintf("%." . $decimals . "f", mean(@{$values1[$_]})) : "NaN" } 0 .. length($sequence) - 1;
+        @stdev1 = map { ref($values1[$_]) eq "ARRAY" && isnumeric(@{$values1[$_]}) ? sprintf("%." . $decimals . "f", stdev(@{$values1[$_]})) : "NaN" } 0 .. length($sequence) - 1;
 
         if ($tool ne "rf-norm") { # rf-modcall / rf-silico
         
-            @mean2 = map { ref($values2[$_]) eq "ARRAY" && !isnan(@{$values2[$_]}) ? mean(@{$values2[$_]}) : "NaN" } 0 .. length($sequence) - 1;
-            @stdev2 = map { ref($values2[$_]) eq "ARRAY" && !isnan(@{$values2[$_]}) ? stdev(@{$values2[$_]}) : "NaN" } 0 .. length($sequence) - 1;
+            @mean2 = map { ref($values2[$_]) eq "ARRAY" && isnumeric(@{$values2[$_]}) ? sprintf("%." . $decimals . "f", mean(@{$values2[$_]})) : "NaN" } 0 .. length($sequence) - 1;
+            @stdev2 = map { ref($values2[$_]) eq "ARRAY" && isnumeric(@{$values2[$_]}) ? sprintf("%." . $decimals . "f", stdev(@{$values2[$_]})) : "NaN" } 0 .. length($sequence) - 1;
         
         }
         
@@ -503,7 +488,7 @@ sub help {
     
     die <<HELP;
  
- RF Combine (v2.0.0b)
+ RF Combine (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

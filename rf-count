@@ -92,8 +92,8 @@ help() if ($help);
 $hex = 5;
 $madetmp = 0;
 $tmp //= randalphanum(0xf);
-$tmpdir //= "/tmp/";
 $output //= "rf_count/";
+$tmpdir //= $output . "/tmp/";
 $wt //= 1;
 $offset //= 0;
 $threads //= 1;
@@ -489,8 +489,8 @@ sub count {
     
     while (my $sample = $qcounter->dequeue()) {
     
-        my ($covered, $rcio, $stats, @counts,
-            @coverage, %last, %stats);
+        my ($covered, $rcio, $stats, $readscount,
+            @counts, @coverage, %last, %stats);
         $covered = 0;
         %last = ( id       => undef,
                   sequence => undef );
@@ -537,10 +537,11 @@ sub count {
                 
                 if (defined $last{id}) {
                 
-                    my $rentry = RF::Data::RC->new( id       => $last{id},
-                                                    sequence => $last{sequence},
-                                                    counts   => \@counts,
-                                                    coverage => \@coverage );
+                    my $rentry = RF::Data::RC->new( id         => $last{id},
+                                                    sequence   => $last{sequence},
+                                                    counts     => \@counts,
+                                                    coverage   => \@coverage,
+                                                    readscount => $readscount );
                     
                     $rcio->write($rentry);
                     
@@ -558,10 +559,13 @@ sub count {
                   $last{id} = $row[2];
                   $last{sequence} = $entry->sequence(); }
             
+                $readscount = 0;
                 @counts = (0) x $transcripts{$row[2]};
                 @coverage = (0) x $transcripts{$row[2]};
                 
             }
+            
+            $readscount++;
             
             if ($mutcount ||
                 $covonly) {  # Mutations count / Coverage only modes
@@ -607,10 +611,11 @@ sub count {
         # Writes the last entry after EOF has been reached
         if (defined $last{id}) {
         
-            my $rentry = RF::Data::RC->new( id       => $last{id},
-                                            sequence => $last{sequence},
-                                            counts   => \@counts,
-                                            coverage => \@coverage );
+            my $rentry = RF::Data::RC->new( id         => $last{id},
+                                            sequence   => $last{sequence},
+                                            counts     => \@counts,
+                                            coverage   => \@coverage,
+                                            readscount => $readscount );
             
             $rcio->write($rentry);
             
@@ -644,14 +649,16 @@ sub count {
 
 sub cleanup {
     
-    if ($madetmp) {
+    unlink(glob($tmpdir . $tmp . "*"));
+    
+    if ($madetmp &&
+        isdirempty($tmpdir)) {
     
         rmtree($tmpdir, { safe      => 1,
                           keep_root => 0,
                           error     => \$error });
         
     }
-    else { unlink(glob($tmpdir . $tmp . "*")); }
     
 }
 

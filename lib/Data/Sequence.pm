@@ -30,6 +30,7 @@ sub new {
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ id          => undef,
                    gi          => undef,
+                   gb          => undef,
                    name        => undef,
                    sequence    => undef,
                    accession   => undef,
@@ -155,6 +156,17 @@ sub gi {
     $self->{gi} = $gi if (defined $gi);
     
     return($self->{gi});
+    
+}
+
+sub gb {
+    
+    my $self = shift;
+    my $gb = shift if (@_);
+    
+    $self->{gb} = $gb if (defined $gb);
+    
+    return($self->{gb});
     
 }
 
