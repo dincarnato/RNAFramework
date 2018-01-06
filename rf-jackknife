@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Jackknife (v2.0.0b)
+# RF Jackknife (v2.5)
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -403,7 +403,7 @@ sub help {
     
     die <<HELP;
  
- RF JackKnife (v2.0.0b)
+ RF JackKnife (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

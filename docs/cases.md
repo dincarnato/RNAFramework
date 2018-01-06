@@ -44,7 +44,7 @@ $ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq 
 __4.__ Count RT-stops in both samples using ``rf-count``:
 
 ```bash
-$ rf-count -nm -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
+$ rf-count -r -nm -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
 ```
 <br/>
 __5.__ Normalize data using ``rf-norm``:
@@ -96,7 +96,7 @@ $ rf-map -ca3 CTGTCTCTTATACACATCT -bs -bi Scerevisiae_rRNA_bt2/reference Sc_Tag_
 __4.__ Count mutations using ``rf-count``:
 
 ```bash
-$ rf-count -m -nm -f Scerevisiae_rRNA_bt2/reference.fa rf_map/Sc_Tag_rRNA.bam
+$ rf-count -r -m -nm -f Scerevisiae_rRNA_bt2/reference.fa rf_map/Sc_Tag_rRNA.bam
 ```
 <br/>
 __5.__ Normalize data using ``rf-norm``:
