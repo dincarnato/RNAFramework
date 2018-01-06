@@ -87,8 +87,8 @@ help() if ($help);
 
 $threads ||= 1;
 $decimals //= 3;
-$scoremethod //= 1;
-$normmethod //= 1;
+$scoremethod ||= 1;
+$normmethod ||= 1;
 $nan //= 10;
 $normwin //= $scoremethod =~ m/^Ding|1$/i ? 1e9 : 50;
 $winoffset //= $scoremethod =~ m/^Ding|1$/i ? 1e9 : 50;

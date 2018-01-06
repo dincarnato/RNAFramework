@@ -105,7 +105,7 @@ __5.__ Normalize data using ``rf-norm``:
 # Data will be normalized on A/C residues only, using Zubradt et al., 2016 
 # scoring method, and 90% Winsorising
 
-$ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
+$ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 3 -nm 2 -rb AC
 ```
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
