@@ -16,7 +16,7 @@ Its main features are:
 - Accurate RNA folding prediction by incorporating structural probing data
 
 For updates, please visit: <http://www.rnaframework.com>  
-For support requests, please post your questions to: <https://groups.google.com/forum/#!forum/rnaframework>
+For support requests, please post your questions to: <https://groups.google.com/forum/#!forum/rnaframework>  
 For news, and walkthrough examples, please visit our blog:
 <http://www.rnaframework.com/blog> 
 
