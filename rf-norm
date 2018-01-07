@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Norm (v2.5)
+# RF Norm (v2.5.1)
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -46,13 +46,16 @@ my ($help, $output, $overwrite, $configfile,
     $index, $config, $error, $threads,
     $rc, $queue, $hasctrl, $decimals,
     $nan, $remap, $raw, $suffix,
-    @index, @pool, @ids);
+    $maxumut, $denatured, @index, @pool,
+    @ids);
 
 my %results : shared;
 %results = ( cov      => 0,
              incov    => 0,
              diffuseq => 0,
-             nouid    => 0 );
+             nouid    => 0,
+             diffdseq => 0,
+             nodid    => 0 );
 
 do {
     
@@ -74,12 +77,14 @@ do {
                 "ec|median-coverage=s"   => \$mediancov,
                 "u|untreated=s"          => \$untreated,
                 "t|treated=s"            => \$treated,
+                "d|denatured=s"          => \$denatured,
                 "i|index=s"              => \$index,
                 "D|decimals=i"           => \$decimals,
                 "p|processors=i"         => \$threads,
                 "n|nan=i"                => \$nan,
                 "rm|remap-reactivities"  => \$remap,
-                "r|raw"                  => \$raw ) or help(1);
+                "r|raw"                  => \$raw,
+                "mu|max-untreated-mut=s" => \$maxumut ) or help(1);
 
 };
 
@@ -89,9 +94,10 @@ $threads ||= 1;
 $decimals //= 3;
 $scoremethod ||= 1;
 $normmethod ||= 1;
-$nan //= 10;
-$normwin //= $scoremethod =~ m/^Ding|1$/i ? 1e9 : 50;
-$winoffset //= $scoremethod =~ m/^Ding|1$/i ? 1e9 : 50;
+$nan ||= 10;
+$maxumut //= 0.05;
+$normwin ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
+$winoffset ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
 $suffix = $raw ? "_raw/" : "_norm/";
 
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
@@ -114,10 +120,11 @@ $config = RF::Config->new( file              => $configfile,
                            maxscore          => $maxscore,
                            meancoverage      => $meancov,
                            mediancoverage    => $mediancov,
-                           remapreactivities => $remap );
+                           remapreactivities => $remap,
+                           maxuntreatedmut   => $maxumut );
 
 $config->summary();
-$hasctrl = $config->scoremethod() =~ /^[23]$/ ? 0 : 1;
+$hasctrl = $config->scoremethod() =~ /^[24]$/ ? 0 : 1;
 
 die "\n\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 die "\n\n  [!] Error: Provided treated sample RC file doesn't exist\n\n" if (!-e $treated);
@@ -134,13 +141,24 @@ else {
         
 }
 
+if (defined $denatured) { print "\n  [!] Warning: Denatured sample is considered only by Siegfried normalization method. Ignoring denatured sample file...\n" if ($config->scoremethod() != 3); }
+else {
+
+    die "\n  [!] Error: Provided denatured sample RC file doesn't exist\n\n" if ($config->scoremethod() == 3 &&
+                                                                                 defined $denatured &&
+                                                                                 !-e $denatured);
+    
+}
+
 if (!defined $output) {
     
-    my ($uid, $tid);
+    my ($uid, $did, $tid);
     $uid = fileparse($untreated, qr/\.[^.]*/) if (defined $untreated);
+    $did = fileparse($denatured, qr/\.[^.]*/) if (defined $denatured);
     $tid = fileparse($treated, qr/\.[^.]*/);
     
-    $output = ($config->scoremethod() =~ /^[23]$/ ? $tid : $tid . "_vs_" . $uid) . $suffix;
+    $output = ($config->scoremethod() =~ /^[24]$/ ? $tid : ($config->scoremethod() == 3 &&
+                                                            defined $denatured ? $tid . "_vs_" . $uid . "_" . $did : $tid . "_vs_" . $uid)) . $suffix;
     
 }
 else { $output =~ s/\/?$/\//; }
@@ -181,11 +199,16 @@ if (!@index) {
     $rc = RF::Data::IO::RC->new( file       => $untreated,
                                  buildindex => 1 ) if ($hasctrl);
     
+    $rc = RF::Data::IO::RC->new( file       => $denatured,
+                                 buildindex => 1 ) if ($config->scoremethod() == 3 &&
+                                                       defined $denatured);
+    
 }
 elsif (@index > 1) {
     
     die "\n\n  [!] Error: 2 RTI index files provided, but 3 expected\n\n" if (@index < 3 &&
-                                                                              $config->scoremethod() == 3);
+                                                                              $config->scoremethod() == 3 &&
+                                                                              defined $denatured);
     
 }
 
@@ -210,23 +233,31 @@ $_->join() for(@pool);
 
 print "\n[+] Normalization statistics:\n" .
       "\n  [*] Covered transcripts:   " . $results{cov} .
-      "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffuseq} + $results{nocov} + $results{nouid}) . " total" .
+      "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffuseq} + $results{diffdseq} + $results{nocov} + $results{nouid} + $results{nodid}) . " total" .
       "\n                             " . $results{incov} . " insufficient coverage";
       
 print "\n                             " . $results{diffuseq} . " mismatch between treated and untreated sample sequence" .
       "\n                             " . $results{nouid} . " absent in untreated sample reference" if ($hasctrl);
-      
+
+print "\n                             " . $results{diffdseq} . " mismatch between treated and denatured sample sequence" .
+      "\n                             " . $results{nodid} . " absent in denatured sample reference" if (defined $denatured &&
+                                                                                                        $config->scoremethod() == 3);
+
 print "\n\n[+] All done.\n\n";
 
 sub norm {
     
     my $queue = shift;
     
-    my ($urc, $trc, $reactivity, $attributes,
-        $xml);
+    my ($urc, $trc, $drc, $reactivity,
+        $attributes, $xml);
     
     $urc = RF::Data::IO::RC->new( file  => $untreated,
                                   index => @index ? $index[0] : $untreated . ".rci" ) if ($hasctrl);
+    
+    $drc = RF::Data::IO::RC->new( file  => $denatured,
+                                  index => @index == 1 ? $index[0] : (@index == 3 ? $index[1] : $denatured . ".rci") ) if (defined $denatured &&
+                                                                                                                           $config->scoremethod() == 3);
     
     $trc = RF::Data::IO::RC->new( file  => $treated,
                                   index => @index ? $index[-1] : $treated . ".rci"); 
@@ -234,8 +265,8 @@ sub norm {
     while (my $id = $queue->dequeue()) {
         
         my ($tentry, $sequence, $winlen, $winoffset,
-            @tcounts, @tcov, @ucov, @last,
-            @norm);
+            @tcounts, @ucounts, @tcov, @ucov,
+            @dcov, @last, @norm);
         $tentry = $trc->read($id);
         
         if ($tentry->meancoverage() < $config->meancoverage() ||
@@ -252,10 +283,8 @@ sub norm {
         @tcounts = $tentry->counts();
         @tcov = $tentry->coverage();
         
-        if ($hasctrl) { # Ding method
-            
-            my (@ucounts);
-            
+        if ($hasctrl) { # Ding/Siegfried methods
+
             if (my $uentry = $urc->read($id)) {
                 
                 if ($uentry->sequence() ne $sequence) {
@@ -290,33 +319,106 @@ sub norm {
                 
             }
              
-            for (0 .. $#tcounts) {
+            if ($config->scoremethod() == 3) { # Siegfried
                 
-                $ucounts[$_] = log($ucounts[$_] + $config->pseudocount());
-                $tcounts[$_] = log($tcounts[$_] + $config->pseudocount());
+                my (@dcounts);
+                
+                if (defined $denatured) {
+                    
+                    if (my $dentry = $drc->read($id)) {
+                    
+                        if ($dentry->sequence() ne $sequence) {
+                            
+                            lock(%results);
+                            $results{diffdseq}++;
+                    
+                            next;
+                            
+                        }
+                        
+                        if ($dentry->meancoverage() < $config->meancoverage() ||
+                            $dentry->mediancoverage() < $config->mediancoverage()) {
+                            
+                            lock(%results);
+                            $results{incov}++;
+                    
+                            next;
+                            
+                        }
+                        
+                        @dcounts = $dentry->counts();
+                        @dcov = $dentry->coverage();
+                        
+                    }
+                    else {
+                
+                        lock(%results);
+                        $results{nodid}++;
+                        
+                        next;
+                        
+                    }
+                    
+                }
+                    
+                for (0 .. $#tcounts) {
+                    
+                    if ($tcov[$_] < $nan ||                   # Coverage per base < $nan in each sample
+                        $ucov[$_] < $nan ||
+                        (defined $denatured &&
+                         $dcov[$_] < $nan) ||    
+                        $ucounts[$_] / $ucov[$_] > $maxumut) { # Mutation rate in untreated sample > $maxumut
+                        
+                        $ucounts[$_] = 0;
+                        $tcounts[$_] = 0;
+                        $dcounts[$_] = 0;
+                        
+                    }
+                    else {
+                        
+                        $ucounts[$_] = $ucounts[$_] / $ucov[$_];
+                        $tcounts[$_] = $tcounts[$_] / $tcov[$_];
+                        $dcounts[$_] = $dcounts[$_] / $dcov[$_] if (defined $denatured);
+                        
+                    }
+                    
+                }
+                
+                if (defined $denatured) { $tcounts[$_] = $dcounts[$_] ? max(0, ($tcounts[$_] - $ucounts[$_]) / $dcounts[$_]) : 0 for (0 .. $#tcounts); }
+                else { $tcounts[$_] = max(0, ($tcounts[$_] - $ucounts[$_])) for (0 .. $#tcounts); }
                 
             }
-            
-            my ($umean, $tmean);
-            $umean = mean(@ucounts);
-            $tmean = mean(@tcounts);
-            
-            if (!$umean ||
-                !$tmean) {
+            else {  # Ding
                 
-                lock(%results);
-                $results{incov}++;
+                for (0 .. $#tcounts) {
+                    
+                    $ucounts[$_] = log($ucounts[$_] + $config->pseudocount());
+                    $tcounts[$_] = log($tcounts[$_] + $config->pseudocount());
+                    
+                }
                 
-                next;
+                my ($umean, $tmean);
+                $umean = mean(@ucounts);
+                $tmean = mean(@tcounts);
+                
+                if (!$umean ||
+                    !$tmean) {
+                    
+                    lock(%results);
+                    $results{incov}++;
+                    
+                    next;
+                    
+                }
+                
+                $tcounts[$_] = max(0, ($tcounts[$_] / $tmean) - ($ucounts[$_] / $umean)) for (0 .. $#tcounts);
                 
             }
-            
-            $tcounts[$_] = max(0, ($tcounts[$_] / $tmean) - ($ucounts[$_] / $umean)) for (0 .. $#tcounts);
             
         }
         else {
             
-            if ($config->scoremethod() == 3) { @tcounts = map { $tcov[$_] ? $tcounts[$_] / $tcov[$_] : 0 } 0 .. $#tcounts; } # Zubradt method
+            if ($config->scoremethod() == 4) { @tcounts = map { $tcov[$_] ? $tcounts[$_] / $tcov[$_] : 0 } 0 .. $#tcounts; } # Zubradt method
             
         }
         
@@ -390,7 +492,15 @@ sub norm {
         # Set positions behind coverage threshold to NaN  
         @norm = map { $tcov[$_] >= $nan ? $norm[$_] : undef } 0 .. $#tcov;
         
-        if ($hasctrl) { @norm = map { $ucov[$_] >= $nan ? $norm[$_] : undef } 0 .. $#ucov; }
+        if ($hasctrl) {
+            
+            @norm = map { $ucov[$_] >= $nan ||
+                          ($config->scoremethod() == 3 &&
+                           (defined $denatured &&
+                            $dcov[$_] >= $nan) &&
+                           $ucounts[$_] / $ucov[$_] <= $maxumut) ? $norm[$_] : undef } 0 .. $#ucov;
+            
+        }
         
         # This control has been added because in certain cases the coverage is above threshold, but the signal
         # is limited to non-probed bases, thus the final reactivity profile is NaN for all bases.
@@ -423,6 +533,11 @@ sub norm {
           
             $attributes->{max} = $config->maxscore();
             $attributes->{pseudo} = $config->pseudocount();
+          
+        }
+        elsif ($config->scoremethod() == 3) { # Siegfried
+          
+            $attributes->{maxumut} = $config->maxuntreatedmut();
           
         }
         
@@ -567,7 +682,7 @@ sub help {
     
     die <<HELP;
  
- RF Norm (v2.5)
+ RF Norm (v2.5.1)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -576,17 +691,19 @@ sub help {
  Usage:   rf-norm [Options]
  
  Options                                            Description
- -u  or --untreated           <string>              Untreated sample RC file (required by Ding scoring method)
+ -u  or --untreated           <string>              Untreated sample RC file (required by Ding/Siegfried scoring methods)
+ -d  or --denatured           <string>              Denatured sample RC file (optional for Siegfried scoring method)
  -t  or --treated             <string>              Treated sample RC file
  -i  or --index               <string>[,<string>]   A comma separated (no spaces) list of RTI index files for the provided RC files.
-                                                    Note: RCI files must be provided in the order: 1. Untreated, 2. Treated.
-                                                          If a single RCI file is specified along with both untreated and treated sample,
-                                                          it will be used for all samples.
+                                                    Note: RCI files must be provided in the order: 1. Untreated, 2. Denatured and 3. Treated.
+                                                          If a single RCI file is specified along with both untreated and treated sample (and
+                                                          denatured sample), it will be used for all samples.
                                                           If no RCI index is provided, it will be created at runtime, and stored in
                                                           the same folder of the untreated and treated samples.
  -p  or --processors          <int>                 Number of processors to use (Default: 1)
- -o  or --output-dir          <string>              Output directory (Default: <treated>_vs_<untreated>/ for Ding method,
-                                                                               <treated>/ for Rouskin/Zubradt method)
+ -o  or --output-dir          <string>              Output directory (Default: <treated>_vs_<untreated>/ for Ding/Siegfried methods,
+                                                                               <treated>/ for Rouskin/Zubradt methods, or
+                                                                               <treated>_vs_<untreated>_<denatured>/ for Siegfried method)
  -ow or --overwrite                                 Overwrites output directory (if the specified path already exists)
  -c  or --config-file         <string>              A configuration file with normalization parameters
                                                     Note: If the provided file exists, this will override any command-line
@@ -594,7 +711,8 @@ sub help {
                                                           be generated using command-line specified (or default) parameters
  -sm or --scoring-method      <int>                 Specifies the score calculation method (1-2, Default: 1): [1] Ding et al., 2014
                                                                                                               [2] Rouskin et al., 2014
-                                                                                                              [3] Zubradt et al., 2016
+                                                                                                              [3] Siegfried et al., 2014
+                                                                                                              [4] Zubradt et al., 2016
  -nm or --norm-method         <int>                 Specifies the normalization method (1-3, Default: 1): [1] 2-8%
                                                                                                           [2] 90% Winsorising 
                                                                                                           [3] Box-plot
@@ -603,17 +721,20 @@ sub help {
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: N)
  -ni or --norm-independent                          Each reactive base will be normalized independently
- -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript [Ding], 50 [Rouskin|Zubradt])
- -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding], 50 [Rouskin|Zubradt])
+ -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript (1e9) [Ding|Siegfried], 50 [Rouskin|Zubradt])
+ -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried], 50 [Rouskin|Zubradt])
  -mc or --mean-coverage       <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
  -ec or --median-coverage     <float>               Discards any transcript with median coverage below this threshold (>=0, Default: 0)
  -D  or --decimals            <int>                 Number of decimals for reporting reactivities (1-10, Default: 3)
  -n  or --nan                 <int>                 Transcript positions with read coverage behind this threshold will be reported as NaN in
-                                                    the reactivity profile (Default: 10)
+                                                    the reactivity profile (>0, Default: 10)
  
  Scoring method #1 options (Ding et al., 2014)
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)
  -s  or --max-score           <float>               Score threshold for capping raw reactivities (>0, Default: 10)
+ 
+ Scoring method #1 options (Siegfried et al., 2014)
+ -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (<=1, Default: 0.05 [5%])
  
 HELP
     

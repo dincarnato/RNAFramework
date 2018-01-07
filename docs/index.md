@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[05-01-2018] RNA Framework v2.5 [major release]:__<br/>- New tool RF JackKnife introduced to perform jackknifing (grid search) of optimal slope/intercept folding parameters<br/>- Changed the RC format's standard (from now on RNA Framework will support backward compatibility for obsolete RC files, however RC files generated using previous versions of the RNA Framework are no longer supported)<br/>- Introduced RF Fold support for windowed folding and pseudoknots prediction (entire API rewrite to support pseudoknotted base-pairs)<br/>- RF PeakCall now supports the analysis of immunoprecipitation experiments lacking a control/input sample<br/>- RF Norm support for Siegfried *et al*., 2014 data normalization method will be added back in the next release<br/>
+    __[07-01-2018] RNA Framework v2.5.1 [major release]:__<br/>- New tool RF JackKnife introduced to perform jackknifing (grid search) of optimal slope/intercept folding parameters<br/>- Changed the RC format's standard (from now on RNA Framework will support backward compatibility for obsolete RC files, however RC files generated using previous versions of the RNA Framework are no longer supported)<br/>- Introduced RF Fold support for windowed folding and pseudoknots prediction (entire API rewrite to support pseudoknotted base-pairs)<br/>- RF PeakCall now supports the analysis of immunoprecipitation experiments lacking a control/input sample<br/>- RF Norm support for Siegfried *et al*., 2014 data normalization method added back (now supports also the analysis of experiments lacking a denatured control sample)<br/>
 
 ## Introduction
 

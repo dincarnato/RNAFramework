@@ -12,7 +12,8 @@ use base qw(Core::Base);
 our (%scoremethods, %normmethods);
 %scoremethods = ( "1" => "Ding",
                   "2" => "Rouskin",
-                  "3" => "Zubradt" );
+                  "3" => "Siegfried",
+                  "4" => "Zubradt" );
 %normmethods = ( "1" => "2-8\%",
                  "2" => "90\% Winsorising",
                  "3" => "Box-plot" );
@@ -63,7 +64,7 @@ sub _validate {
     
     my $self = shift;
 
-    $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Zubradt|[123]$/i);
+    $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
     $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|[123])$/i);
     $self->throw("2-8% normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i &&
                                                                                       $self->{normmethod} =~ m/^(2-8\%|1)$/i);
@@ -96,7 +97,8 @@ sub _fixproperties {
     
     if ($self->{scoremethod} =~ m/^Ding|1$/i) { $self->{scoremethod} = 1; }
     elsif ($self->{scoremethod} =~ m/^Rouskin|2$/i) { $self->{scoremethod} = 2; }
-    elsif ($self->{scoremethod} =~ m/^Zubradt|3$/i) { $self->{scoremethod} = 3; }
+    elsif ($self->{scoremethod} =~ m/^Siegfried|3$/i) { $self->{scoremethod} = 3; }
+    elsif ($self->{scoremethod} =~ m/^Zubradt|4$/i) { $self->{scoremethod} = 4; }
     
     $self->{normmethod} = $self->{normmethod} =~ m/^2-8\%|1$/ ? 1 : ($self->{normmethod} =~ m/^(90\% Winsorising|2)$/i ? 2 : 3);
     $self->{reactivebases} = $self->{reactivebases} =~ m/^all$/i ? "ACGT" : join("", sort(uniq(iupac2nt(rna2dna($self->{reactivebases})))));
@@ -144,10 +146,15 @@ sub summary {
         $table->row("Maximum score", $self->{maxscore});
         
     }
+    elsif ($self->{scoremethod} == 3) { # Siegfried
+        
+        $table->row("Maximum untreated sample mutation rate", $self->{maxuntreatedmut});
+        
+    }
     
-    $table->row("Remap reactivities", $self->{remapreactivities});
-    $table->row("Normalization window", $self->{normwindow});
-    $table->row("Window sliding offset", $self->{windowoffset});
+    $table->row("Remap reactivities", ($self->{remapreactivities} ? "Yes" : "No"));
+    $table->row("Normalization window", ($self->{normwindow} >= 1e5 ? sprintf("%.2e", $self->{normwindow}) : $self->{normwindow}));
+    $table->row("Window sliding offset", ($self->{normwindow} >= 1e5 ? sprintf("%.2e", $self->{windowoffset}) : $self->{windowoffset}));
     $table->row("Reactive bases", $self->{reactivebases});
     $table->row("Normalize each base independently", ($self->{normindependent} ? "Yes" : "No"));
     $table->row("Minimum mean coverage", $self->{meancoverage});
@@ -175,6 +182,11 @@ sub write {
         
         print $fh "pseudoCount=" . $self->{pseudocount} . "\n" .
                   "maxScore=" . $self->{maxscore} . "\n";
+        
+    }
+    elsif ($self->{scoremethod} == 3) { # Siegfried
+        
+        print $fh "maxUntreatedMut=" . $self->{maxuntreatedmut} . "\n";
         
     }
     
