@@ -7,6 +7,7 @@ pages:
     - 'rf-count': 'rf-count.md'
     - 'rf-norm': 'rf-norm.md'
     - 'rf-fold': 'rf-fold.md'
+    - 'rf-jackknife': 'rf-jackknife.md'
     - 'rf-compare': 'rf-compare.md'
     - 'rf-modcall': 'rf-modcall.md'
     - 'rf-peakcall': 'rf-peakcall.md'
