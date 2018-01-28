@@ -28,6 +28,7 @@ __-m__ *or* __--median__ | | Reports the median PPV/sensitivity value between al
 __-am__ *or* __--arithmetic-mean__ | | Reports the arithmetic mean of PPV/sensitivity values between all reference structures<br/>__Note:__ by default, the geometric mean of PPV/sensitivity values is reported
 __-rf__ *or* __--rf-fold__ | string | Path to ``rf-fold`` executable (Default: assumes ``rf-fold`` is in PATH)
 __-rp__ *or* __--rf-fold-params__ | string | Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
+
 <br/>
 ## Output CSV files
 RF PeakCall produces 3 CSV files, one for PPV, one for sensitivity, and one with the geometric mean of the 2 values, with intercept values on the x-axis, and slope values on the y-axis
