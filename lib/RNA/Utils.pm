@@ -660,7 +660,7 @@ sub _compatible_stems {
 																			     $_->{c} == 1 &&
 																			     !exists $seen{$_->{j}} &&
 																			     $_->{j} > $current } @compm))[0]);
-		print join(",", @predecessors) . "\t" . $current . "\t" . join(",", @followers) . "\n";
+		
 			_traverse(@predecessors, $_) for (@followers);
 			
 		}

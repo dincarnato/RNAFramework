@@ -29,7 +29,8 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Statistics;
-use Data::IO::XML;
+use Data::IO;
+use Data::XML;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 
@@ -39,9 +40,8 @@ die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
 my ($help, $output, $overwrite, $win,
-    $tosmaller, 
-    $meancov, $mediancov, $untreated, $treated,
-    $index, $error, $threads,
+    $tosmaller, $meancov, $mediancov, $untreated,
+    $treated, $index, $error, $threads,
     $rc, $queue, $decimals, $nan,
     @index, @pool, @ids);
 
@@ -74,10 +74,10 @@ do {
 help() if ($help);
 
 # Default
-$threads //= 1;
-$win //= 150;
-$decimals //= 3;
-$nan //= 10;
+$threads ||= 1;
+$win ||= 150;
+$decimals ||= 3;
+$nan ||= 10;
 $meancov //= 0;
 $mediancov //= 0;
 
@@ -195,8 +195,8 @@ sub call {
     while (my $id = $queue->dequeue()) {
         
         my ($tentry, $sequence, $score, $ratio,
-            $xml, @tcounts, @tcov, @ucounts,
-            @ucov, @score, @ratio);
+            $xmlio, $xml, @tcounts, @tcov,
+            @ucounts, @ucov, @score, @ratio);
         $tentry = $trc->read($id);
         
         if ($tentry->meancoverage() < $meancov ||
@@ -313,12 +313,14 @@ sub call {
                         tool      => "rf-modcall",
                         tosmaller => $tosmaller ? "TRUE" : "FALSE" };
         
-        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
-                                   mode      => "w",
-                                   heading   => 1,
-                                   indent    => 0,
-                                   autoclose => 1,
-                                   verbosity => -1 );
+
+        $xmlio = Data::IO->new( file      => $output . $id . ".xml",  
+                                mode      => "w",
+                                binmode   => ":encoding(utf-8)",
+                                verbosity => -1 );
+        $xml = Data::XML->new( heading   => 1,
+                               indent    => 0,
+                               autoclose => 1 );
         
         $xml->opentag("data", $attributes);
         $xml->opentag("transcript", { id     => $id,
@@ -331,7 +333,7 @@ sub call {
         $xml->closelasttag();
         $xml->opentag("ratio");
         $xml->addtext($ratio);
-        $xml->write();       
+        $xmlio->write($xml->xml());       
         
         { lock(%results);
           $results{cov}++;

@@ -29,7 +29,8 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Statistics;
-use Data::IO::XML;
+use Data::IO;
+use Data::XML;
 use RF::Config;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
@@ -91,7 +92,7 @@ do {
 help() if ($help);
 
 $threads ||= 1;
-$decimals //= 3;
+$decimals ||= 3;
 $scoremethod ||= 1;
 $normmethod ||= 1;
 $nan ||= 10;
@@ -250,7 +251,7 @@ sub norm {
     my $queue = shift;
     
     my ($urc, $trc, $drc, $reactivity,
-        $attributes, $xml);
+        $attributes, $xmlio, $xml);
     
     $urc = RF::Data::IO::RC->new( file  => $untreated,
                                   index => @index ? $index[0] : $untreated . ".rci" ) if ($hasctrl);
@@ -541,12 +542,13 @@ sub norm {
           
         }
         
-        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
-                                   mode      => "w",
-                                   heading   => 1,
-                                   indent    => 0,
-                                   autoclose => 1,
-                                   verbosity => -1 );
+        $xmlio = Data::IO->new( file      => $output . $id . ".xml",  
+                                mode      => "w",
+                                binmode   => ":encoding(utf-8)",
+                                verbosity => -1 );
+        $xml = Data::XML->new( heading   => 1,
+                               indent    => 0,
+                               autoclose => 1 );
         
         $xml->opentag("data", $attributes);
         $xml->opentag("transcript", { id     => $id,
@@ -556,7 +558,7 @@ sub norm {
         $xml->closelasttag();
         $xml->opentag("reactivity");
         $xml->addtext($reactivity);
-        $xml->write();       
+        $xmlio->write($xml->xml());       
         
         { lock(%results);
           $results{cov}++;

@@ -203,8 +203,7 @@ sub write {
         $id .= " " . $sequence->description() if defined($sequence->description());
         $sequence =~ s/(\w{60})/$1\n/g;
     
-        print $fh ">" . $id . "\n" .
-                  $seq . "\n";
+        $self->SUPER::write(join("\n", ">" . $id, $seq) . "\n");
         
     }
     

@@ -11,14 +11,14 @@ sub new {
     my %parameters = @_ if (@_);
     
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ heading   => 1,
-                   autoclear => 1,
-                   autoclose => 1,
-                   indent    => 0,
-                   _indent   => 0,
-                   _xml      => undef,
-                   _tags     => [],
-                   _text     => 0 }, \%parameters);
+    $self->_init({ heading       => 1,
+                   autoclear     => 1,
+                   autoclose     => 1,
+                   indent        => 0,
+                   _indent       => 0,
+                   _xml          => undef,
+                   _tags         => [],
+                   _text         => 0 }, \%parameters);
     
     if ($class =~ m/^Data::IO::XML::\w+$/) {
         

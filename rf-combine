@@ -30,7 +30,8 @@ use lib $Bin . "/lib";
 use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
-use Data::IO::XML;
+use Data::IO;
+use Data::XML;
 use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
 
@@ -175,11 +176,11 @@ sub combine {
     while (my $id = $queue->dequeue()) {
         
         my ($xmlref, $sequence, $scoring, $reactive,
-            $norm, $xml, $mean1, $stdev1,
+            $norm, $xmlio, $mean1, $stdev1,
             $mean2, $stdev2, $attributes, $offset,
             $win, $remap, $tool, $reactive2,
-            $algorithm, @values1, @values2, @mean1,
-            @stdev1, @mean2, @stdev2);
+            $algorithm, $xml, @values1, @values2,
+            @mean1, @stdev1, @mean2, @stdev2);
         
         for (@xml) {
             
@@ -365,12 +366,13 @@ sub combine {
         $mean2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
         $stdev2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
         
-        $xml = Data::IO::XML->new( file      => $output . $id . ".xml",  
-                                   mode      => "w",
-                                   heading   => 1,
-                                   indent    => 0,
-                                   autoclose => 1,
-                                   verbosity => -1 );
+        $xmlio = Data::IO->new( file      => $output . $id . ".xml",  
+                                mode      => "w",
+                                binmode   => ":encoding(utf-8)",
+                                verbosity => -1 );
+        $xml = Data::XML->new( heading   => 1,
+                               indent    => 0,
+                               autoclose => 1 );
         
         if ($tool ne "rf-modcall") {
             
@@ -472,7 +474,7 @@ sub combine {
             
         }
         
-        $xml->write();
+        $xmlio->write($xml->xml());
         
         print CLRRET . "[+] Combining reactivities [Last: $id]";
         

@@ -29,7 +29,6 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Statistics;
-use Data::IO::XML;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 

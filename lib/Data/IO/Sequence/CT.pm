@@ -227,8 +227,8 @@ sub write {
         }
         else { $id = $sequence->id(); }
     
-        print $fh sprintf("%6d", $length) . " ENERGY = " . sprintf("%.2f", $energy) . " " . $id . "\n";
-        print $fh sprintf("%6d %s %6d %6d %6d %6d\n", ($_ + 1), substr($seq, $_, 1), $_, ($_ + 2), (exists $pairs{$_} ? $pairs{$_} + 1 : 0), ($_ + 1)) for (0 .. $length - 1);
+        $self->SUPER::write(sprintf("%6d", $length) . " ENERGY = " . sprintf("%.2f", $energy) . " " . $id . "\n");
+        $self->SUPER::write(sprintf("%6d %s %6d %6d %6d %6d\n", ($_ + 1), substr($seq, $_, 1), $_, ($_ + 2), (exists $pairs{$_} ? $pairs{$_} + 1 : 0), ($_ + 1))) for (0 .. $length - 1);
         
     }
     

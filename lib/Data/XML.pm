@@ -1,18 +1,36 @@
-package Data::IO::XML::Write;
+package Data::XML;
 
 use strict;
+use XML::LibXML;
 use Core::Mathematics;
 
-use base qw(Data::IO::XML);
+use base qw(Core::Base);
+
+sub new {
+    
+    my $class = shift;
+    my %parameters = @_ if (@_);
+    
+    my $self = $class->SUPER::new(%parameters);
+    $self->_init({ heading       => 1,
+                   autoclose     => 1,
+                   indent        => 0,
+                   _indent       => 0,
+                   _xml          => undef,
+                   _tags         => [],
+                   _text         => 0 }, \%parameters);
+    
+    $self->_validate() if ($class =~ m/^Data::XML$/);
+
+    return($self);
+    
+}
 
 sub _validate {
     
     my $self = shift;
     
-    $self->SUPER::_validate();
-    
     $self->throw("Heading parameter must be BOOL") if ($self->{heading} !~ m/^[01]$/);
-    $self->throw("Autoclear parameter must be BOOL") if ($self->{autoclear} !~ m/^[01]$/);
     $self->throw("Autoclose parameter must be BOOL") if ($self->{autoclose} !~ m/^[01]$/);
     $self->throw("Indent parameter must be a positive integer") if (!ispositive($self->{indent}) ||
                                                                     !isint($self->{indent}));
@@ -36,23 +54,6 @@ sub heading {
     }
     
     return($self->{heading});
-    
-}
-
-sub autoclear {
-    
-    my $self = shift;
-    my $autoclear = shift if (@_);
-    
-    if (defined $autoclear) {
-        
-        $self->throw("Autoclear parameter must be BOOL") if ($autoclear !~ m/^[01]$/);
-    
-        $self->{autoclear} = $autoclear;
-        
-    }
-    
-    return($self->{autoclear});
     
 }
 
@@ -193,7 +194,7 @@ sub tagline {
     
     $attributes = {} if (!defined $attributes);
     
-    $self->throw("Cannot add a tag line outside of a root element") unless(@{$self->{_tags}});
+    #$self->warn("Tag line added outside of a root element") unless(@{$self->{_tags}});
     
     if (defined $tag) {
     
@@ -246,19 +247,40 @@ sub comment {
     
 }
 
-sub write {
+sub addxmlblock {
+    
+    my $self = shift;
+    my $xml = shift if (@_);
+    my $validate = shift if (@_);
+    
+    if (defined $xml) {
+        
+        if ($validate) {
+            
+            eval { my $dom = XML::LibXML->load_xml(string => $xml); };
+            
+            $self->throw("Malformed XML code block") if ($@);
+            
+        }
+        
+        $xml =~ s/^/"\t" x $self->{_indent}/egm;
+        $xml =~ s/\n*$/\n/;
+        
+        $self->{_xml} .= $xml;
+        
+    }
+    
+}
+
+sub xml {
     
     my $self = shift;
     
-    my $fh = $self->{_fh};
-    
     $self->closealltags() if ($self->{autoclose});
     
-    $self->warn("XML file wrote with " . scalar(@{$self->{_tags}}) . " still open tags") if (@{$self->{_tags}});
+    $self->warn("XML code with " . scalar(@{$self->{_tags}}) . " still open tags") if (@{$self->{_tags}});
     
-    print $fh $self->{_xml};
-    
-    $self->clearxml() if ($self->{autoclear});
+    return($self->{_xml});
     
 }
 

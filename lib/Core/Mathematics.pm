@@ -31,14 +31,15 @@ use base qw(Exporter);
 
 our @EXPORT = qw(isint isfloat isexp isinf
                  isnan isnumeric ispositive isnegative
-                 isreal isbool);
+                 isreal isbool haspositive hasnegative);
 
 our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                      functions => [ qw(logarithm min max mean
                                        average geomean midrange stdev
                                        mode median round sum
-                                       product maprange intersect variance
-                                       inrange) ] );
+                                       diff product maprange intersect
+                                       variance inrange haspositive hasnegative
+                                       hasnan absolute) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -160,6 +161,36 @@ sub isbool {
     for (@values) { return if ($_ !~ m/^[01]$/); }
     
     return(1);
+    
+}
+
+sub hasnegative {
+    
+    my @values = @_;
+    
+    return unless(isnumeric(@values));
+    
+    return(scalar(grep { $_ < 0 } @values));
+    
+}
+
+sub haspositive {
+    
+    my @values = @_;
+    
+    return unless(isnumeric(@values));
+    
+    return(scalar(grep { $_ > 0 } @values));
+    
+}
+
+sub hasnan {
+    
+    my @values = @_;
+    
+    return if (isnumeric(@values));
+    
+    return(scalar(grep { isnan($_) } @values));
     
 }
 
@@ -358,6 +389,21 @@ sub sum {
     
 }
 
+sub diff {
+  
+    my @values = @_;
+    
+    Core::Utils::throw("Values array is empty") if (!@values);
+    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    
+    my $diff = shift(@values);
+    
+    $diff -= $_ for (@values);
+    
+    return($diff);
+  
+}
+
 sub product {
     
     my @values = @_;
@@ -370,6 +416,17 @@ sub product {
     $product *= $_ for (@values);
     
     return($product);
+    
+}
+
+sub absolute {
+    
+    my @values = @_;
+    
+    Core::Utils::throw("Values array is empty") if (!@values);
+    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    
+    return(map { abs($_) } @values);
     
 }
 

@@ -249,9 +249,7 @@ sub write {
         }
         else { $id = $sequence->id(); }
     
-        print $fh ">" . $id . "\n" .
-                  $seq . "\n" .
-                  $db . " (" . sprintf("%.2f", $energy) . ")\n";
+        $self->SUPER::write(join("\n", ">" . $id, $seq, $db . " (" . sprintf("%.2f", $energy) . ")") . "\n");
         
     }
     

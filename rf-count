@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 ##
-# RF Count (v2.0.0b)
+# RF Count (v2.5)
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -866,7 +866,7 @@ sub help {
     
     die <<HELP;
  
- RF Count (v2.0.2b)
+ RF Count (v2.5)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

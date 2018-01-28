@@ -1,3 +1,14 @@
+## [2.5.2] - 2018-01-29
+### Added
+- Rewritten rf-fold engine to make it faster (and to make code maintenance easier)
+- Fixed an issue in rf-fold causing a crash when no reactivity data was available for a given pseudoknotted helix
+- Fixed a bug in rf-fold causing the software to report unfolded structures for RNAs with length < than the allowed minimum window length (50 nt) in windowed folding mode
+- Introduced in rf-fold the generation of SVG graphical summaries (reactivity data, Shannon entropy, base-pairing probabilities and MEA structure)
+
+### API changes
+- Data::IO::XML has been replaced by a Data::XML class for XML construction, that is then passed to a generic Data::IO object for writing
+- Introduced Graphics libraries for SVG graphics generation (currently supports bar plots, paths, and RNA arc plots)
+
 ## [2.5.1] - 2018-01-07
 ### Added
 - Introduced CHANGELOG

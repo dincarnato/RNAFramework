@@ -151,12 +151,13 @@ sub clonearrayref {
     for(my $i=0;$i<@{$array};$i++) {
                 
         my $element = $array->[$i];
-                
-        if (defined $element &&
-            fileno($element)) { $clone->[$i] = clonefh($element); }
-        elsif (blessed($element) &&
+        
+        if (blessed($element) &&
                $element->can("clone")) { $clone->[$i] = $element->clone(); }
         elsif (ref($element) eq "HASH") { $clone->[$i] = clonehashref($element); }
+        elsif (ref($element) eq "ARRAY") { $clone->[$i] = clonearrayref($element); }
+        elsif (ref($element) eq "GLOB" &&
+               fileno($element)) { $clone->[$i] = clonefh($element); }
         else { $clone->[$i] = $array->[$i]; }
 	
     }
@@ -179,15 +180,15 @@ sub clonehashref {
         elsif (reftype($hash->{$key}) eq "HASH") { $clone->{$key} = clonehashref($hash->{$key}); }
         else {
             
-                my $element = $hash->{$key};
+            my $element = $hash->{$key};
+            
+            if (ref($element) eq "GLOB" &&
+                fileno($element)) { $clone->{$key} = clonefh($element); }
+            elsif (blessed($element) &&
+                   $element->can("clone")) { $clone->{$key} = $element->clone(); }
+            else { $clone->{$key} = $hash->{$key}; }    
                 
-                if (defined $element &&
-                    fileno($element)) { $clone->{$key} = clonefh($element); }
-                elsif (blessed($element) &&
-                       $element->can("clone")) { $clone->{$key} = $element->clone(); }
-                else { $clone->{$key} = $hash->{$key}; }    
-                
-            }
+        }
 	
     }
     

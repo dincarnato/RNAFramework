@@ -32,8 +32,9 @@ sub new {
                    mappedreads => 0,
                    _offsets    => {},
                    _lengths    => {},
-                   _lastoffset => 0,
-                   _binary     => 1 }, \%parameters);
+                   _lastoffset => 0 }, \%parameters);
+    
+    $self->{binmode} = ":raw";
     
     $self->_openfh();
     $self->_validate();

@@ -38,11 +38,15 @@ sub new {
                    timeout   => 10,
                    retries   => 3,
                    overwrite => 0,
+                   binmode   => undef,
                    _prev     => [],
                    _fh       => undef }, \%parameters);
     
     $self->_checkfile();
     $self->flush($self->{flush});
+    
+    # Open filehandle if creating a generic object
+    $self->_openfh() if ($class =~ m/^Data::IO$/);
     
     return($self);
     
@@ -66,6 +70,7 @@ sub _validate {
                                                                             $self->{timeout} <= 0);
     $self->throw("Retries parameter must be an integer greater than 0") if (!isint($self->{retries}) &&
                                                                             $self->{retries} <= 0);
+    $self->{binmode} =~ s/^:?/:/ if (defined $self->{binmode});
     
 }
 
@@ -134,15 +139,12 @@ sub _openfh {
     $self->{data} = $self->{file} if ($mode =~ m/w/);
     $mode =~ tr/rw+/<>>/;
     
-    if ($self->{_binary}) { # The file format is binary
-        
-        $mode .= ":raw";
-        $mode =~ s/^>>/+</; # Change to read/write for append in binary mode
-        
-    }
+    $mode =~ s/^>>/+</ if ($self->{binmode} eq ":raw"); # The file format is binary so
+                                                        # we change to read/write for append in binary mode
     
     open(my $fh, $mode, $self->{data}) or $self->throw($!);
-        
+    binmode($fh, $self->{binmode});
+    
     $self->{_fh} = $fh;
     
     $self->flush();
@@ -160,8 +162,11 @@ sub read {
 sub write {
     
     my $self = shift;
-    
-    $self->throw("Unable to call method on a generic object");
+    my $string = shift if (@_);
+        
+    my $fh = $self->{_fh};
+
+    print $fh $string;
     
 }
 
@@ -191,6 +196,24 @@ sub mode {
     my $self = shift;
     
     return($self->{mode});
+    
+}
+
+sub binmode {
+    
+    my $self = shift;
+    my $binmode = shift if (@_);
+    
+    if ($binmode) {
+     
+        $binmode =~ s/^:?/:/;   
+        $self->{binmode} = $binmode;
+        
+        binmode($self->{_fh}, $binmode) if (fileno($self->{_fh}));
+    
+    }
+    
+    return($self->{binmode});
     
 }
 

@@ -34,6 +34,7 @@ sub new {
                    _tosmaller   => undef,
                    _combined    => undef,
                    _reactivity  => [],
+                   _rerror      => [],
                    _probability => [],
                    _shannon     => [],
                    _score       => [],
@@ -51,7 +52,7 @@ sub _readxml {
     my $self = shift;
     
     my ($xmlref, $reactivity, $probability, $shannon,
-        $score, $ratio);
+        $score, $ratio, $rerror,);
     
     eval { $xmlref = XML::LibXML->load_xml(location => $self->{file}); };
         
@@ -83,6 +84,7 @@ sub _readxml {
     $self->{_sequence} = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
     
     $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
+    $rerror = $xmlref->findnodes("/data/transcript/reactivity-error")->to_literal();
     $probability = $xmlref->findnodes("/data/transcript/probability")->to_literal();
     $shannon = $xmlref->findnodes("/data/transcript/shannon")->to_literal();
     $ratio = $xmlref->findnodes("/data/transcript/ratio")->to_literal();
@@ -91,12 +93,14 @@ sub _readxml {
     $self->{_sequence} =~ s/\s+?//g;
     $self->{_sequence} = dna2rna($self->{_sequence});
     $reactivity =~ s/\s+?//g;
+    $rerror =~ s/\s+?//g;
     $probability =~ s/\s+?//g;
     $score =~ s/\s+?//g;
     $ratio =~ s/\s+?//g;
     $shannon =~ s/\s+?//g;
     
     $self->{_reactivity} = [ split(/,/, $reactivity) ];
+    $self->{_rerror} = [ split(/,/, $rerror) ];
     $self->{_probability} = [ split(/,/, $probability) ];
     $self->{_score} = [ split(/,/, $score) ];
     $self->{_ratio} = [ split(/,/, $ratio) ];
@@ -141,6 +145,8 @@ sub tosmaller { return($_[0]->{_tosmaller}); }
 sub combined { return($_[0]->{_combined}); }
 
 sub reactivity { return(wantarray() ? @{$_[0]->{_reactivity}} : $_[0]->{_reactivity}); }
+
+sub reactivity_error { return(wantarray() ? @{$_[0]->{_rerror}} : $_[0]->{_rerror}); }
 
 sub probability { return(wantarray() ? @{$_[0]->{_probability}} : $_[0]->{_probability}); }
 
