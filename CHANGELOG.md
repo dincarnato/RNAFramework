@@ -3,6 +3,7 @@
 - Rewritten rf-fold engine to make it faster (and to make code maintenance easier)
 - Fixed an issue in rf-fold causing a crash when no reactivity data was available for a given pseudoknotted helix
 - Fixed a bug in rf-fold causing the software to report unfolded structures for RNAs with length < than the allowed minimum window length (50 nt) in windowed folding mode
+- Fixed a severe bug in rf-fold in windowed mode causing the program to crash due to the presence of incompatible base-pairs with probability >= 0.99
 - Introduced in rf-fold the generation of SVG graphical summaries (reactivity data, Shannon entropy, base-pairing probabilities and MEA structure)
 
 ### API changes

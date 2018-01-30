@@ -485,9 +485,9 @@ sub fold { # Threads
         my ($sequence, $id, $structure, $cmd,
             $xmlref, $ret, $entry, $length,
             $nwins, $file, $io, $energy,
-            @foldwins, @windows, @constraint, @pkpairs,
-            @keptpairs, @dotplot, @shannon, @reactivity,
-            %pairprobs, %npairs);
+            $constraint, @foldwins, @windows, @constraint,
+            @pkpairs, @keptpairs, @dotplot, @shannon,
+            @reactivity, %pairprobs, %npairs, %seen);
        
         eval { $xmlref = RF::Data::IO::XML->new(file => $xml); };
         
@@ -505,8 +505,7 @@ sub fold { # Threads
         $id = $xmlref->id();
         $sequence = $xmlref->sequence();
         $length = length($sequence);
-        @reactivity = $xmlref->reactivity();        
-        @constraint = (".") x $length; # Initializes the constraint vector
+        @reactivity = $xmlref->reactivity();
         
         ######### Pseudoknots detection block ##########
         
@@ -591,10 +590,8 @@ sub fold { # Threads
                 my ($i, $j, $n1, $n2);
                 ($i, $j) = split(/-/, $pair);
                 
-                for (@windows) { $n1++ if ($i >= $_->[0] &&
-                                           $i <= $_->[1]);
-                                 $n2++ if ($j >= $_->[0] &&
-                                           $j <= $_->[1]); }
+                for (@windows) { $n1++ if (inrange($i, $_));
+                                 $n2++ if (inrange($j, $_)); }
                 
                 # If pseudoknotted pair is present in > 0.50 windows
                 push(@pkpairs, [$i, $j]) if ($pkpairs{$pair}->{pairs} / $n1 > 0.5 &&
@@ -695,16 +692,18 @@ sub fold { # Threads
             
             my ($i, $j) = split(/-/, $pair);
             
-            for (@windows) { $pairprobs{$pair}->{n}++ if ($i >= $_->[0] &&
-                                                          $i <= $_->[1] &&
-                                                          $j >= $_->[0] &&
-                                                          $j <= $_->[1]); }
+            next if (exists $seen{$i} ||
+                     exists $seen{$j});
+             
+            for (@windows) { $pairprobs{$pair}->{n}++ if (inrange($i, $_) &&
+                                                          inrange($j, $_)); }
             
             # If average p(i,j) is >= 0.99
             if (sum(@{$pairprobs{$pair}->{pairs}}) / $pairprobs{$pair}->{n} >= 0.99) {
-                
-                $constraint[$i] = "(";
-                $constraint[$j] = ")";
+            
+                push(@constraint, [$i, $j]);
+                $seen{$i} = 1;
+                $seen{$j} = 1;
                 
             }
             
@@ -712,6 +711,8 @@ sub fold { # Threads
         
         ######### End of partition function block ##########
         
+        # We can take advantage of the rmpseudoknots() function to discard incompatible pairs
+        $constraint = (rmpseudoknots($sequence, \@constraint))[0];
         undef($nwins);
         undef(@foldwins);
         undef(@windows);
@@ -766,21 +767,21 @@ sub fold { # Threads
         # Calculate MFE folding in window
         for (@foldwins) {
             
-            my ($start, $end, $subseq, $constraint,
+            my ($start, $end, $subseq, $winconst,
                 $tmpfile, @winreact);
             ($start, $end) = @{$_};
             
             $subseq = substr($sequence, $start, $end - $start + 1);
             @winreact = @reactivity[$start .. $end];
-            $constraint = fixdotbracket(join("", @constraint[$start .. $end]));
-            $constraint = rmlonelypairs($constraint) if ($nlp);
+            $winconst = fixdotbracket(substr($constraint, $start, $end - $start + 1)); #fixdotbracket(join("", @constraint[$start .. $end]));
+            $winconst = rmlonelypairs($winconst) if ($nlp);
             $tmpfile = $id . "_" . $start . "-" . $end . "_" . threads->tid();
             
             my $win = winfold( file       => $tmpfile,
                                sequence   => $subseq,
                                reactivity => \@winreact,
                                pos        => $start,
-                               constraint => $constraint,
+                               constraint => $winconst,
                                pseudoknot => pkconstraint($start, \@pkpairs) );
             
             if (!$win) {               
@@ -805,10 +806,8 @@ sub fold { # Threads
             my ($i, $j, $n1, $n2);
             ($i, $j) = split(/-/, $pair);
             
-            for (@windows) { $n1++ if ($i >= $_->[0] &&
-                                       $i <= $_->[1]);
-                             $n2++ if ($j >= $_->[0] &&
-                                       $j <= $_->[1]); }
+            for (@windows) { $n1++ if (inrange($i, $_));
+                             $n2++ if (inrange($j, $_)); }
             
             # If pair(i,j) is present in > 0.50 windows
             if ($npairs{$pair}->{pairs} / $n1 > 0.5 &&
