@@ -471,10 +471,6 @@ sub inrange {
     
     my ($value, $range) = @_ if (@_);
     
-    Core::Utils::throw("Range must be an ARRAY reference") if (ref($range) ne "ARRAY");
-    Core::Utils::throw("Range array is empty") if (!@{$range});
-    Core::Utils::throw("Value must be numeric") if (!isnumeric($value));
-    
     return(1) if (intersect($range, [$value, $value]));
     
 }
