@@ -64,6 +64,8 @@ sub _validate {
     
     my $self = shift;
 
+    $self->{normwindow} = $self->{windowoffset} if ($self->{windowoffset} > $self->{normwindow});
+    
     $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
     $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|[123])$/i);
     $self->throw("2-8% normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i &&
@@ -74,7 +76,6 @@ sub _validate {
     $self->throw("normWindow value should be greater than or equal to 3") if ($self->{normwindow} < 3);
     $self->throw("Invalid windowOffset value") if (!isint($self->{windowoffset}) ||
                                                    $self->{windowoffset} < 1);
-    $self->throw("windowOffset value cannot exceed than normWindow size") if ($self->{windowoffset} > $self->{normwindow});
     $self->throw("Invalid reactive bases") if ($self->{reactivebases} !~ m/^all$/i &&
                                                !isiupac($self->{reactivebases}));
     $self->throw("normIndependent value must be boolean") if ($self->{normindependent} !~ m/^TRUE|FALSE|yes|no|[01]$/i);

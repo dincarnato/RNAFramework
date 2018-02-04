@@ -609,113 +609,131 @@ sub fold { # Threads
         
         ######### Partition function block ##########
         
-        $nwins = max(1, floor(($length - $partwin) / $partstep) + 1);
+        # We enter here only if we need to do windowed analysis, or if
+        # the user requests the bp dotplot or the shannon entropy
+        if ($windowed ||
+            $sh ||
+            $dp) { 
         
-        # Define windows to be analyzed
-        # Windows are defined as: [start, end, 5'-trim, 3'-trim]
-        if ($windowed &&
-            $nwins > 1) {
+            $nwins = max(1, floor(($length - $partwin) / $partstep) + 1);
             
-            for (50, 100) {
+            # Define windows to be analyzed
+            # Windows are defined as: [start, end, 5'-trim, 3'-trim]
+            if ($nwins > 1) {
                 
-                my $end = $partwin - $_ - 1;
-        
-                last if ($end < MINWINLENGTH - 1);
+                for (50, 100) {
+                    
+                    my $end = $partwin - $_ - 1;
+            
+                    last if ($end < MINWINLENGTH - 1);
+                    
+                    push(@foldwins, [0, $end, 0, $wintrim]);
+                    
+                }
                 
-                push(@foldwins, [0, $end, 0, $wintrim]);
+                for (0 .. $nwins - 1) {
+                    
+                    my ($start, $end);
+                    $start = $partstep * $_;
+                    $end = $_ == $nwins - 1 ? $length - 1 : $start + $partwin - 1;
+                    push(@foldwins, [$start, $end, $wintrim, $wintrim]);
+                    
+                }
+                
+                for (50, 100) {
+                    
+                    my $start = $length - $partwin + $_;
+                    
+                    last if ($start > $length - MINWINLENGTH);
+                    
+                    push(@foldwins, [$start, $length - 1, $wintrim, 0]);
+                    
+                }
                 
             }
+            else { push(@foldwins, [0, $length - 1, 0, 0]); }
             
-            for (0 .. $nwins - 1) {
+            # Calculate window partition function
+            for (@foldwins) {
                 
-                my ($start, $end);
-                $start = $partstep * $_;
-                $end = $_ == $nwins - 1 ? $length - 1 : $start + $partwin - 1;
-                push(@foldwins, [$start, $end, $wintrim, $wintrim]);
+                my ($start, $end, $trim5, $trim3,
+                    $subseq, $tmpfile, @winreact);
+                ($start, $end, $trim5, $trim3) = @{$_};
+                
+                $subseq = substr($sequence, $start, $end - $start + 1);
+                @winreact = @reactivity[$start .. $end];
+                $tmpfile = $id . "_" . $start . "-" . $end . "_" . threads->tid();
+                
+                my ($win, $shannon) = partition( file       => $tmpfile,
+                                                 sequence   => $subseq,
+                                                 reactivity => \@winreact,
+                                                 pos        => $start,
+                                                 trim5      => $trim5,
+                                                 trim3      => $trim3,
+                                                 pseudoknot => pkconstraint($start, \@pkpairs),
+                                                 constraint => "." x @winreact );
+                
+                if (!$win) {               
+               
+                    lock(%results);
+                    $results{folderr}++;
+                    
+                    unlink(glob($tmpfile . "*")) unless($keeptmp);
+                    
+                    next TRANSCRIPT;
+                    
+                }
+                 
+                push(@{$pairprobs{$_}->{pairs}}, $win->{$_}) for (keys %{$win});
+                push(@{$shannon[$_]}, $shannon->{$_}) for (keys %{$shannon});
+                push(@windows, [$start + $trim5, $end - $trim3]);
                 
             }
-            
-            for (50, 100) {
-                
-                my $start = $length - $partwin + $_;
-                
-                last if ($start > $length - MINWINLENGTH);
-                
-                push(@foldwins, [$start, $length - 1, $wintrim, 0]);
-                
-            }
-            
-        }
-        else { push(@foldwins, [0, $length - 1, 0, 0]); }
-        
-        # Calculate window partition function
-        for (@foldwins) {
-            
-            my ($start, $end, $trim5, $trim3,
-                $subseq, $tmpfile, @winreact);
-            ($start, $end, $trim5, $trim3) = @{$_};
-            
-            $subseq = substr($sequence, $start, $end - $start + 1);
-            @winreact = @reactivity[$start .. $end];
-            $tmpfile = $id . "_" . $start . "-" . $end . "_" . threads->tid();
-            
-            my ($win, $shannon) = partition( file       => $tmpfile,
-                                             sequence   => $subseq,
-                                             reactivity => \@winreact,
-                                             pos        => $start,
-                                             trim5      => $trim5,
-                                             trim3      => $trim3,
-                                             pseudoknot => pkconstraint($start, \@pkpairs),
-                                             constraint => "." x @winreact );
-            
-            if (!$win) {               
            
-                lock(%results);
-                $results{folderr}++;
-                
-                unlink(glob($tmpfile . "*")) unless($keeptmp);
-                
-                next TRANSCRIPT;
-                
+            @shannon = map { mean(@{$_}) } @shannon; # Shannon entropy vector
+            
+            # Just do this for windowed analysis, otherwise just fold
+            if ($windowed) {
+            
+                # Build constraint with pairs > 0.99 probability
+                foreach my $pair (sort keys %pairprobs) {
+                    
+                    my ($i, $j, $prob);
+                    ($i, $j) = split(/-/, $pair);
+                    
+                    next if (exists $seen{$i} ||
+                             exists $seen{$j});
+                     
+                    for (@windows) { $pairprobs{$pair}->{n}++ if (inrange($i, $_) &&
+                                                                  inrange($j, $_)); }
+                    
+                    $prob = sum(@{$pairprobs{$pair}->{pairs}}) / $pairprobs{$pair}->{n};
+                    
+                    # If average p(i,j) is >= 0.99
+                    if ($prob >= 0.99) {
+                    
+                        push(@constraint, [$i, $j, $prob]);
+                        $seen{$i} = 1;
+                        $seen{$j} = 1;
+                        
+                    }
+                    
+                }
+            
             }
-             
-            push(@{$pairprobs{$_}->{pairs}}, $win->{$_}) for (keys %{$win});
-            push(@{$shannon[$_]}, $shannon->{$_}) for (keys %{$shannon});
-            push(@windows, [$start + $trim5, $end - $trim3]);
             
-        }
-       
-        @shannon = map { mean(@{$_}) } @shannon; # Shannon entropy vector
-        
-        # Build constraint with pairs > 0.99 probability
-        foreach my $pair (sort keys %pairprobs) {
-            
-            my ($i, $j) = split(/-/, $pair);
-            
-            next if (exists $seen{$i} ||
-                     exists $seen{$j});
-             
-            for (@windows) { $pairprobs{$pair}->{n}++ if (inrange($i, $_) &&
-                                                          inrange($j, $_)); }
-            
-            # If average p(i,j) is >= 0.99
-            if (sum(@{$pairprobs{$pair}->{pairs}}) / $pairprobs{$pair}->{n} >= 0.99) {
-            
-                push(@constraint, [$i, $j]);
-                $seen{$i} = 1;
-                $seen{$j} = 1;
-                
-            }
+            undef($nwins);
+            undef(@foldwins);
+            undef(@windows);
             
         }
         
         ######### End of partition function block ##########
         
         # We can take advantage of the rmpseudoknots() function to discard incompatible pairs
-        $constraint = (rmpseudoknots($sequence, \@constraint))[0];
-        undef($nwins);
-        undef(@foldwins);
-        undef(@windows);
+        # The rmpseudoknots() function takes the sequence, an array ref of base-pairs, and
+        # optionally a scoring function to be applied (in this case the average of bp probs)
+        $constraint = (rmpseudoknots($sequence, \@constraint, \&Core::Mathematics::mean))[0];
 
         ######### MFE folding block ##########
         
@@ -815,15 +833,21 @@ sub fold { # Threads
             
         }
         
-        # Build dotplot of pairing probabilities
-        foreach my $pair (keys %pairprobs) {
-            
-            my ($i, $j) = split(/-/, $pair);
-            push(@dotplot, [$i, $j, mean(@{$pairprobs{$pair}->{pairs}})]);
+        # Build dotplot of pairing probabilities (only if necessary)
+        if ($windowed ||
+            $dp ||
+            $sh) {
+        
+            foreach my $pair (keys %pairprobs) {
+                
+                my ($i, $j) = split(/-/, $pair);
+                push(@dotplot, [$i, $j, mean(@{$pairprobs{$pair}->{pairs}})]);
+                
+            }
+        
+            @dotplot = sort {$a->[0] <=> $b->[0]} @dotplot;
             
         }
-    
-        @dotplot = sort {$a->[0] <=> $b->[0]} @dotplot;
         
         ######### End of MFE folding block ##########
         
@@ -897,14 +921,26 @@ sub fold { # Threads
         
             my ($file, $image, $io, $reactivity,
                 $shannon, $mea, $pairprob, $ruler,
-                $ticksby);
+                $ticksby, $minheight, $maxheight);
             
             # Plot only base-pairing probabilities >= 5%
             @dotplot = grep { $_->[2] >= 0.05 } sort { $a->[2] <=> $b->[2] } @dotplot;
             
+            $minheight = 250;
+            $maxheight = 500;
+            
+            if ($windowed ||
+                $dp ||
+                $sh) {
+                
+                $minheight *= 2;
+                $maxheight *= 2;
+                
+            }
+            
             $ticksby = $length < 10 ? 1 : (10 ** (length($length) - 1)) / 2;
             $file = $output . "images/" . $id . ".svg";
-            $image = Graphics::Container->new( height  => abs(maprange(0, 1000, -1000, -500, min($length, 1000))), # Min: 500 / Max: 1000px
+            $image = Graphics::Container->new( height  => abs(maprange(0, 1000, -$maxheight, -$minheight, min($length, 1000))), # Min: 500 / Max: 1000px
                                                width   => 1000,
                                                spacing => 0.02 );
             $io = Data::IO->new( file    => $file,
@@ -918,30 +954,41 @@ sub fold { # Threads
                                                           yname     => "Reactivity",
                                                           barfill   => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ],
                                                           barstroke => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ] );
-            $shannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))),
-                                                    height   => 1,
-                                                    values   => \@shannon,
-                                                    fill     => "rgb(145, 106, 40)",
-                                                    stroke   => "",
-                                                    yname    => "Shannon entropy" );
             $mea = Graphics::Object::RNAarcs->new( height    => 2,
                                                    length    => $length,
                                                    flip      => "down",
                                                    basepairs => \@keptpairs,
                                                    pkpairs   => \@pkpairs );
-            $pairprob = Graphics::Object::RNAarcs->new( height    => 2,
-                                                        length    => $length,
-                                                        flip      => "down",
-                                                        basepairs => [ map { [$_->[0], $_->[1]] } @dotplot ],
-                                                        stroke    => [ map { $_->[2] < 0.1 ? "rgb(150,150,150)" : ($_->[2] < 0.4 ? "rgb(255,204,0)" : ($_->[2] < 0.7 ? "rgb(71,142,204)" : "rgb(81,183,71)")) } @dotplot ] );
+            
             $ruler = Graphics::Object::Ruler->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))),
                                                    height   => 1,
                                                    range    => [0, $length],
                                                    ticksby  => $ticksby,
                                                    name     => "Position (nt)",
                                                    toend    => 1 );
-             
-            $image->addobjects($reactivity, 0, $mea, $shannon, 0, $pairprob, 0.05, $ruler);
+            
+            # Just plot shannon and pairing probs if we have generated this data
+            if ($windowed ||
+                $dp ||
+                $sh) {
+            
+                $shannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))),
+                                                        height   => 1,
+                                                        values   => \@shannon,
+                                                        fill     => "rgb(145, 106, 40)",
+                                                        stroke   => "",
+                                                        yname    => "Shannon entropy" );
+                $pairprob = Graphics::Object::RNAarcs->new( height    => 2,
+                                                            length    => $length,
+                                                            flip      => "down",
+                                                            basepairs => [ map { [$_->[0], $_->[1]] } @dotplot ],
+                                                            stroke    => [ map { $_->[2] < 0.1 ? "rgb(150,150,150)" : ($_->[2] < 0.4 ? "rgb(255,204,0)" : ($_->[2] < 0.7 ? "rgb(71,142,204)" : "rgb(81,183,71)")) } @dotplot ] );
+            
+                $image->addobjects($reactivity, 0, $mea, $shannon, 0, $pairprob, 0.05, $ruler);
+            
+            }
+            else { $image->addobjects($reactivity, 0, $mea, 0.05, $ruler); } 
+            
             $io->write($image->xml());
         
         }

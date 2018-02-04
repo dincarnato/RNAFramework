@@ -404,14 +404,18 @@ sub rmlonelypairs {
 
 sub rmpseudoknots { 
 
-	my ($sequence, $pairs) = @_;
+	my ($sequence, $pairs, $scoresub) = @_;
 	
 	return unless($sequence);
 	
+	Core::Utils::throw("Scoring function must be a CODE reference") if (defined $scoresub &&
+																		ref($scoresub) ne "CODE");
+	$scoresub = \&Core::Mathematics::sum;
+	
 	if (ref($pairs) eq "ARRAY") {
 	
-		my (@ct, @ctcopy, @sequence, %pkpairs,
-			%hbonds);
+		my (@ct, @ctcopy, @sequence, @score,
+			%pkpairs, %hbonds);
 		
 		%hbonds = ( AU => 2,
 					GU => 2,
@@ -423,6 +427,7 @@ sub rmpseudoknots {
 		
 			$ct[$_->[0]] = $_->[1];
 			$ct[$_->[1]] = $_->[0];
+			$score[$_->[0]] = @{$_} == 3 ? $_->[2] : ($hbonds{dna2rna(join("", sort($sequence[$_->[0]], $sequence[$_->[1]])))} || 0);
 			
 		}
 		
@@ -551,20 +556,7 @@ sub rmpseudoknots {
 			# @lst are stem lengths
 			#push(@lst, scalar(keys %{$stems[$_]})) for (0 .. $#stems);
 			
-			for (0 .. $#stems) {
-				
-				my $hbonds = 0;
-				
-				foreach my $i (keys %{$stems[$_]}) {
-					
-					my $j = $stems[$_]->{$i};
-					$hbonds += ($hbonds{dna2rna(join("", sort($sequence[$i], $sequence[$j])))} || 0);
-					
-				}
-				
-				push(@lst, $hbonds);
-				
-			}
+			foreach my $stem (0 .. $#stems) { push(@lst, $scoresub->(map { $score[$_] } (keys %{$stems[$stem]}))); }
 			
 			# @lst2 are cumulative stem lengts or H-bonds
 			for (0 .. $#sets) {

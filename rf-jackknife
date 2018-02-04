@@ -240,7 +240,7 @@ if (keys %files) {
     print "\n[+] Checking RF Fold parameters...\n";
     
     # Remove potentially conflicting or useless RF Fold parameters
-    $rfparams =~ s/(?:^|\s)(?:--ignore-reactivity|--dotplot|--shannon-entropy|--img|--svg|--help|--img|-dp|-s|-g|-sh|-i|-h)(?=\s|$)/ /g;
+    $rfparams =~ s/(?:^|\s)(?:--ignore-reactivity|--dotplot|--shannon-entropy|--help|--img|-dp|-s|-g|-sh|-i|-h)(?=\s|$)/ /g;
     $rfparams =~ s/(?:^|\s)(?:--slope|-sl)(?:\s+|=)(?:-?\d+(?:\.\d+)+?)?(?=\s|$)/ /g;
     $rfparams =~ s/(?:^|\s)(?:--intercept|-in)(?:\s+|=)(?:-?\d+(?:\.\d+)?)?(?=\s|$)/ /g;
     $rfparams =~ s/(?:^|\s)(?:--processors|-p)(?:\s+|=)(?:\d+)?(?=\s|$)/ /g;
@@ -336,7 +336,7 @@ if (keys %files) {
             elsif ($am) { ($ppv, $sensitivity) = (sprintf("%.3f", mean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", mean(@{$table{$sl}->{$in}->{sensitivity}}))); }
             else { ($ppv, $sensitivity) = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{sensitivity}}))); }
             
-            $geomean = sprintf("%.3f", geomean($ppv, $sensitivity));
+            $geomean = $ppv && $sensitivity ? sprintf("%.3f", geomean($ppv, $sensitivity)) : "NaN";
             
             push(@prow, $ppv);
             push(@srow, $sensitivity);

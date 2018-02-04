@@ -1,3 +1,10 @@
+## [2.5.3] - 2018-02-04
+### Changed
+- Modified rf-fold to avoid partition function from being computed when not performing windowed folding (or when explicitly required by -dp or -sh)
+
+### API changes
+- Modified the rmpseudoknots() function to take an array of array refs of 3 elements [i, j, score], and a code ref to use to compute overall score of the helix
+
 ## [2.5.2] - 2018-01-29
 ### Added
 - Rewritten rf-fold engine to make it faster (and to make code maintenance easier)

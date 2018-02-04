@@ -27,6 +27,9 @@ Since version 2.5, RF Fold generates vector graphical reports (SVG format) for e
 ![ShapeKnots/RNA Framework comparison](http://www.rnaframework.com/images/graphical_report.png)
 <br/><br/>
 
+!!! note "Note"
+    The calculation of Shannon entropy and base-pairing probabilities requires partition function to be computed. Since this is a *very slow* step, partition function folding is performed only in windowed mode, or if parameters ``-dp`` (or ``--dotplot``) or ``-sh`` (or ``--shannon``) are explicitly specified.
+
 # Usage
 To list the required parameters, simply type:
 
