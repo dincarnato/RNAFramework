@@ -1,4 +1,4 @@
-The RF Index tool is designed to automatically generate a Bowtie reference index, that will be used by the RF Count module for reads mapping.<br />This tool requires an internet connection, since it relies on querying the UCSC Genome database to obtain transcripts annotation and reference genome’s sequence. Alternatively, RF Index can be used to retrieve prebuilt indexes from RNAFramework.com.<br /><br />
+The RF Index tool is designed to automatically generate a Bowtie reference index, that will be used by the RF Map module for reads mapping.<br />This tool requires an internet connection, since it relies on querying the UCSC Genome database to obtain transcripts annotation and reference genome’s sequence. Alternatively, RF Index can be used to retrieve prebuilt indexes from RNAFramework.com.<br /><br />
 
 # Usage
 To list the required parameters, simply type:

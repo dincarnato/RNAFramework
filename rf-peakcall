@@ -23,7 +23,6 @@ use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
 use threads::shared;
-use Thread::Queue;
 
 use lib $Bin . "/lib";
 
@@ -40,10 +39,11 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($help, $output, $overwrite, $win,
     $pvalue, $pseudocount, $meancov, $mediancov,
     $control, $ip, $index, $enrich,
-    $threads, $rc, $qcaller, $qresults,
-    $decimals, $offset, $mergedist, @index,
-    @pool, @ids, @imeans);
+    $threads, $rc, $decimals, $offset,
+    $mergedist, @index, @pool, @imeans);
 
+my @qcaller : shared;
+my @qresults : shared;
 my %results : shared;
 %results = ( cov      => 0,
              incov    => 0,
@@ -78,14 +78,14 @@ do {
 help() if ($help);
 
 # Default
-$threads //= 1;
-$win //= 150;
-$offset //= round($win / 2);
-$enrich //= 3;
+$threads ||= 1;
+$win ||= 150;
+$offset ||= round($win / 2);
+$enrich ||= 3;
 $mergedist //= 50;
 $pvalue //= 0.05;
-$pseudocount //= 1;
-$decimals //= 3;
+$pseudocount ||= 1;
+$decimals ||= 3;
 $meancov //= 0;
 $mediancov //= 0;
 
@@ -151,37 +151,27 @@ $rc = RF::Data::IO::RC->new( file       => $ip,
 
 print "\n[+] Loading transcript IDs... ";
 
-@ids = $rc->ids();
+@qcaller = $rc->ids();
 
-print scalar(@ids) . " transcripts loaded." .
+print scalar(@qcaller) . " transcripts loaded." .
       "\n[+] Calling peaks [Last: none]";
 
-$qcaller = Thread::Queue->new();
-$qresults = Thread::Queue->new();
-
-$qcaller->enqueue($_) for (@ids);
-$qcaller->enqueue((undef) x $threads);
-
-@pool = map{ threads->create(\&call, $qcaller, $qresults) } 1 .. $threads;
+@pool = map{ threads->create(\&call) } 1 .. $threads;
 $_->join() for(@pool);
 
 if ($results{peaks}) {
 
-    my (@results);
-
     print "\n[+] Sorting peaks...";
     
-    for (1 .. $threads) { while (my $result = $qresults->dequeue()) { push(@results, $result); } }
-    
     # Sort lexicographically by transcript ID and numerically by start position
-    @results = sort {$a->[0] cmp $b->[0] ||
-                     $a->[1] <=> $b->[1]} @results;
+    @qresults = sort {$a->[0] cmp $b->[0] ||
+                      $a->[1] <=> $b->[1]} @qresults;
     
     print "\n[+] Writing output BED file...";
     
     open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output BED file (" . $! . ")\n\n";
     select((select($wh), $|=1)[0]);
-    print $wh join("\t", @{$_}) . "\n" for (@results);
+    print $wh join("\t", @{$_}) . "\n" for (@qresults);
     close($wh);
     
 }
@@ -199,8 +189,6 @@ print "\n\n[+] All done.\n\n";
 
 sub call {
     
-    my ($qcaller, $qresults) = @_;
-    
     my ($crc, $irc, $attributes, $scale);
     
     $crc = RF::Data::IO::RC->new( file  => $control,
@@ -209,7 +197,14 @@ sub call {
     $irc = RF::Data::IO::RC->new( file  => $ip,
                                   index => @index ? $index[-1] : $ip . ".rci"); 
     
-    while (my $id = $qcaller->dequeue()) {
+    while (1) {
+        
+        my ($id);
+        
+        { lock(@qcaller);
+          $id = shift(@qcaller) if (@qcaller); }
+        
+        last unless($id); 
         
         my ($ientry, $sequence, $imedian, $cmedian,
             $last, @icov, @ccov, @pvalues,
@@ -347,24 +342,23 @@ sub call {
                 { lock(%results);
                   $results{peaks}++; }
                 
-                $qresults->enqueue([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))]); 
+                { lock(@qresults);
+                  push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))])); }
+                
                 $last = $current;
                 
             }
         
         }
         
-        $qresults->enqueue([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))]); 
+        { lock(@qresults); 
+          push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))])); }
         
         { lock(%results);
           $results{pass}++;
           $results{peaks}++; }
         
     }
-    
-    $qresults->enqueue(undef);
-    
-    threads->exit();
     
 }
 

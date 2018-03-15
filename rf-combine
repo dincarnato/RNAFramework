@@ -23,7 +23,6 @@ use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
 use threads::shared;
-use Thread::Queue;
 
 use lib $Bin . "/lib";
 
@@ -41,9 +40,10 @@ die "\n  [!] Error: This program requires ithreads." .
 $|++;
 
 my ($output, $overwrite, $stdev, $help,
-    $error, $threads, $queue, $decimals,
-    @xml, @pool, %xml);
+    $error, $threads, $decimals, @pool,
+    @xml, %xml);
 
+my @ids : shared;
 my %results : shared;
 %results = ( diffseq    => 0,
              diffscore  => 0,
@@ -72,9 +72,9 @@ do {
 help() if ($help);
 
 # Default
-$output //= "combined";
-$decimals //= 3;
-$threads //= 1;
+$output ||= "combined";
+$decimals ||= 3;
+$threads ||= 1;
 
 $output =~ s/\/?$/\// if (defined $output);
 
@@ -148,12 +148,8 @@ die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(
 
 print "\n[+] Combining reactivities [Last: none]";
 
-$queue = Thread::Queue->new();
-
-$queue->enqueue($_) for (keys %xml);
-$queue->enqueue((undef) x $threads);
-
-@pool = map{ threads->create(\&combine, $queue) } 1 .. $threads;
+@ids = keys %xml;
+@pool = map{ threads->create(\&combine) } 1 .. $threads;
 $_->join() for(@pool);
 
 print "\n[+] Combination statistics:\n" .
@@ -171,9 +167,14 @@ print "\n\n[+] All done.\n\n";
 
 sub combine {
     
-    my $queue = shift;
-    
-    while (my $id = $queue->dequeue()) {
+    while (1) {
+        
+        my ($id);
+        
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+        
+        last unless($id); 
         
         my ($xmlref, $sequence, $scoring, $reactive,
             $norm, $xmlio, $mean1, $stdev1,

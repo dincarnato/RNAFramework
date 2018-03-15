@@ -23,7 +23,6 @@ use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
 use threads::shared;
-use Thread::Queue;
 
 use lib $Bin . "/lib";
 
@@ -42,9 +41,9 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($help, $output, $overwrite, $win,
     $tosmaller, $meancov, $mediancov, $untreated,
     $treated, $index, $error, $threads,
-    $rc, $queue, $decimals, $nan,
-    @index, @pool, @ids);
+    $rc, $decimals, $nan, @index, @pool);
 
+my @ids : shared;
 my %results : shared;
 %results = ( cov      => 0,
              incov    => 0,
@@ -155,11 +154,7 @@ print "\n[+] Loading transcript IDs... ";
 print scalar(@ids) . " transcripts loaded." .
       "\n[+] Calling modified sites [Last: none]";
 
-$queue = Thread::Queue->new();
-$queue->enqueue($_) for (@ids);
-$queue->enqueue((undef) x $threads);
-
-@pool = map{ threads->create(\&call, $queue) } 1 .. $threads;
+@pool = map{ threads->create(\&call) } 1 .. $threads;
 $_->join() for(@pool);
 
 print "\n[+] Calling statistics:\n" .
@@ -172,8 +167,6 @@ print "\n[+] Calling statistics:\n" .
 print "\n\n[+] All done.\n\n";
 
 sub call {
-    
-    my $queue = shift;
     
     my ($urc, $trc, $attributes, $scale);
     
@@ -192,7 +185,14 @@ sub call {
     $scale = $tosmaller ? min($trc->mappedreads(), $urc->mappedreads()) / max($trc->mappedreads(), $urc->mappedreads()) :
                           max($trc->mappedreads(), $urc->mappedreads()) / min($trc->mappedreads(), $urc->mappedreads());
     
-    while (my $id = $queue->dequeue()) {
+    while (1) {
+        
+        my ($id);
+        
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+        
+        last unless($id); 
         
         my ($tentry, $sequence, $score, $ratio,
             $xmlio, $xml, @tcounts, @tcov,

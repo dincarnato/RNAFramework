@@ -64,9 +64,9 @@ __6.__ Perform transcriptome-wide inference of secondary structures usign ``rf-f
 
 $ rf-fold -g S1_vs_V1_norm/
 ```
-A folder named "*structurome/*" will be generated, containing two subdirectories:<br/><br/>
+A folder named "*rf_fold/*" will be generated, containing two subdirectories:<br/><br/>
 - "*structures/*": inferred structures in dot-bracket notation<br/>
-- "*images/*": structure representations in Postscript format
+- "*images/*": graphical summaries in SVG format
 <br/>
 
 # 2. DMS-MaPseq

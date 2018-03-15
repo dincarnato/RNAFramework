@@ -1,3 +1,13 @@
+## [2.5.4] - 2018-03-15
+### Changed
+- Modified all modules to avoid use of Thread::Queue (in some cases we encountered a deadlock, especially with rf-fold, that should be solved now)
+- Fixed 90% Wisorizing to esclude values below the 5<sup>th</sup> percentile as outliers
+- Now rf-compare can generate comparison plots of structures in SVG format (reference vs. predicted)
+
+### API changes
+- Now control over errors verbosity is granted through any of the following environment variables: "verbose", "verbosity", "VERBOSE", or "VERBOSITY"
+- We have now avoided use of XML::LibXML for RNA Framework's XML file input handling (thread unsafe)
+
 ## [2.5.3] - 2018-02-04
 ### Changed
 - Modified rf-fold to avoid partition function from being computed when not performing windowed folding (or when explicitly required by -dp or -sh)

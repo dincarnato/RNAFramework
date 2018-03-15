@@ -27,7 +27,6 @@ use Getopt::Long qw(:config no_ignore_case);
 use POSIX qw(floor);
 use threads;
 use threads::shared;
-use Thread::Queue;
 
 use lib $Bin . "/lib";
 
@@ -60,7 +59,7 @@ my ($output, $ct, $input, $method,
     $cutoff, $nlp, $ngu, $rnastructure,
     $viennarna, $data, $slope, $intercept,
     $maxdist, $constmethod, $constconversion, $beta,
-    $modslope, $modintercept, $installed, $queue,
+    $modslope, $modintercept, $installed, $nfiles,
     $overwrite, $error, $help, $tmpdir,
     $ignore, $madetmp, $hc, $vrfoldparams, $rsfoldparams,
     $windowed, $cwd, $partition, $probplot,
@@ -69,9 +68,10 @@ my ($output, $ct, $input, $method,
     $pkwin, $pkstep, $p1, $p2,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $skparams, $keeptmp,
-    $pkpercentmfe, @xml, @pool, %lambda);
+    $pkpercentmfe, @pool, %lambda);
 
 my %results : shared;
+my @xml : shared;
 %results = ( folded   => 0,
              parseerr => 0,
              consterr => 0,
@@ -154,7 +154,7 @@ help() if ($help);
 # Default
 $madetmp = 0;
 $cwd = cwd();
-$output ||= "structurome/";
+$output ||= "rf_fold/";
 $tmpdir ||= $output . "/tmp/";
 $method ||= 1;
 $threads ||= 1;
@@ -162,17 +162,17 @@ $t //= 37.0;
 $cutoff //= 0.7;
 $slope //= 1.8;
 $intercept //= -0.6;
-$constmethod //= 1;
-$constconversion //= 1;
+$constmethod ||= 1;
+$constconversion ||= 1;
 $beta //= 0.5;
 $maxdist //= 0;
-$partwin //= 600;
-$partstep //= 200;
+$partwin ||= 600;
+$partstep ||= 200;
 $wintrim //= 100;
-$foldwin //= 600;
-$foldstep //= 200;
-$pkwin //= 600;
-$pkstep //= 200;
+$foldwin ||= 600;
+$foldstep ||= 200;
+$pkwin ||= 600;
+$pkstep ||= 200;
 $p1 //= 0.35;
 $p2 //= 0.65;
 $pkcutoff //= 0.5;
@@ -180,13 +180,13 @@ $pkmax ||= 100;
 $pksubopt ||= 1000;
 $pkmethod ||= 1;
 $pkpercentmfe ||= 0.25;
-$viennarna //= which("RNAfold");
-$rnasubopt //= which("RNAsubopt");
-$rnastructure //= which("Fold-smp") || which("Fold");
-$shapeknots //= which("ShapeKnots-smp") || which("ShapeKnots");
-$partition //= which("partition-smp") || which("partition");
-$probplot //= which("ProbabilityPlot");
-$data //= $ENV{DATAPATH};
+$viennarna ||= which("RNAfold");
+$rnasubopt ||= which("RNAsubopt");
+$rnastructure ||= which("Fold-smp") || which("Fold");
+$shapeknots ||= which("ShapeKnots-smp") || which("ShapeKnots");
+$partition ||= which("partition-smp") || which("partition");
+$probplot ||= which("ProbabilityPlot");
+$data ||= $ENV{DATAPATH};
 $installed = eval { require RNA; 1; };
 
 $output =~ s/\/?$/\//;
@@ -442,24 +442,20 @@ warn "\n\n  [!] Ignoring XML reactivity data files. Predicting MFE unconstrained
 
 chdir($tmpdir);  # Change the working directory before starting threads
 
-$queue = Thread::Queue->new();
-
 print "\n[+] Folding RNA structures [Last: none]";
 
-$queue->enqueue($_) for (@xml);
-$queue->enqueue((undef) x $threads);
-
-@pool = map{ threads->create(\&fold, $queue) } 1 .. $threads;
+$nfiles = @xml;
+@pool = map{ threads->create(\&fold) } 1 .. $threads;
 $_->join() for (@pool);
 
 chdir($cwd);  # Reset to original working directory
 
-my $ioerr = @xml;
+my $ioerr = $nfiles;
 $ioerr -= $_ for (values %results);
 
 print "\n[+] Folding statistics:\n" .
       "\n  [*] Folded transcripts:    " . $results{folded} .
-      "\n  [*] Discarded transcripts: " . (@xml - $results{folded}) . " total" .
+      "\n  [*] Discarded transcripts: " . ($nfiles - $results{folded}) . " total" .
       "\n                             " . $results{parseerr} . " XML parsing failed" .
       "\n                             " . $results{consterr} . " constraint file generation failed" .
       "\n                             " . $results{fastaerr} . " FASTA file generation failed" .
@@ -477,10 +473,15 @@ print "\n\n[+] All done.\n\n";
 
 sub fold { # Threads
     
-    my $queue = shift;
-
     TRANSCRIPT:
-    while(my $xml = $queue->dequeue()) {
+    while(1) {
+       
+        my ($xml);
+        
+        { lock(@xml);
+          $xml = shift(@xml) if (@xml); }
+        
+        last unless($xml);       
        
         my ($sequence, $id, $structure, $cmd,
             $xmlref, $ret, $entry, $length,
@@ -948,7 +949,7 @@ sub fold { # Threads
                                  binmode => ":encoding(utf-8)" );
             $reactivity = Graphics::Object::Barplot->new( fontsize  => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
                                                           height    => 1,
-                                                          values    => \@reactivity,
+                                                          values    => [ map { isnumeric($_) ? min($_, 2) : "NaN" } @reactivity ],
                                                           stdev     => [$xmlref->reactivity_error()],
                                                           plotstdev => "up",
                                                           yname     => "Reactivity",

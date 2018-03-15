@@ -39,7 +39,7 @@ $ rf-fold -h
 
 Parameter         | Type | Description
 ----------------: | :--: |:------------
-__-o__ *or* __--output-dir__ | string | Output directory for writing inferred structures (Default: structurome/)
+__-o__ *or* __--output-dir__ | string | Output directory for writing inferred structures (Default: rf_fold/)
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-ct__ *or* __--connectivity-table__ | | Writes predicted structures in CT format (Default: __Dot-bracket notation__)
 __-m__ *or* __--folding-method__ | int | Folding method (1-2, Default: __1__):<br/>__1.__ ViennaRNA <br/>__2.__ RNAstructure
@@ -97,7 +97,7 @@ __-d__ *or* __--data-path__ | string | Path to RNAstructure data tables (Default
     For additional details relatively to ShapeKnots pseudoknots detection parameters, please refer to Hajdin *et al.*, 2013 (PMID: [23503844](https://www.ncbi.nlm.nih.gov/pubmed/23503844)).
 <br/> 
 ## Output dot-plot files
-When options ``-dp`` or ``-dpa`` are provided, RF Fold produces a dot-plot file for each transcript being analyzed, with the following structure:<br/>
+When option ``-dp`` is provided, RF Fold produces a dot-plot file for each transcript being analyzed, with the following structure:<br/>
 
 ```
 1549                                   # RNA's length

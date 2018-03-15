@@ -2,20 +2,20 @@ The RF Norm module takes one (Rouskin and Zubradt methods), two (Ding and Siegfr
 <br/><br/>
 ## Scoring of RT-stops/nuclease cuts-based methods
 __[1] Ding *et al*., 2014 (PMID: [24270811](https://www.ncbi.nlm.nih.gov/pubmed/24270811))__<br/><br/>
-Per-base signal is calculated as the natural log (ln) of the ratio between the raw count of RT-stops/nuclease cuts at a given position of a transcript, and the average of the ln of RT-stops/nuclease cuts along the whole transcript:<br/>
+Per-base signal is calculated as the ratio of the natural log (ln) of the raw count of RT-stops/nuclease cuts at a given position of a transcript, to the average of the ln of RT-stops/nuclease cuts along the whole transcript:<br/>
 
-<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>U</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>1</mn><mi>i</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mfenced><mrow><munderover><mo>&#x2211;</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mi>l</mi></munderover><mstyle displaystyle="true"><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>1</mn><mi>j</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mi>l</mi></mfrac></mstyle></mrow></mfenced></mfrac></math>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>U</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>U</mn><mi>i</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mfenced><mrow><munderover><mo>&#x2211;</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mi>l</mi></munderover><mstyle displaystyle="true"><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>U</mn><mi>j</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mi>l</mi></mfrac></mstyle></mrow></mfenced></mfrac></math>
 <br/>
-<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>T</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>2</mn><mi>i</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mfenced><mrow><munderover><mo>&#x2211;</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mi>l</mi></munderover><mstyle displaystyle="true"><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>2</mn><mi>j</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mi>l</mi></mfrac></mstyle></mrow></mfenced></mfrac></math>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>T</mi><mi>i</mi></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>T</mn><mi>i</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mfenced><mrow><munderover><mo>&#x2211;</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mi>l</mi></munderover><mstyle displaystyle="true"><mfrac><mrow><mi>ln</mi><mo>(</mo><msub><mi>n</mi><mrow><mn>T</mn><mi>j</mi></mrow></msub><mo>+</mo><mi>p</mi><mo>)</mo></mrow><mi>l</mi></mfrac></mstyle></mrow></mfenced></mfrac></math>
 <br/>
-where *n<sub>1i</sub>* and *n<sub>2i</sub>* are respectively the raw read counts in the untreated (or RNase V1) and treated (DMS, CMCT, SHAPE, or Nuclease S1) samples at position *i* of the transcript, *l* is the transcript’s length, and *p* is a pseudocount added to deal with non-covered regions. *U<sub>i</sub>* and *T<sub>i</sub>* are respectively the normalized number of RT-stops/nuclease cuts at position *i* in the untreated and treated samples.<br/>Score at position i is then calculated as:<br/><br/>
+where *n<sub>Ui</sub>* and *n<sub>Ti</sub>* are respectively the raw read counts in the untreated (or RNase V1) and treated (DMS, CMCT, SHAPE, or Nuclease S1) samples at position *i* of the transcript, *l* is the transcript’s length, and *p* is a pseudocount added to deal with non-covered regions. *U<sub>i</sub>* and *T<sub>i</sub>* are respectively the normalized number of RT-stops/nuclease cuts at position *i* in the untreated and treated samples.<br/>Score at position i is then calculated as:<br/><br/>
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>S</mi><mi>i</mi></msub><mo>=</mo><mi>m</mi><mi>a</mi><mi>x</mi><mo>(</mo><mn>0</mn><mo>,</mo><mo>&#xA0;</mo><mo>(</mo><msub><mi>T</mi><mi>i</mi></msub><mo>-</mo><msub><mi>U</mi><mi>i</mi></msub><mo>)</mo><mo>)</mo></math>
 <br/>
 __[2] Rouskin *et al*., 2014 (PMID: [24336214](https://www.ncbi.nlm.nih.gov/pubmed/24336214))__<br/><br/>
 The untreated sample is not considered. Per-base RT-stops/nuclease cuts are used as a direct measure of the raw signal.
 
 !!! warning "Warning"
-    Normalization of data processed by Rouskin method, can only be performed using the __90% Winsorising__ approach.
+    Normalization of data processed by Rouskin method, can only be performed using the __90% Winsorizing__ approach.
 <br/>
 ## Scoring of mutational profiling-based methods
 __[3] Siegfried *et al*., 2014 (PMID: [25028896](https://www.ncbi.nlm.nih.gov/pubmed/25028896))__<br/><br/>
@@ -39,8 +39,8 @@ Raw reactivity scores can be normalized using 3 different approaches:<br/><br/>
 Method         | Description
 -------------: | :------------
 __2-8% Normalization__ | From the top 10% of values, the top 2% is ignored, then any reactivity value along the entire transcript is divided by the average of the remaining 8%
-__90% Winsorising__ | Each reactivity value above the 95<sup>th</sup> percentile is set to the 95<sup>th</sup> percentile, and the reactivity at each position of the transcript is divided by the value of the 95<sup>th</sup> percentile
-__Box-plot Normalization__ | Values greater than 1.5x the interquartile range (numerical distance between the 25<sup>th</sup> and 75<sup>th</sup> percentiles) above the 75<sup>th</sup> percentile are removed. After excluding these outliers, the next 10% of reactivities are averaged, and all reactivities (including outliers) are divided by this value.
+__90% Winsorizing__ | Each reactivity value above the 95<sup>th</sup> percentile is set to the 95<sup>th</sup> percentile and each reactivity value below the 5<sup>th</sup> percentile is set to the 5<sup>th</sup> percentile, then the reactivity at each position of the transcript is divided by the value of the 95<sup>th</sup> percentile
+__Box-plot Normalization__ | Values greater than 1.5x the interquartile range (numerical distance between the 25<sup>th</sup> and 75<sup>th</sup> percentiles) above the 75<sup>th</sup> percentile are removed. After excluding these outliers, the next 10% of remaining reactivities are averaged, and all reactivities (including outliers) are divided by this value.
 
 <br/>
 Normalized reactivities can be further remapped to values ranging from 0 to 1 according to Zarringhalam *et al.*, 2012 (PMID: [23091593](https://www.ncbi.nlm.nih.gov/pubmed/23091593)). In this approach, values < 0.25 are linearly mapped to [0-0.35[, values &ge; 0.25 and < 0.3 are linearly mapped to [0.35-0.55[, values &ge; 0.3 and < 0.7 are linearly mapped to [0.55-0.85[, and values &ge; 0.7 are linearly mapped to [0.85-1].<br /><br />
@@ -63,7 +63,7 @@ __-o__ *or* __--output-dir__ | string | Output directory for writing normalized 
 __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exists
 __-c__ *or* __--config-file__ | string | Path to a configuration file with normalization parameters (see *Configuration files* paragraph)<br/>__Note #1:__ If the provided file exists, the loaded configuration will override any command-line specified parameter<br/>__Note #2:__ If the provided file doesn’t exist, it will be generated using the specified command-line (or default) parameters
 __-sm__ *or* __--scoring-method__ | int | Method for score calculation (1-4, Default: __1__):<br/>__1.__ Ding *et al.*, 2014 <br/>__2.__ Rouskin *et al.*, 2014 <br/>__3.__ Siegfried *et al.*, 2014<br/>__4.__ Zubradt *et al.*, 2016
-__-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Default: __1__):<br/>__1.__ 2-8% Normalization <br/>__2.__ 90% Winsorising <br/>__3.__ Box-plot Normalization
+__-nm__ *or* __--norm-method__ | int | Method for signal normalization (1-3, Default: __1__):<br/>__1.__ 2-8% Normalization <br/>__2.__ 90% Winsorizing <br/>__3.__ Box-plot Normalization
 __-r__ *or* __--raw__ | | Reports raw reactivities (skips data normalization)
 __-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
 __-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combination (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
@@ -88,7 +88,7 @@ Accepted key/value pairs are:<br/>
 Parameters     | Accepted values | Default value
 -------------: | :------------:  | :------------
 __scoreMethod__ | "Ding" (or 1); "Rouskin" (or 2); "Siegfried" (or 3); "Zubradt" (or 4) | __Ding__
-__normMethod__ | "2-8%" (or 1); "90% Winsorising" (or 2); "Box-plot" (or 3) | __2-8%__
+__normMethod__ | "2-8%" (or 1); "90% Winsorizing" (or 2); "Box-plot" (or 3) | __2-8%__
 __reactiveBases__ | \[ACGTURYSWKMBDHVN\] (or "all") | __all__
 __normIndependent__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
 __normWindow__ | Positive integer &ge; 3 | __1e9__ [Ding; Siegfried]<br/>__50__ [Rouskin; Zubradt]
@@ -130,7 +130,7 @@ Attribute     | Possible values | Description
 -------------: | :------------: | :----------
 __tool__ | rf-norm | The tool that generated this XML file
 __scoring__ | Ding, Rouskin, Siegfried, or Zubradt | Scoring method
-__norm__ | 2-8%, Winsorising 90%, or Box-plot | Normalization method
+__norm__ | 2-8%, Winsorizing 90%, or Box-plot | Normalization method
 __reactive__ | \[ACGT\] | Reactive bases
 __win__ | Positive integer &ge; 3 | Normalization window's size (in nt)
 __offset__ | Positive integer &ge; 1 | Offset for normalization window sliding

@@ -43,9 +43,8 @@ my ($tmp, $tmpdir, $output, $trim3,
     $samtools, $sam, $clipped, $help,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
-    $bnorc, $table, $bk, $cm,
-    $mp, $mo, @tmp, %spacer,
-    %files);
+    $table, $bk, $cm, $mp,
+    $mo, @tmp, %spacer, %files);
 
 do {
     
@@ -104,8 +103,8 @@ $threads ||= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
 $cutadapt //= which("cutadapt");
 $samtools //= which("samtools");
-$ca5 //= "GTTCAGAGTTCTACAGTCCGACGATC";
-$ca3 //= "TGGAATTCTCGGGTGCCAAGG";
+$ca5 ||= "GTTCAGAGTTCTACAGTCCGACGATC";
+$ca3 ||= "TGGAATTCTCGGGTGCCAAGG";
 $cl //= 25;
 $cm //= 1;
 $trim5 //= 0;
@@ -429,7 +428,7 @@ foreach my $sample (@tmp) {
     
         $command .= " -3 " . $trim3 if ($trim3);
         $command .= " -5 " . $trim5 if ($trim5);
-        $command .= " --norc" if ($bnorc);
+        $command .= " --norc" if ($bnr);
         $command .= " -a" if ($ba);
         $command .= " -k " . $bk if ($bk);
         $command .= $bowtie2 ? " -L " . $bseed : " -l " . $bseed;

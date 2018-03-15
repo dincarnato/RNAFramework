@@ -38,11 +38,11 @@ sub uniq {
 
 }
 
-sub throw { croak _exception($_[0], $_[1] // $ENV{verbosity} // 0, 1); }
+sub throw { croak _exception($_[0], $_[1] // $ENV{verbosity} // $ENV{verbose}  // $ENV{VERBOSE}  // $ENV{VERBOSITY} // 0, 1); }
 
 sub warn {
 
-    my $verbosity = $_[1] // $ENV{verbosity} // 0;
+    my $verbosity = $_[1] // $ENV{verbosity} // $ENV{verbose}  // $ENV{VERBOSE}  // $ENV{VERBOSITY} // 0;
     
     carp _exception($_[0], $verbosity, 0) if ($verbosity >= 0);
     

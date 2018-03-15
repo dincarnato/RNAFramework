@@ -15,7 +15,7 @@ our (%scoremethods, %normmethods);
                   "3" => "Siegfried",
                   "4" => "Zubradt" );
 %normmethods = ( "1" => "2-8\%",
-                 "2" => "90\% Winsorising",
+                 "2" => "90\% Winsorizing",
                  "3" => "Box-plot" );
 
 sub new {

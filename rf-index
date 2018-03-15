@@ -71,11 +71,11 @@ do {
 help() if ($help);
 
 # Default
-$timeout //= 180;
-$assembly //= "mm9";
-$annotation //= "refFlat";
-$bb //= $bowtie2 ? which("bowtie2-build") : which("bowtie-build");
-$bt //= which("bedtools");
+$timeout ||= 180;
+$assembly ||= "mm9";
+$annotation ||= "refFlat";
+$bb ||= $bowtie2 ? which("bowtie2-build") : which("bowtie-build");
+$bt ||= which("bedtools");
 $sed = which("sed");
 
 if ($list ||

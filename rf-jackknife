@@ -82,12 +82,12 @@ help() if ($help);
 # Default values
 $threads ||= 1;
 $madetmp = 0;
-$output //= "rf_jackknife/";
-$tmpdir //= $output . "/tmp/";
+$output ||= "rf_jackknife/";
+$tmpdir ||= $output . "/tmp/";
 $tmp = randalphanum(0xf);
-$rffold //= which("rf-fold");
-$slope = "0:5";
-$intercept = "-3:0";
+$rffold ||= which("rf-fold");
+$slope ||= "0:5";
+$intercept ||= "-3:0";
 $istep ||= 0.2;
 $sstep ||= 0.2;
 
@@ -293,12 +293,26 @@ if (keys %files) {
         
         foreach my $test (@tested) {
             
-            my ($testio, $entry);
-            $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db");
-            $entry = $testio->read();
+            my ($testio, $entry, $p, $s);
             
-            push(@{$table{$test->[0]}->{$test->[1]}->{ppv}}, ppv($reference{$id}, $entry->structure(), $relaxed));
-            push(@{$table{$test->[0]}->{$test->[1]}->{sensitivity}}, sensitivity($reference{$id}, $entry->structure(), $relaxed));
+            eval { $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db"); };
+            
+            if ($@) {
+                
+                $p = "NaN";
+                $s = "NaN";
+                
+            }
+            else {
+            
+                $entry = $testio->read();
+                $p = ppv($reference{$id}, $entry->structure(), $relaxed);
+                $s = sensitivity($reference{$id}, $entry->structure(), $relaxed);
+            
+            }
+            
+            push(@{$table{$test->[0]}->{$test->[1]}->{ppv}}, $p);
+            push(@{$table{$test->[0]}->{$test->[1]}->{sensitivity}}, $s);
             
             rmtree($tmpdir . join("_", $id, @{$test}), { safe      => 1,
                                                          keep_root => 0,
@@ -332,11 +346,17 @@ if (keys %files) {
         
             my ($ppv, $sensitivity, $geomean);
             
-            if ($m) { ($ppv, $sensitivity) = (sprintf("%.3f", median(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", median(@{$table{$sl}->{$in}->{sensitivity}}))); }
-            elsif ($am) { ($ppv, $sensitivity) = (sprintf("%.3f", mean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", mean(@{$table{$sl}->{$in}->{sensitivity}}))); }
-            else { ($ppv, $sensitivity) = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{sensitivity}}))); }
+            if (isnumeric(@{$table{$sl}->{$in}->{ppv}}) &&
+                isnumeric(@{$table{$sl}->{$in}->{sensitivity}})) {
             
-            $geomean = $ppv && $sensitivity ? sprintf("%.3f", geomean($ppv, $sensitivity)) : "NaN";
+                if ($m) { ($ppv, $sensitivity) = (sprintf("%.3f", median(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", median(@{$table{$sl}->{$in}->{sensitivity}}))); }
+                elsif ($am) { ($ppv, $sensitivity) = (sprintf("%.3f", mean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", mean(@{$table{$sl}->{$in}->{sensitivity}}))); }
+                else { ($ppv, $sensitivity) = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{sensitivity}}))); }
+                
+                $geomean = $ppv && $sensitivity ? sprintf("%.3f", geomean($ppv, $sensitivity)) : "NaN";
+            
+            }
+            else { ($ppv, $sensitivity, $geomean) = ("NaN", "NaN", "NaN");}
             
             push(@prow, $ppv);
             push(@srow, $sensitivity);

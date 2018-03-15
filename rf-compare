@@ -17,22 +17,27 @@
 
 use strict;
 use File::Basename;
+use File::Path qw(mkpath rmtree);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 
 use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
+use Data::IO;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
+use Graphics::Container;
+use Graphics::Object::RNAarcs;
 use RNA::Utils;
 use Term::Table;
 
 $|++;
 
 my ($input, $reference, $refio, $help,
-    $table, $relaxed, $kn, $kp, $kl,
-    %results);
+    $table, $relaxed, $kn, $kp,
+    $kl, $img, $output, $overwrite,
+    $error, %results);
 %results = ( compared      => 0,
              ioerr         => 0,
              diffseq       => 0,
@@ -47,7 +52,10 @@ do {
                 "x|relaxed"            => \$relaxed,
                 "kn|keep-noncanonical" => \$kn,
                 "kp|keep-pseudoknots"  => \$kp,
-                "kl|keep-lonelypairs"  => \$kl ) or help(1);
+                "kl|keep-lonelypairs"  => \$kl,
+                "g|img"                => \$img,
+                "o|output-dir=s"       => \$output,
+                "ow|overwrite"         => \$overwrite ) or help(1);
 
     $input = $ARGV[0];
                 
@@ -55,12 +63,16 @@ do {
 
 help() if ($help);
 
+$output ||= "rf_compare/";
+$output =~ s/\/?$/\//;
 $input =~ s/\/?$/\// if (-d $input);
 
 ##
 # Input validation
 ##
 
+die "\n  [!] Error: No output directory specified\n\n" if (!defined $output &&
+                                                           $img);
 die "\n  [!] Error: Provided structure directory\/file doesn't exist\n\n" if (!-e $input);
 die "\n  [!] Error: No reference structures file provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $reference);
@@ -68,6 +80,31 @@ die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $refere
 ##
 # Read structures
 ##
+
+if ($img) {
+    
+    print "\n[+] Making output directory...";
+
+    if (-e $output) {
+    
+        if ($overwrite) {
+            
+            rmtree($output, { safe      => 1,
+                              keep_root => 0,
+                              error     => \$error });
+            
+            die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error}); 
+            
+        }
+        else { die "\n\n  [!] Error: Output directory already exists." .
+                   "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+        
+    }
+    
+    mkpath($output, { mode  => 0755,
+                      error => \$error });
+    
+}
 
 print "\n[+] Comparing structures to reference...";
 
@@ -110,7 +147,9 @@ while(my $ref = $refio->read()) {
         
     }
     
-    $queryio = Data::IO::Sequence->new(file => $file);
+    $queryio = Data::IO::Sequence->new( file         => $file,
+                                        pseudoknots  => $kp,
+                                        lonelypairs  => $kl );
     
     if (my $query = $queryio->read()) {
         
@@ -148,6 +187,34 @@ while(my $ref = $refio->read()) {
     
     $table->row($refid, sprintf("%.2f", ppv($refstruct, $querystruct, $relaxed)), sprintf("%.2f", sensitivity($refstruct, $querystruct, $relaxed)));
     
+    if ($img) {
+        
+        my ($io, $svg, $refarc, $queryarc,
+            $outfile, $common, $missing);
+        $outfile = $output . $refid . ".svg";
+        $io = Data::IO->new( file    => $outfile,
+                             mode    => "w",
+                             binmode => ":encoding(utf-8)" );
+        $svg = Graphics::Container->new( height  => abs(maprange(0, 1000, -500, -250, min($ref->length(), 1000))), # Min: 500 / Max: 1000px
+                                         width   => 1000,
+                                         spacing => 0 );
+        ($common, $missing) = commonpairs($refstruct, $querystruct);
+        $refarc = Graphics::Object::RNAarcs->new( height    => 0.5,
+                                                  length    => $ref->length(),
+                                                  flip      => "up",
+                                                  stroke    => [ ("black") x @{$common}, ("rgb(102,51,153)") x @{$missing} ],
+                                                  basepairs => [ @{$common}, @{$missing} ] );
+        ($common, $missing) = commonpairs($querystruct, $refstruct);
+        $queryarc = Graphics::Object::RNAarcs->new( height    => 0.5,
+                                                    length    => $ref->length(),
+                                                    flip      => "down",
+                                                    stroke    => [ ("rgb(12,128,57)") x @{$common}, ("rgb(187,27,27)") x @{$missing} ],
+                                                    basepairs => [ @{$common}, @{$missing} ] );
+        $svg->addobjects($refarc, $queryarc);
+        $io->write($svg->xml());
+        
+    }
+    
     $results{compared}++;
     
 }
@@ -171,6 +238,22 @@ print "\n[+] Comparison statistics:\n" .
 
 print "\n\n[+] All done.\n\n";
 
+sub commonpairs {
+    
+    my ($reference, $structure) = @_;
+    
+    my (@common, @missing, %reference);
+    
+    for (listpairs($reference)) { $reference{$_->[0] . "-" . $_->[1]} = 0; }
+	for (listpairs($structure)) { $reference{$_->[0] . "-" . $_->[1]} = 1 if (exists $reference{$_->[0] . "-" . $_->[1]}); }
+
+    @common = map { [ split("-", $_) ] } (grep { $reference{$_} } keys %reference);
+    @missing = map { [ split("-", $_) ] } (grep { !$reference{$_} } keys %reference);
+    
+    return(\@common, \@missing);
+    
+}
+
 sub help {
     
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -187,7 +270,10 @@ sub help {
           rf-compare [Options] file.(ct|db)                      # Single transcript
  
  Options                                Description
- -r  or --reference  <string>           A file containing reference structures in Vienna format (dot-bracket)
+ -r  or --reference     <string>        A file containing reference structures in Vienna format (dot-bracket)
+ -g  or --img                           Enables generation of graphical comparison images
+ -o  or --output-dir    <string>        Images output directory (Default: rf_compare/, requires -g)
+ -ow or --overwrite                     Overwrites output directory (if the specified path already exists)
  -x  or --relaxed                       Uses relaxed criteria (described in Deigan et al., 2009) to calculate PPV and sensitivity
  -kn or --keep-noncanonical             Keeps non-canonical basepairs in reference structure
  -kp or --keep-pseudoknots              Keeps pseudoknotted basepairs in reference structure
