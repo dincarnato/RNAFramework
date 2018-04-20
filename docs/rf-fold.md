@@ -6,14 +6,14 @@ The windowed folding approach is based on the original method described in Siegf
 <br/><br/>
 ![RNAFramework pipeline](http://www.rnaframework.com/images/windowed_folding.png)
 <br/><br/>
-In step I (optional), a window is sled along the RNA, and pseudoknotted structures are detected using the same approach employed by the __ShapeKnots__ algorithm (Hajdin *et al.*, 2013 (PMID: [23503844](https://www.ncbi.nlm.nih.gov/pubmed/23503844))). Our implementation of the ShapeKnots algorithm relies on the __ViennaRNA package__ (instead of __RNAstructure__ as the original implementation did), thus is __much__ faster:
+In step I (optional), a window is slid along the RNA, and pseudoknotted structures are detected using the same approach employed by the __ShapeKnots__ algorithm (Hajdin *et al.*, 2013 (PMID: [23503844](https://www.ncbi.nlm.nih.gov/pubmed/23503844))). Our implementation of the ShapeKnots algorithm relies on the __ViennaRNA package__ (instead of __RNAstructure__ as the original implementation did), thus is __much__ faster:
 <br/><br/>
 ![ShapeKnots/RNA Framework comparison](http://www.rnaframework.com/images/shapeknots.png)
 <br/><br/>
 Nonetheless, both algorithms work in single thread. Alternatively, the multi-thread implementation ``ShapeKnots-smp`` shipped with the latest __RNAstructure__ version can be used.<br/> 
 If constraints from structure probing experiments are provided, these are incorporated in the form of soft-constraints. Predicted pseudoknotted base-pairs are retained if they apper in >50% of analyzed windows. In case constraints are provided, pseudoknots are retained only if the average reactivity of bases on both sides of the helices is below a certain reactivity cutoff.<br/>
-In step II, a window is sled along the RNA, and partition function is calculated. If provided, soft-constraints are applied. If step I has been performed, pseudoknotted bases are hard-constrained to be single-stranded. Predicted base-pair probabilities are averaged across all windows in which they have appeared, and base-pairs with >99% probability are retained, and hard-constrained to be paired in step III.<br/>
-In step III, a window is sled along the RNA, and MFE folding is performed, including (where present) soft-constraints from probing data, and hard-constraints from stages I and II. Predicted base-pairs are retained if they appear in >50% of analyzed windows.
+In step II, a window is slid along the RNA, and partition function is calculated. If provided, soft-constraints are applied. If step I has been performed, pseudoknotted bases are hard-constrained to be single-stranded. Predicted base-pair probabilities are averaged across all windows in which they have appeared, and base-pairs with >99% probability are retained, and hard-constrained to be paired in step III.<br/>
+In step III, a window is slid along the RNA, and MFE folding is performed, including (where present) soft-constraints from probing data, and hard-constraints from stages I and II. Predicted base-pairs are retained if they appear in >50% of analyzed windows.
 
 !!! note "Note"
     At all stages, increased sampling is performed at the 5'/3'-ends to avoid end biases
