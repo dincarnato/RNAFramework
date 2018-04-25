@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[03-15-2018] RNA Framework v2.5.4 [minor release]:__<br/>- Fixed a bug causing `rf-fold` to get stuck sometimes when executed in multi-thread<br/>- Fixed 90% Winsorizing normalization method in `rf-norm` to exclude values below the 5<sup>th</sup> percentile as outliers<br/>- Added `rf-compare` support for the generation of comparison plots of structures (reference vs. predicted)<br/>- Several minor bug fixes<br/>
+    __[04-25-2018] RNA Framework v2.5.5 [minor release]:__<br/>- `rf-map` now also supports gzip compressed FastQ files (request issued by Omar Wagih)<br/>
 
 ## Introduction
 

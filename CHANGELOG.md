@@ -1,3 +1,7 @@
+## [2.5.5] - 2018-04-25
+### Changed
+- Added rf-map support for gzipped FastQ files (function request issued by Omar Wagih)
+
 ## [2.5.4] - 2018-03-15
 ### Changed
 - Modified all modules to avoid use of Thread::Queue (in some cases we encountered a deadlock, especially with rf-fold, that should be solved now)

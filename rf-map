@@ -274,7 +274,7 @@ foreach my $sample (uniq(@ARGV)) {
     
     my ($file, @sample);
     @sample = split(/,/, $sample);
-    $file = (fileparse($sample[0], qr/\.[^.]*/))[0];
+    $file = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
     $file =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
     
     for (@sample) {
@@ -288,14 +288,20 @@ foreach my $sample (uniq(@ARGV)) {
                  file   => $file,
                  paired => @sample == 2 ? 1 : 0,
                  path2  => @sample == 2 ? $sample[1] : undef,
-                 file2  => @sample == 2 ? (fileparse($sample[1], qr/\.[^.]*/))[0] : undef });
+                 file2  => @sample == 2 ? (fileparse($sample[1], qr/((\.[^.\s]+)+)$/))[0] : undef,
+                 gzip   => $sample[0] =~ m/\.gz$/ ? 1 : 0 });
+    
+    # Error on mixed R1/R2 gzipped/uncompressed files
+    die "  [!] Error: Mixed compressed/uncompressed files for sample \"" . $file . "\"\n\n"if ($tmp[-1]->{paired} &&
+                                                                                               (($tmp[-1]->{gzip} && $sample[1] !~ m/\.gz$/) ||
+                                                                                                (!$tmp[-1]->{gzip} && $sample[1] =~ m/\.gz$/)));
     
     $files{$file} = $#tmp;
     $spacer{$file} = length($file);
     
     $table->row($file,
                 @sample == 2 ? "Paired-end" : "Single-read",
-                @sample == 2 ? join(",", (fileparse($sample[0], qr/\.[^.]*/))[0], (fileparse($sample[1], qr/\.[^.]*/))[0]) : (fileparse($sample[0], qr/\.[^.]*/))[0]);
+                @sample == 2 ? join(",", $file, $tmp[-1]->{file2}) : $file);
     
 }
 
@@ -392,15 +398,20 @@ else {
     
     foreach my $sample (@tmp) {
         
-        system("ln -s \"" . File::Spec->rel2abs($sample->{path}) . "\" \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".fq\"");
+        my $newfile = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
+        $newfile .= ".gz" if ($sample->{gzip});
+        system("ln -s \"" . File::Spec->rel2abs($sample->{path}) . "\" \"" . $newfile . "\"");
         
-        $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
+        $sample->{path} = $newfile;
         
         if ($sample->{paired}) {
             
+            $newfile = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq";
+            $newfile .= ".gz" if ($sample->{gzip});
+            
             system("ln -s \"" . File::Spec->rel2abs($sample->{path2}) . "\" \"" . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq\"");
             
-            $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq";
+            $sample->{path2} = $newfile;
             
         }
         
@@ -422,7 +433,10 @@ foreach my $sample (@tmp) {
     # bwa mem -t 40 bwa/index/reference.fa NT.fastq | samtools view -@6 -Sub - | tee >(samtools flagstat - > stats.out) > aln.sam
     # This allows generating mapping statistics while mapping reads
     
-    my $command = $bowtie . " -p " . $wt;
+    my ($pre, $command, $file1, $file2);
+    $command = $bowtie . " -p " . $wt;
+    $file1 = $sample->{path};
+    $file2 = $sample->{path2} if ($sample->{paired});
     
     if (!$mo) {
     
@@ -463,10 +477,24 @@ foreach my $sample (@tmp) {
     }
     
     $command .= " " . $mp if (defined $mp);
-    $command .= $sample->{paired} ? " -1 \"" . $sample->{path} . "\" -2 \"" . $sample->{path2} . "\"" : " \"" . $sample->{path} . "\"";
-    $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
     
-    $processmanager->enqueue( command => $command,
+    if ($sample->{gzip} &&
+        $clipped) {
+        
+        $file1 = $tmpdir . $tmp . "_" . $sample->{file} . "_R1.fifo";
+        $file2 = $tmpdir . $tmp . "_" . $sample->{file} . "_R2.fifo" if ($sample->{paired});
+        
+        $pre = "(mkfifo \"" . $file1 . "\"";
+        $pre .= "; mkfifo \"" . $file2 . "\"" if ($sample->{paired});
+        $pre .= "); (gunzip -c " . $sample->{path} . " > " . $file1 . ") &";
+        $pre .= " (gunzip -c " . $sample->{path2} . " > " . $file2 . ") &" if ($sample->{paired});
+        
+    }
+    
+    $command .= $sample->{paired} ? " -1 \"" . $file1 . "\" -2 \"" . $file2 . "\"" : " \"" . $file1 . "\"";
+    $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
+    ;
+    $processmanager->enqueue( command => $pre . $command,
                               id      => $sample->{file},
                               stderr  => $tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log" );
 
@@ -591,17 +619,26 @@ sub checkfq {
     
     my ($type);
     
-    if ($file !~ m/\.(fq|fastq)$/i) {
+    if ($file !~ m/\.(?:fq|fastq)(?:\.gz)?$/i) {
     
-        my (@rows);
+        my ($mode, @rows);
+        $mode = "<";
     
-        open(my $fh, "<" . $file) or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        if ($file =~ m/\.gz$/) {
+            
+            $file = "gunzip -c " . $file;
+            $mode = "-|";
+            
+        }
+        
+        open(my $fh, $mode, $file) or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
         for (0 .. 3) { $rows[$_] = <$fh>; }
         close($fh);
         
         return if ($rows[0] !~ m/^@/ ||
                    !isdna($rows[1]) ||
                    $rows[2] !~ m/^\+/);
+        
     }
     
     return(1);
