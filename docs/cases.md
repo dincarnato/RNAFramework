@@ -67,8 +67,7 @@ $ rf-fold -g S1_vs_V1_norm/
 A folder named "*rf_fold/*" will be generated, containing two subdirectories:<br/><br/>
 - "*structures/*": inferred structures in dot-bracket notation<br/>
 - "*images/*": graphical summaries in SVG format
-<br/>
-
+<br/><br/>
 # 2. DMS-MaPseq
 
 __1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
@@ -86,7 +85,7 @@ __2.__ Prepare the reference index using ``rf-index``. To download the pre-built
 ```bash
 $ rf-index -pb 3 --bowtie2
 ```
-
+<br/>
 __3.__ Map reads to reference using ``rf-map``:
 
 ```bash
@@ -109,8 +108,63 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 3 -nm 2 -rb AC
 ```
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
+# 3. SHAPE-MaP
 
-# 3. m<sup>6</sup>A-seq
+__1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
+
+```bash
+# Download/decompress reads
+$ fastq-dump -A SRR1301979		# Denatured
+$ fastq-dump -A SRR1301974		# 1M7
+$ fastq-dump -A SRR1301978		# Untreated
+
+# Rename files
+$ mv SRR1301979.fastq Denatured.fastq
+$ mv SRR1301974.fastq 1M7.fastq
+$ mv SRR1301978.fastq Untreated.fastq
+```
+<br/>
+__2.__ Obtain the [HIV-1 genome](https://www.ncbi.nlm.nih.gov/nuccore/M19921.2?report=fasta&log$=seqview&format=text)'s sequence from NCBI and save it to HIV.fasta. In case you have [__Entrez Direct__](https://www.ncbi.nlm.nih.gov/books/NBK179288/) installed, simply type:
+
+```bash
+$ esearch -db nucleotide -query "M19921.2" | efetch -format fasta > HIV.fasta
+```
+<br/>
+__3.__ Create the reference index:
+
+```bash
+$ bowtie2-build HIV.fasta HIV
+``` 
+<br/>
+__4.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map -p 3 -b2 -cp -mp "--very-sensitive-local" -bi HIV Denatured.fastq 1M7.fastq Untreated.fastq
+```
+<br/>
+__5.__ Count mutations using ``rf-count``:
+
+```bash
+$ rf-count -p 3 -nm -r -f HIV.fasta -m rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
+```
+<br/>
+__6.__ Normalize data using ``rf-norm``:
+
+```bash
+# Data will be normalized using Siegfried et al., 2014 
+# scoring method, and Box-plot normalization
+
+$ rf-norm -t 1M7.rc -u rf_count/Untreated.rc -d rf_count/Denatured.rc -i rf_count/index.rci -sm 3 -nm 3 -o HIV_norm/
+```
+
+A folder named "*HIV_norm/*" will be generated, containing a single XML file.<br/><br/>
+__7.__ Fold HIV-1 genome using ``rf-fold``:
+
+```bash
+$ rf-fold -m2 -g -md 500 -w -pk -ko 100 -pw 1600 -po 375 -wt 300 -fw 3000 -fo 300 HIV_norm/
+```
+<br/><br/>
+# 4. m<sup>6</sup>A-seq
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
@@ -162,8 +216,8 @@ $ rf-peakcall -c rf_count/Input.rc -I rf_count/IP.rc -i rf_count/index.rci -e 2.
 ```
 
 A BED file named "*IP\_vs\_Input.bed*" will be generated, containing the called peaks.
-
-# 4. 2OMe-seq
+<br/><br/>
+# 5. 2OMe-seq
 
 __1.__ Download and decompress SRA files to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
 
