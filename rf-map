@@ -376,7 +376,7 @@ if (!$clipped) {
         $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . " -a " . $ca3 . " -A " . $ca5 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
                                                                  $cutadapt . " -a " . $ca3 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
                                   id      => $sample->{file},
-                                  stdout  => "/dev/null" );
+                                  stdout  => $tmpdir . $tmp . "_" . $sample->{file} . "_cutadapt.log" );
     
         $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
         $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq" if ($sample->{paired});
