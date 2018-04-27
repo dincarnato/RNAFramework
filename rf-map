@@ -301,7 +301,7 @@ foreach my $sample (uniq(@ARGV)) {
     
     $table->row($file,
                 @sample == 2 ? "Paired-end" : "Single-read",
-                @sample == 2 ? join(",", $file, $tmp[-1]->{file2}) : $file);
+                @sample == 2 ? join(",", (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0], $tmp[-1]->{file2}) : $file);
     
 }
 
@@ -409,7 +409,7 @@ else {
             $newfile = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq";
             $newfile .= ".gz" if ($sample->{gzip});
             
-            system("ln -s \"" . File::Spec->rel2abs($sample->{path2}) . "\" \"" . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq\"");
+            system("ln -s \"" . File::Spec->rel2abs($sample->{path2}) . "\" \"" . $newfile . "\"");
             
             $sample->{path2} = $newfile;
             
@@ -720,4 +720,3 @@ sub help {
 HELP
     
 }
-
