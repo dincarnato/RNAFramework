@@ -44,8 +44,8 @@ my ($tmp, $tmpdir, $output, $trim3,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
     $table, $bk, $cm, $mp,
-    $mo, $logdir, @tmp, %spacer,
-    %files);
+    $mo, $logdir, $keeplogs, @tmp,
+    %spacer, %files);
 
 do {
     
@@ -88,6 +88,7 @@ do {
                 "bfg|bowtie-rfg=s"        => \$bfg,
                 "mp|mapping-params=s"     => \$mp,
                 "mo|manual-only"          => \$mo,
+                "kl|keep-logs"            => \$keeplogs,
                 "b2|bowtie2"              => \$bowtie2 ) or help(1);
 
 };
@@ -569,7 +570,7 @@ cleanup();
 
 rmtree($logdir, { safe      => 1,
                   keep_root => 0,
-                  error     => \$error });
+                  error     => \$error }) if (!$keeplogs);
 
 print "\n\n[+] All done.\n\n";
 
@@ -680,6 +681,7 @@ sub help {
  -b  or --bowtie               <string>       Path to Bowtie v1/v2 executable (Default: assumes Bowtie is in PATH)
  -c  or --cutadapt             <string>       Path to Cutadapt executable (Default: assumes Cutadapt is in PATH)
  -s  or --samtools             <string>       Path to SAMTools executable (Default: assumes SAMTools is in PATH)
+ -kl or --keep-logs                           Disables logs folder deletion (mostly for debugging purposes)
  
  Cutadapt options
  -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
