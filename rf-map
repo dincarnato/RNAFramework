@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 ##
 # RF Map (v2.5)
@@ -44,7 +44,8 @@ my ($tmp, $tmpdir, $output, $trim3,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
     $table, $bk, $cm, $mp,
-    $mo, @tmp, %spacer, %files);
+    $mo, $logdir, @tmp, %spacer,
+    %files);
 
 do {
     
@@ -97,7 +98,7 @@ help() if ($help);
 $madetmp = 0;
 $tmp //= randalphanum(0xf);
 $output //= "rf_map/";
-$tmpdir //= $output . "/tmp/";
+$tmpdir //= $output . "tmp/";
 $wt ||= 1;
 $threads ||= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
@@ -124,6 +125,7 @@ $bma //= 2;
 $tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
 $bc = 2147483647 if ($bc > 2147483647);
+$logdir = $output . "logs/";
 
 if (isdna(join("", split(/,/, $ca5)))) {
     
@@ -244,7 +246,7 @@ if (-e $output) {
     
 }
 
-mkpath($output, { mode  => 0755,
+mkpath($logdir, { mode  => 0755,
                   error => \$error }); 
     
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
@@ -376,7 +378,8 @@ if (!$clipped) {
         $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . " -a " . $ca3 . " -A " . $ca5 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
                                                                  $cutadapt . " -a " . $ca3 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
                                   id      => $sample->{file},
-                                  stdout  => $tmpdir . $tmp . "_" . $sample->{file} . "_cutadapt.log" );
+                                  stdout  => $logdir . $sample->{file} . "_cutadapt.log",
+                                  stderr  => $logdir . $sample->{file} . "_cutadapt.log" );
     
         $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
         $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq" if ($sample->{paired});
@@ -496,7 +499,7 @@ foreach my $sample (@tmp) {
     ;
     $processmanager->enqueue( command => $pre . $command,
                               id      => $sample->{file},
-                              stderr  => $tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log" );
+                              stderr  => $logdir . $sample->{file} . "_mapping.log" );
 
 }
 
@@ -511,7 +514,7 @@ for (my $i = 0; $i < @tmp; $i++) {
     
     my ($sample, $total, @stats);
     $sample = $tmp[$i];
-    @stats = bowtie_log($tmpdir . $tmp . "_" . $sample->{file} . "_mapping.log");
+    @stats = bowtie_log($logdir . $sample->{file} . "_mapping.log");
     $total = sum(@stats[0..2]);
     
     die "\n  [!] Bowtie log processing failed." .
@@ -550,7 +553,8 @@ foreach my $sample (@tmp) {
     my $path = $output . $sample->{file} . ($nobam ? ".sam" : ".bam");
     
     $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "sam" : "bam") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{file} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
-                              id      => $sample->{file} );
+                              id      => $sample->{file},
+                              stderr  => $logdir . $sample->{file} . "_samtools.log");
     
     $sample->{path} = $path;
     
@@ -562,6 +566,10 @@ $processmanager->waitall();
 while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
 
 cleanup();
+
+rmtree($logdir, { safe      => 1,
+                  keep_root => 0,
+                  error     => \$error });
 
 print "\n\n[+] All done.\n\n";
 
