@@ -44,52 +44,57 @@ my ($tmp, $tmpdir, $output, $trim3,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
     $table, $bk, $cm, $mp,
-    $mo, $logdir, $keeplogs, @tmp,
-    %spacer, %files);
+    $mo, $logdir, $keeplogs, $cq5,
+    $cq3, $cqo, $bd, $haspaired,
+    @tmp, %spacer, %files);
 
 do {
     
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"                  => \$help,
-                "t|tmp-dir=s"             => \$tmpdir,
-                "o|output-dir=s"          => \$output,
-                "ow|overwrite"            => \$overwrite,
-                "nb|no-bam"               => \$nobam,
-                "p|processors=i"          => \$threads,
-                "wt|working-threads=i"    => \$wt,
-                "b|bowtie=s"              => \$bowtie,
-                "c|cutadapt=s"            => \$cutadapt,
-                "s|samtools=s"            => \$samtools,
-                "cm|cutadapt-min-align=i" => \$cm,
-                "ca5|cutadapt-5adapter=s" => \$ca5,
-                "ca3|cutadapt-3adapter=s" => \$ca3,
-                "cl|cutadapt-len=i"       => \$cl,
-                "cp|clipped"              => \$clipped,
-                "b5|bowtie-trim5=i"       => \$trim5,
-                "b3|bowtie-trim3=i"       => \$trim3,
-                "bl|bowtie-seedlen=i"     => \$bseed,
-                "bv|bowtie-v=i"           => \$bv,
-                "bn|bowtie-n=i"           => \$bn,
-                "ba|bowtie-all"           => \$ba,
-                "bm|bowtie-max=i"         => \$bm,
-                "bi|bowtie-index=s"       => \$bi,
-                "bc|bowtie-chunkmbs=i"    => \$bc,
-                "bk|bowtie-multimap=i"    => \$bk,
-                "bN|bowtie-N=i"           => \$bN,
-                "bD|bowtie-D=i"           => \$bD,
-                "bR|bowtie-R=i"           => \$bR,
-                "bmp|bowtie-mp=s"         => \$bmp,
-                "bdp|bowtie-dpad=i"       => \$bdp,
-                "bs|bowtie-softclip"      => \$bs,
-                "bma|bowtie-ma=i"         => \$bma,
-                "bnr|bowtie-norc"         => \$bnr,
-                "bdg|bowtie-rdg=s"        => \$bdg,
-                "bfg|bowtie-rfg=s"        => \$bfg,
-                "mp|mapping-params=s"     => \$mp,
-                "mo|manual-only"          => \$mo,
-                "kl|keep-logs"            => \$keeplogs,
-                "b2|bowtie2"              => \$bowtie2 ) or help(1);
+    GetOptions( "h|help"                    => \$help,
+                "t|tmp-dir=s"               => \$tmpdir,
+                "o|output-dir=s"            => \$output,
+                "ow|overwrite"              => \$overwrite,
+                "nb|no-bam"                 => \$nobam,
+                "p|processors=i"            => \$threads,
+                "wt|working-threads=i"      => \$wt,
+                "b|bowtie=s"                => \$bowtie,
+                "c|cutadapt=s"              => \$cutadapt,
+                "s|samtools=s"              => \$samtools,
+                "cm|cutadapt-min-align=i"   => \$cm,
+                "ca5|cutadapt-5adapter=s"   => \$ca5,
+                "ca3|cutadapt-3adapter=s"   => \$ca3,
+                "cl|cutadapt-len=i"         => \$cl,
+                "cq5|cutadapt-5quality=i"   => \$cq5,
+                "cq3|cutadapt-3quality=i"   => \$cq3,
+                "cqo|cutadapt-quality-only" => \$cqo,
+                "cp|clipped"                => \$clipped,
+                "b5|bowtie-trim5=i"         => \$trim5,
+                "b3|bowtie-trim3=i"         => \$trim3,
+                "bl|bowtie-seedlen=i"       => \$bseed,
+                "bv|bowtie-v=i"             => \$bv,
+                "bn|bowtie-n=i"             => \$bn,
+                "ba|bowtie-all"             => \$ba,
+                "bm|bowtie-max=i"           => \$bm,
+                "bi|bowtie-index=s"         => \$bi,
+                "bc|bowtie-chunkmbs=i"      => \$bc,
+                "bk|bowtie-multimap=i"      => \$bk,
+                "bN|bowtie-N=i"             => \$bN,
+                "bD|bowtie-D=i"             => \$bD,
+                "bR|bowtie-R=i"             => \$bR,
+                "bmp|bowtie-mp=s"           => \$bmp,
+                "bdp|bowtie-dpad=i"         => \$bdp,
+                "bs|bowtie-softclip"        => \$bs,
+                "bd|bowtie-dovetail"        => \$bd,
+                "bma|bowtie-ma=i"           => \$bma,
+                "bnr|bowtie-norc"           => \$bnr,
+                "bdg|bowtie-rdg=s"          => \$bdg,
+                "bfg|bowtie-rfg=s"          => \$bfg,
+                "mp|mapping-params=s"       => \$mp,
+                "mo|manual-only"            => \$mo,
+                "kl|keep-logs"              => \$keeplogs,
+                "b2|bowtie2"                => \$bowtie2 ) or help(1);
 
 };
 
@@ -99,7 +104,7 @@ help() if ($help);
 $madetmp = 0;
 $tmp //= randalphanum(0xf);
 $output //= "rf_map/";
-$tmpdir //= $output . "tmp/";
+$tmpdir //= $output . "/tmp/";
 $wt ||= 1;
 $threads ||= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
@@ -109,6 +114,7 @@ $ca5 ||= "GTTCAGAGTTCTACAGTCCGACGATC";
 $ca3 ||= "TGGAATTCTCGGGTGCCAAGG";
 $cl //= 25;
 $cm //= 1;
+$cq3 //= 20;
 $trim5 //= 0;
 $trim3 //= 0;
 $bc //= 128;
@@ -280,6 +286,17 @@ foreach my $sample (uniq(@ARGV)) {
     $file = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
     $file =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
     
+    
+    if (uniq(@sample) != @sample) {
+        
+        warn "  [!] Warning: Duplicate mate file provided for sample \"" . $file . "\".\n" .
+             "               Falling back to single read mode.\n\n";
+        
+    }
+    
+    @sample = uniq(@sample);
+    $haspaired = 1 if (@sample == 2);
+    
     for (@sample) {
     
         die "  [!] Error: Specified sample file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_);
@@ -357,6 +374,29 @@ if (defined $bi) {
 }
 else { die "\n  [!] Error: No Bowtie index provided\n\n"; }
 
+# We are processing paired-end data, and we have performed 5'-end quality trimming
+if ($haspaired &&
+    $cq5 &&
+    !$clipped) {
+    
+    if (!$bowtie2) {
+        
+        warn "\n  [!] Warning: at least one of the provided datasets has a paired-end layout," .
+             "\n               and 5'-end quality trimming has been enabled." .
+             "\n               Use of Bowtie v2 is suggested, as Bowtie v1 does not support dovetailed reads.\n";
+        
+    }
+    else {
+        
+        warn "\n  [!] Warning: at least one of the provided datasets has a paired-end layout," .
+             "\n               and 5'-end quality trimming has been enabled." .
+             "\n               Enabling the -bd (or --bowtie-dovetail) parameter is strongly encouraged.\n" if (!$bd &&
+                                                                                                                $mp !~ m/--dovetail/); # Dovetail disabled
+             
+    }
+    
+}
+
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
                                              stderr     => "/dev/null",
@@ -370,14 +410,16 @@ print "\n[+] Processing FastQ files...";
 
 if (!$clipped) {
 
-    print "\n[+] Clipping adapter's sequence from sequencing reads...\n";
+    print "\n[+] Clipping adapter sequences/low quality bases from sequencing reads...\n";
     
     $processmanager->onstart(sub { print "\n  [-] Processing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
     
+    my $qualfilter = $cq5 ? $cq5 . "," . $cq3 : $cq3;
+    
     foreach my $sample (@tmp) {
         
-        $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . " -a " . $ca3 . " -A " . $ca5 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
-                                                                 $cutadapt . " -a " . $ca3 . " -m " . $cl . " -O " . $cm . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
+        $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . ($cqo ? undef : " -a " . $ca3 . " -A " . $ca5 . " -O " . $cm) . " -m " . $cl . " -q " . $qualfilter . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
+                                                                 $cutadapt . ($cqo ? undef : " -a " . $ca3 . " -O " . $cm) . " -m " . $cl . " -q " . $qualfilter . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
                                   id      => $sample->{file},
                                   stdout  => $logdir . $sample->{file} . "_cutadapt.log",
                                   stderr  => $logdir . $sample->{file} . "_cutadapt.log" );
@@ -464,6 +506,8 @@ foreach my $sample (@tmp) {
         }
 
         $command .= " --no-mixed" if ($sample->{paired});
+        $command .= " --dovetail" if ($sample->{paired} &&
+                                      $bd);
         $command .= " --no-unal -x " . $bi . " -S \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\""; 
         
     }
@@ -660,7 +704,7 @@ sub help {
     
     die <<HELP;
  
- RF Map (v2.5)
+ RF Map (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -684,14 +728,18 @@ sub help {
  -kl or --keep-logs                           Disables logs folder deletion (mostly for debugging purposes)
  
  Cutadapt options
- -ca5 or --cutadapt-5adapter   <string>      Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
-                                             Note #1: Sequence of 5' adapter will be automatically reverse-complemented.
-                                             Note #2: Multiple adapter sequences can be provided as a comma-separated list.
- -ca3 or --cutadapt-3adapter   <string>      Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG)
-                                             Note: Multiple adapter sequences can be provided as a comma-separated list.
- -cl  or --cutadapt-len        <int>         Minimum length to keep reads after clipping (>=10, Default: 25)
- -cm  or --cutadapt-min-align  <int>         Minimum alignment in nt to adapter's sequence (>0, Default: 1)
- -cp  or --clipped                           Assumes that the provided FastQ files have been already clipped
+ -ca5 or --cutadapt-5adapter       <string>     Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
+                                                Note #1: Sequence of 5' adapter will be automatically reverse-complemented.
+                                                Note #2: Multiple adapter sequences can be provided as a comma-separated list.
+ -ca3 or --cutadapt-3adapter       <string>     Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG)
+                                                Note: Multiple adapter sequences can be provided as a comma-separated list.
+ -cq5 or --cutadapt-5quality       <int>        Quality threshold for trimming bases from read 5'-ends (Phred+33, Default: 0 [no trimming])
+                                                Note: 5'-end quality trimming must be avoided when analyzing data from RT-stop-based methods
+ -cq3 or --cutadapt-3quality       <int>        Quality threshold for trimming bases from read 3'-ends (Phred+33, Default: 20)
+ -cqo or --cutadapt-quality-only                Disables adapters clipping (only performs quality-based trimming)
+ -cl  or --cutadapt-len            <int>        Minimum length to keep reads after clipping (>=10, Default: 25)
+ -cm  or --cutadapt-min-align      <int>        Minimum alignment in nt to adapter's sequence (>0, Default: 1)
+ -cp  or --clipped                              Assumes that the provided FastQ files have been already clipped
  
  Mapping options
  -mp  or --mapping-params      <string>      Manually specify additional aligner parameters (e.g. -mp "-n 2 -l 15")
@@ -725,6 +773,7 @@ sub help {
     -bfg or --bowtie-rfg          <int>[,<int>]    Reference's gap open and extend penalities (>=0, Default: 5,3)
     -bs  or --bowtie-softclip                      Enables local alignment mode (Default: entire read must align)
     -bma or --bowite-ma           <int>            Match bonus in local alignment mode (>=0, Default: 2)
+    -bd  or --bowtie-dovetail                      Paired-end dovetailed reads are allowed (mates extend past each other)
  
  
 HELP

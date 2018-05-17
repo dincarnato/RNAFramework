@@ -47,6 +47,7 @@ sub new {
                    mediancoverage    => 0,
                    remapreactivities => 0,
                    maxuntreatedmut   => 0.05,
+                   raw               => 0,
                    autowrite         => 1 }, \%parameters); 
     
     $self->_validate();
@@ -79,6 +80,7 @@ sub _validate {
     $self->throw("Invalid reactive bases") if ($self->{reactivebases} !~ m/^all$/i &&
                                                !isiupac($self->{reactivebases}));
     $self->throw("normIndependent value must be boolean") if ($self->{normindependent} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
+    $self->throw("Rqw value must be boolean") if ($self->{raw} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
     $self->throw("Invalid pseudoCount value") if (!ispositive($self->{pseudocount}));
     $self->throw("pseudoCount value should be greater than 0") if (!$self->{pseudocount});
     $self->throw("Invalid maxScore value") if (!ispositive($self->{maxscore}));
@@ -110,7 +112,7 @@ sub _fixproperties {
 
 sub scoremethod { return($_[1] ? $scoremethods{$_[0]->{scoremethod}} : $_[0]->{scoremethod}); }
 
-sub normmethod { return($_[1] ? $normmethods{$_[0]->{normmethod}} : $_[0]->{normmethod}); }
+sub normmethod { return($_[0]->{raw} ? "None (Raw)" : ($_[1] ? $normmethods{$_[0]->{normmethod}} : $_[0]->{normmethod})); }
 
 sub normwindow { return($_[0]->{normwindow}); }
 
@@ -176,8 +178,8 @@ sub write {
     
     open(my $fh, ">", $file) or $self->throw("Unable to write configuration file \"" . $file . "\" (" . $! . ")");
     
-    print $fh "scoreMethod=" . $self->scoremethod(1) . "\n" .
-              "normMethod=" . $self->normmethod(1) . "\n";
+    print $fh "scoreMethod=" . $self->scoremethod(1) . "\n";
+    print $fh $self->{raw} ? "raw=yes\n" : "normMethod=" . $self->normmethod(1) . "\n";
     
     if ($self->{scoremethod} == 1) { # Ding
         

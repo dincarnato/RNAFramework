@@ -102,8 +102,8 @@ sub xml {
         
     }
     
-    $maxrad += $maxstroke;
-    $transform = $self->{flip} =~ m/^up$/i ? "translate(0 " . (min($self->{_height}, $maxrad) + $self->{_starty}) . ") scale(1 -" . (min($self->{_height}, $maxrad) / $maxrad) . ")" :
+    $maxrad += $maxstroke;  # Modified from: "translate(0 " . (min($self->{_height}, $maxrad) + $self->{_starty}) . ") scale(1 -" . (min($self->{_height}, $maxrad) / $maxrad) . ")" :
+    $transform = $self->{flip} =~ m/^up$/i ? "translate(0 " . ($self->{_height} + $self->{_starty}) . ") scale(1 -" . (min($self->{_height}, $maxrad) / $maxrad) . ")" :
                                              "translate(0 " . $self->{_starty} . ") scale(1 " . (min($self->{_height}, $maxrad) / $maxrad) . ")";
     $self->opentag("g", { transform => $transform });
     

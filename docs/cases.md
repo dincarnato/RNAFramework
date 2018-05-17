@@ -38,7 +38,7 @@ $ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt/hg38_refGene S1.fastq V1.fastq
 To use Bowtie v2, simply append the ``-b2`` (or ``--bowtie2``) parameter to the previous command:
 
 ```bash
-$ rf-map -bnr -b3 51 -bm 20 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq --bowtie2
+$ rf-map -bnr -b3 51 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq --bowtie2
 ```
 <br/>
 __4.__ Count RT-stops in both samples using ``rf-count``:
@@ -104,7 +104,7 @@ __5.__ Normalize data using ``rf-norm``:
 # Data will be normalized on A/C residues only, using Zubradt et al., 2016 
 # scoring method, and 90% Winsorising
 
-$ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 3 -nm 2 -rb AC
+$ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 ```
 
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
@@ -124,10 +124,10 @@ $ mv SRR1301974.fastq 1M7.fastq
 $ mv SRR1301978.fastq Untreated.fastq
 ```
 <br/>
-__2.__ Obtain the [HIV-1 genome](https://www.ncbi.nlm.nih.gov/nuccore/M19921.2?report=fasta&log$=seqview&format=text)'s sequence from NCBI and save it to HIV.fasta. In case you have [__Entrez Direct__](https://www.ncbi.nlm.nih.gov/books/NBK179288/) installed, simply type:
+__2.__ Obtain the [HIV-1 genome](https://www.ncbi.nlm.nih.gov/nuccore/M19921.2?report=fasta&log$=seqview&format=text)'s sequence from NCBI (extracting only bases 455-9626, corresponding to the primary transcript) and save it to HIV.fasta. In case you have [__Entrez Direct__](https://www.ncbi.nlm.nih.gov/books/NBK179288/) installed, simply type:
 
 ```bash
-$ esearch -db nucleotide -query "M19921.2" | efetch -format fasta > HIV.fasta
+$ esearch -db nucleotide -query "M19921.2" | efetch -format fasta | perl -e 'while(<>) { chomp; next if (m/^>/); $seq .= $_; } print ">HIV\n" . substr($seq, 454, 9172) . "\n";' > HIV.fasta
 ```
 <br/>
 __3.__ Create the reference index:
@@ -136,32 +136,52 @@ __3.__ Create the reference index:
 $ bowtie2-build HIV.fasta HIV
 ``` 
 <br/>
-__4.__ Map reads to reference using ``rf-map``:
+__4.__ Obtain FastQ files from SRA Database:
 
 ```bash
-$ rf-map -p 3 -b2 -cp -mp "--very-sensitive-local" -bi HIV Denatured.fastq 1M7.fastq Untreated.fastq
-```
+$ fastq-dump -A SRR1301979 --split-files -O Denatured/ 
+$ fastq-dump -A SRR1301974 --split-files -O 1M7/
+$ fastq-dump -A SRR1301978 --split-files -O Untreated/
+``` 
 <br/>
-__5.__ Count mutations using ``rf-count``:
+__5.__ Rename FastQ files:
 
 ```bash
-$ rf-count -p 3 -nm -r -f HIV.fasta -m rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
+$ mv Denatured/SRR1301979_1.fastq Denatured_R1.fastq
+$ mv Denatured/SRR1301979_2.fastq Denatured_R2.fastq 
+$ mv 1M7/SRR1301974_1.fastq 1M7_R1.fastq 
+$ mv 1M7/SRR1301974_2.fastq 1M7_R2.fastq$ mv Untreated/SRR1301978_1.fastq Untreated_R1.fastq 
+$ mv Untreated/SRR1301978_2.fastq Untreated_R2.fastq
+``` 
+<br/>
+__6.__ Map reads to reference using ``rf-map``:
+
+```bash
+$ rf-map -p 3 -b2 -cqo -cq5 20 -bs -bl 15 -bN 1 -bD 20 -bR 3 -bdp 100 -bma 2 -bmp 6,2 -bdg 5,1 -bfg 5,1 -bd \
+-mp "--maxins 200" -bi HIV Denatured_R1.fastq,Denatured_R2.fastq 1M7_R1.fastq,1M7_R2.fastq \
+Untreated_R1.fastq,Untreated_R1.fastq
 ```
 <br/>
-__6.__ Normalize data using ``rf-norm``:
+__7.__ Count mutations using ``rf-count``:
+
+```bash
+$ rf-count -p 3 -nm -r -f HIV.fasta -m -na -md 200 rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
+```
+<br/>
+__8.__ Normalize data using ``rf-norm``:
 
 ```bash
 # Data will be normalized using Siegfried et al., 2014 
 # scoring method, and Box-plot normalization
 
-$ rf-norm -t 1M7.rc -u rf_count/Untreated.rc -d rf_count/Denatured.rc -i rf_count/index.rci -sm 3 -nm 3 -o HIV_norm/
+$ rf-norm -t rf_count/1M7.rc -u rf_count/Untreated.rc -d rf_count/Denatured.rc -i rf_count/index.rci -sm 3 -nm 3 -o HIV_norm/
 ```
 
 A folder named "*HIV_norm/*" will be generated, containing a single XML file.<br/><br/>
-__7.__ Fold HIV-1 genome using ``rf-fold``:
+__9.__ Fold HIV-1 genome using ``rf-fold``:
 
 ```bash
-$ rf-fold -m2 -g -md 500 -w -pk -ko 100 -pw 1600 -po 375 -wt 300 -fw 3000 -fo 300 HIV_norm/
+$ rf-fold -m 2 -g -md 500 -w -pk -km 2 -ko 100 -pw 1600 -po 375 -wt 300 -fw 3000 -fo 300 HIV_norm/
 ```
 <br/><br/>
 # 4. m<sup>6</sup>A-seq

@@ -24,6 +24,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
+use Core::Utils;
 use Data::IO;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
@@ -260,7 +261,7 @@ sub help {
     
     die <<HELP;
  
- RF Compare (v2.5)
+ RF Compare (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

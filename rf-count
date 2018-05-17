@@ -52,9 +52,10 @@ my ($tmp, $tmpdir, $output, $wt,
     $madetmp, $table, $mutcount, $seqio,
     $rcio, $includeclip, $nomapcount, $covonly,
     $nodel, $pp, $po, $fromhead,
-    $minqual, $maxdel, $minmut, $hashead,
-    @bam_trim5, @pool, %transcripts, %spacer,
-    %files);
+    $minqual, $maxdel, $maxmut, $hashead,
+    $mapqual, $noambiguous, $medianqual, $noins,
+    $collapse, $maxmutdist, $evalsurround, $rightalign,
+    @bam_trim5, @pool, %transcripts, %spacer, %files);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -64,27 +65,35 @@ do {
     
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"                  => \$help,
-                "t|tmp-dir=s"             => \$tmpdir,
-                "o|output-dir=s"          => \$output,
-                "ow|overwrite"            => \$overwrite,
-                "nm|no-mapped-count"      => \$nomapcount,
-                "t5|trim-5prime=s"        => \$bam_trim5,
-                "wt|working-threads=i"    => \$wt,
-                "s|samtools=s"            => \$samtools,
-                "r|sorted"                => \$sorted,
-                "p|processors=i"          => \$threads,
-                "f|fasta=s"               => \$multifasta,
-                "m|count-mutations"       => \$mutcount,
-                "ic|include-clipped"      => \$includeclip,
-                "co|coverage-only"        => \$covonly,
-                "nd|no-deletions"         => \$nodel,
-                "md|max-deletion-len=i"   => \$maxdel,
-                "pp|properly-paired"      => \$pp,
-                "po|paired-only"          => \$po,
-                "mq|min-quality=i"        => \$minqual,
-                "fh|from-header"          => \$fromhead,
-                "me|min-edit-distance=i"  => \$minmut ) or help(1);
+    GetOptions( "h|help"                     => \$help,
+                "t|tmp-dir=s"                => \$tmpdir,
+                "o|output-dir=s"             => \$output,
+                "ow|overwrite"               => \$overwrite,
+                "nm|no-mapped-count"         => \$nomapcount,
+                "t5|trim-5prime=s"           => \$bam_trim5,
+                "wt|working-threads=i"       => \$wt,
+                "s|samtools=s"               => \$samtools,
+                "r|sorted"                   => \$sorted,
+                "p|processors=i"             => \$threads,
+                "f|fasta=s"                  => \$multifasta,
+                "m|count-mutations"          => \$mutcount,
+                "ic|include-clipped"         => \$includeclip,
+                "co|coverage-only"           => \$covonly,
+                "nd|no-deletions"            => \$nodel,
+                "ni|no-insertions"           => \$noins,
+                "md|max-deletion-len=i"      => \$maxdel,
+                "pp|properly-paired"         => \$pp,
+                "po|paired-only"             => \$po,
+                "q|min-quality=i"            => \$minqual,
+                "mq|map-quality=i"           => \$mapqual,
+                "fh|from-header"             => \$fromhead,
+                "me|max-edit-distance=s"     => \$maxmut,
+                "na|no-ambiguous"            => \$noambiguous,
+                "ra|right-align"             => \$rightalign,
+                "eq|median-quality=i"        => \$medianqual,
+                "cc|collapse-consecutive"    => \$collapse,
+                "mc|max-collapse-distance=i" => \$maxmutdist,
+                "es|eval-surrounding"        => \$evalsurround ) or help(1);
 
 };
 
@@ -101,8 +110,11 @@ $offset = 0;
 $threads ||= 1;
 $bam_trim5 //= 0;
 $minqual //= 20;
-$maxdel //= 3;
-$minmut //= 0;
+$medianqual //= 20;
+$mapqual //= 10;
+$maxdel //= 10;
+$maxmutdist //= 2;
+$maxmut ||= 0.15;
 $samtools ||= which("samtools");
 
 $tmpdir =~ s/\/?$/\//;
@@ -124,8 +136,12 @@ die "\n  [!] Error: Invalid format for -t5 parameter's argument\n\n" if (defined
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel &&
                                                                  !$mutcount);
-die "\n  [!] Error: Minimum quality score value must be and integer >=0 and <= 41" if (!ispositive($minqual) ||
-                                                                                       $minqual > 41);
+die "\n  [!] Error: Minimum quality score value must be and integer >= 0 and <= 41\n\n" if (!inrange($minqual, [0, 41]));
+die "\n  [!] Error: Median read's quality score value must be and integer >= 0 and <= 41\n\n" if (!inrange($medianqual, [0, 41]));
+die "\n  [!] Error: Maximum edit distance value must be > 0 and <= 1\n\n" if (!inrange($maxmut, [0, 1]) ||
+                                                                          !$maxmut);
+die "\n  [!] Error: Parameters -na and -ra are mutually exclusive\n\n" if ($noambiguous &&
+                                                                           $rightalign);
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
@@ -263,7 +279,7 @@ while (my $entry = $seqio->read()) {
     my ($rentry, $offset);
     $rentry = RF::Data::RC->new( id       => $entry->id(),
                                  sequence => $entry->sequence(),
-                                 counts  => [(0) x $entry->length()],
+                                 counts   => [(0) x $entry->length()],
                                  coverage => [(0) x $entry->length()] );
     ($offset) = $rcio->write($rentry);
     
@@ -520,13 +536,18 @@ sub count {
         
             while (!eof($fh)) {
                 
-                my ($row, $clip5, $cov, @row);
+                my ($row, $clip5, $cov, $ins,
+                    $editdist, @row);
                 $row = <$fh>;
                 chomp($row);
                 @row = split(/\t/, $row);
-                ($clip5, $cov) = parsecigar($row[5]);
+                ($clip5, $cov, $ins) = parsecigar($row[5]);
+                @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
+                $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
                 
+                next if ($editdist / $cov > $maxmut);
                 next if (!exists $transcripts{$row[2]});
+                next if (median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
                 next if ($po &&
                          $row[1] & 1 &&
                          $row[1] & 8); # Read is one of a pair, but one mate is unmapped
@@ -539,6 +560,7 @@ sub count {
                 next if ($clip5 &&
                          !$mutcount &&
                          !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
+                next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
                 
                 if ($row[2] ne $last{id}) {
                     
@@ -581,9 +603,10 @@ sub count {
                     if ($mutcount &&
                         $row !~ m/NM:i:0/) {
                         
-                        my @mutations = parsemd(\@row, $last{sequence});
-                        
-                        next if (@mutations < $minmut);
+                        my (@mutations, @uniqmutations);
+                        @mutations = parsemd(\@row, $last{sequence});
+                        @mutations = uniq(@mutations, @{$ins}) if (!$noins);
+                        @mutations = collapsemutations(@mutations) if ($collapse);
                         
                         for (@mutations) {
                         
@@ -724,8 +747,9 @@ sub parsemd { # SAM MD flag parser
     
     my ($row, $reference) = @_;
     
-    my ($md, $llen, @pos);
+    my ($md, $llen, @pos, %quals);
     $llen = $row->[3] - 1;
+    %quals = quality($row);
     
     return if (@{$row} < 11);
     
@@ -762,12 +786,17 @@ sub parsemd { # SAM MD flag parser
                     $real = substr($reference, $start, $disttodel) . substr($reference, $start + $disttodel + length($del), $end - $start - $disttodel - length($del) + 1);
                     
                     # Slide the deletion along sequence, and build hash table
-                    $collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}++ for (0 .. length($win) - length($del));
+                    push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
                     
-                    if ($collapsed{$real} == 1 &&
+                    if (!$noambiguous &&
                         length($del) <= $maxdel) { # Deletion unambiguously mapped, and shorter than cutoff
                         
-                        push(@pos, $len + $llen + $_) for (0 .. length($del) - 1);
+                        # Include the deletion if the bases immediately surroundinding have a quality score >= minqual
+                        my $truedel = $rightalign ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}});
+                        push(@pos, $truedel) if (($evalsurround &&
+                                                  ((exists $quals{$truedel - length($del)} && $quals{$truedel - length($del)} >= $minqual) || !exists $quals{$truedel - length($del)}) &&
+                                                  ((exists $quals{$truedel + 1} && $quals{$truedel + 1} >= $minqual) || !exists $quals{$truedel + 1})) ||
+                                                 !$evalsurround);
                         
                     }
                     
@@ -777,9 +806,16 @@ sub parsemd { # SAM MD flag parser
                 $md =~ s/^$del//;
                 
             }
-            elsif ($next =~ m/^[ACGNT]$/) {
+            elsif ($next =~ m/^([ACGNT])$/) {
                 
-                push(@pos, $len + $llen) if (quality($row, $llen + $len) >= $minqual);
+                # Include the mutation if both the mutated base and the bases immediately surroundinding
+                # have a quality score >= minqual, and the mutated base is not a N in the reference
+                push(@pos, $len + $llen) if ($quals{$llen + $len} >= $minqual &&
+                                             (($evalsurround &&
+                                               ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
+                                               ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
+                                              !$evalsurround) &&
+                                             $next ne "N");
                 $md =~ s/^$next//;
                 
                 $len++;
@@ -800,7 +836,8 @@ sub parsecigar {
     
     my $cigar = shift;
     
-    my ($clip, $cov) = (0, 0);
+    my ($clip, $cov, $last, @ins);
+    ($clip, $cov, $last) = (0, 0, 0);
     
     while ($cigar =~ m/^(\d+[SH])/) {
         
@@ -811,28 +848,78 @@ sub parsecigar {
         
     }
     
-    if ($includeclip) {
+    $cov = $clip if ($includeclip);
+    
+    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
         
-        $cov += $clip;
+        my ($n, $op) = ($1, $2);
+        $cov += $n if (($includeclip && $op =~ m/^[DNM=XSH]$/) ||
+                       (!$includeclip && $op =~ m/^[DNM=X]$/));
+        $last += $n if ($op =~ m/^[DNM=X]$/);
+        push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
         
-        while ($cigar =~ m/(\d+)[DM=XSH]/g) { $cov += $1; }
+        $cigar =~ s/^$n$op//;
         
     }
-    else { while ($cigar =~ m/(\d+)[DM=X]/g) { $cov += $1; } }
     
-    return($clip, $cov);
+    return($clip, $cov, \@ins);
     
 }
 
-sub quality { # Interprets CIGAR to get quality score at a given position of read
+sub editdist {
     
-    my ($row, $pos) = @_;
+    my $row = shift;
     
-    my ($rpos, $qpos, $cigar, @ops,
-        %ops);
+    my $dist = 0;
+    
+    if ($row =~ m/MD:Z:(\S+)/) {
+        
+        my ($md, $del, $mut);
+        $md = $1;
+        $del = $md =~ s/\^[ACGT]+//g;
+        $mut = $md =~ tr/ACGT/ACGT/;
+        $dist = $del + $mut;
+        
+    }
+    
+    return($dist);
+    
+}
+
+# Collapses consecutive mutations toward the 3'-most one
+# e.g. collapsemutations(10, 11, 12) = 12
+# Distance tollerance between consecutive mutations is set by $maxmutdist (default: 2)
+sub collapsemutations {
+
+    my @values = sort {$a <=> $b} uniq(@_);
+    
+    return unless(@values);
+    
+    for (my $i=0; $i < $#values; $i++) {
+    
+        if (abs(diff(@values[$i..$i+1])) <= $maxmutdist) {
+            
+            splice(@values, $i, 1);
+            $i--;
+            
+        }
+    
+    }
+
+    return(@values);
+    
+}
+
+sub quality { # Builds an hash of quality scores in reference-based coordinates
+    
+    my $row = shift;
+    
+    my ($rpos, $qpos, $cigar, $lastrpos,
+        $lastqpos, @ops, @quals, %quals, %ops);
     $cigar = $row->[5];
-    $rpos = $row->[3] - 1;
-    $qpos = 0;
+    $rpos = $lastrpos = $row->[3] - 1;
+    $qpos = $lastqpos = 0;
+    @quals = split(//, $row->[10]);
     %ops = ( "M" => [1, 1],
              "I" => [1, 0],
              "D" => [0, 1],
@@ -856,22 +943,24 @@ sub quality { # Interprets CIGAR to get quality score at a given position of rea
         my ($n, $op) = @{$_};
         next if (!$ops{$op}->[0] &&
                  !$ops{$op}->[1]);
-
+                 
         $qpos += $n if ($ops{$op}->[0]);
         $rpos += $n if ($ops{$op}->[1]);
         
-        if ($rpos > $pos) {
-
-            my $diff = $rpos - $pos;
-            $rpos -= $diff;
-            $qpos -= $diff;
-        
+        if ($ops{$op}->[0] &&
+            $ops{$op}->[1]) {
+            
+            if (my $diff = $qpos - $lastqpos) { $quals{$lastrpos + $_} = unpack("C*", $quals[$lastqpos + $_]) - 33 for (0 .. $diff - 1); }
+            
         }
         
-        return(unpack("C*", substr($row->[10], $qpos, 1)) - 33) if ($rpos == $pos);
+        $lastqpos = $qpos;
+        $lastrpos = $rpos;
          
     }
 
+    return(%quals);
+    
 }
 
 sub help {
@@ -880,7 +969,7 @@ sub help {
     
     die <<HELP;
  
- RF Count (v2.5)
+ RF Count (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -921,15 +1010,28 @@ sub help {
                                                    When this option is active, the RT-stop position is considered to be the position
                                                    preceding the clipped bases.
                                                    This option has no effect when -m (or --count-mutations) is enabled.
- -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
- -mq or --min-quality                        Minimum quality score value to consider a mutation (Phred+33, Default: 20)
- -nd or --no-deletions                       Disables counting unambiguously mapped deletions as mutations (requires -m)
- -md or --max-deletion-len    <int>          Ignores deletions longer than this number of nucleotides (requires -m, Default: 3)
- -me or --min-edit-distance   <int>          Discards reads with less than this number of mutations/deletions (Default: 0)
+ -mq or --map-quality                        Minimum mapping quality to consider a read (Default: 10)
  -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
+ -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+  
+ |
+ +- Mutation count mode options
+    -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
+    -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
+                                                  Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
+    -nd or --no-deletions                         Ignores deletions
+    -ni or --no-insertions                        Ignores insertions
+    -na or --no-ambiguous                         Ignores ambiguously mapped deletions
+                                                  Note: The default behavior is to re-align them to their left-most valid position (or to their
+                                                        right-most valid position if -ra has been specified)
+    -ra or --right-align                          Re-aligns ambiguously mapped deletions to their right-most valid position
+    -md or --max-deletion-len        <int>        Ignores deletions longer than this number of nucleotides (Default: 10)
+    -me or --max-edit-distance       <float>      Discards reads with editing distance frequency higher than this threshold (0<m<=1, Default: 0.15 [15%])
+    -eq or --median-quality          <int>        Median quality score threshold for discarding low-quality reads (Phred+33, Default: 20)
+    -cc or --collapse-consecutive                 Collapses consecutive mutations/indels toward the 3'-most one
+    -mc or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
  
  
 HELP
     
 }
-

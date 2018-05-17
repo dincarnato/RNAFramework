@@ -28,6 +28,7 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Statistics;
+use Core::Utils;
 use Data::IO;
 use Data::XML;
 use RF::Data::IO::RC;
@@ -352,7 +353,7 @@ sub help {
     
     die <<HELP;
  
- RF Mod Call (v2.5)
+ RF Mod Call (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

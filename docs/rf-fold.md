@@ -75,6 +75,8 @@ __-km__ *or* __--pseudoknot-method__ | int | Algorithm for pseudoknots predictio
  | | __RNA Framework pseudoknots detection algorithm options__
 __-vrs__ *or* __--vienna-rnasubopt__ | string | Path to ViennaRNA  ``RNAsubopt`` executable (Default: assumes ``RNAsubopt`` is in PATH)
 __-ks__ *or* __--pseudoknot-suboptimal__ | int | Number of suboptimal structures to evaluate for pseudoknots prediction (>0, Default: __1000__)
+__-nz__ *or* __--no-zuker__ | | Disables the inclusion of Zuker suboptimal structures (reduces the sampled folding space)
+__-zs__ *or* __--zuker-suboptimal__ | | Number of Zuker suboptimal structures to include (>0, Default: __1000__)
  | | __ShapeKnots pseudoknots detection algorithm options__
 __-sk__ *or* __--shapeknots__ | string | Path to ``ShapeKnots`` executable (Default: assumes ``ShapeKnots`` is in PATH)<br/>__Note:__ by default, ``ShapeKnots-smp`` will be used (if available)
  | | __Folding method #1 options (ViennaRNA)__

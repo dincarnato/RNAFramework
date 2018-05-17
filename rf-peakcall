@@ -28,6 +28,7 @@ use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Statistics;
+use Core::Utils;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 
@@ -368,7 +369,7 @@ sub help {
     
     die <<HELP;
  
- RF PeakCall (v2.5)
+ RF PeakCall (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

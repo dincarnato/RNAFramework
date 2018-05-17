@@ -23,47 +23,37 @@ __-f__ *or* __--fasta__ | string | Path to a FASTA file containing the reference
 __-po__ *or* __--paired-only__ | | When processing SAM/BAM files from paired-end experiments, only those reads for which both mates are mapped will be considered
 __-pp__ *or* __--properly-paired__ | | When processing SAM/BAM files from paired-end experiments, only those reads mapped in a proper pair will be considered
 __-i__ *or* __--include-clipped__ | | Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops<br/>__Note:__ The default behavior is to exclude soft/hard-clipped reads. When this option is active, the RT-stop position is considered to be the position preceding the clipped bases. This option has no effect when ``-m`` (or ``--count-mutations``) is enabled.
-__-m__ *or* __--count-mutations__ | | Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
-__-mq__ *or* __--min-quality__ | int | Minimum quality score value to consider a mutation (Phred+33, Default: __20__)
-__-nd__ *or* __--no-deletions__ | | Disables counting unambiguously mapped deletions as mutations (requires ``-m``)
-__-md__ *or* __--max-deletion-len__ | int | Ignores deletions longer than this number of nucleotides (requires ``-m``, Default: __3__)
-__-me__ *or* __--min-edit-distance__ | int | Discards reads with less than this number of mutations/deletions (Default: __0__)
+__-mq__ *or* __--map-quality__ | int | Minimum mapping quality to consider a read (Default: __10__)
 __-co__ *or* __--coverage-only__ | | Only calculates per-base coverage (disables RT-stops/mutations count)
+__-m__ *or* __--count-mutations__ | | Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+ | | __Mutation count mode options__
+__-q__ *or* __--min-quality__ | int | Minimum quality score value to consider a mutation (Phred+33, requires ``-m``, Default: __20__)
+__-es__ *or* __--eval-surrounding__ | | When considering a mutation/indel, also evaluates the quality of surrounding bases (&#177;1 nt)<br/>__Note:__ the quality score threshold set by ``-q`` (or ``--min-quality``) also applies to these bases
+__-nd__ *or* __--no-deletions__ | | Ignores deletions
+__-ni__ *or* __--no-insertions__ | | Ignores insertions
+__-na__ *or* __--no-ambiguous__ | | Ignores ambiguously mapped deletions<br/>__Note:__ the default behavior is to re-align them to their left-most valid position (or to their right-most valid position if ``-ra`` has been specified)
+__-ra__ *or* __--right-align__ | | Re-aligns ambiguously mapped deletions to their right-most valid position
+__-md__ *or* __--max-deletion-len__ | int | Ignores deletions longer than this number of nucleotides (Default: __10__)
+__-me__ *or* __--max-edit-distance__ | float | Discards reads with editing distance frequency higher than this threshold (0<m&le;1, Default: __0.15__ [15%])
+__-eq__ *or* __--median-quality__ | int | Median quality score threshold for discarding low-quality reads (Phred+33, Default: __20__)
+__-cc__ *or* __--collapse-consecutive__ | | Collapses consecutive mutations/indels toward the 3'-most one (recommended for SHAPE-MaP experiments)
+__-mc__ *or* __--max-collapse-distance__ | int | Maximum distance between consecutive mutations/indels to allow collapsing (requires ``-cc``, &ge;0, Default_ __2__)
 
 <br/>
 ## Deletions re-alignment in mutational profiling-based methods
 Mutational profiling (MaP) methods for RNA structure analysis are based on the ability of certain reverse transcriptase enzymes to read-through the sites of SHAPE/DMS modification under specific reaction conditions. Some of them (e.g. SuperScript II) can introduce deletions when encountering a SHAPE/DMS-modified residue. When performing reads mapping, the aligner often reports a single possible alignment of the deletion, although many equally-scoring alignments are possible.<br/>
-To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and discard these ambiguously aligned deletions:
-
-```bash
-ATTACGCGGATCTACGAAAGCTTTACGGACGGTAC		# Reference
-ATTACGCGGATCTACGA-AGCTTTACGGACGGTAC		# Alignment
-
-ATTACGCGGATCTACGA|AGCTTTACGGACGGTAC		# Sequence surrounding deletion
-
-# Slide the deletion along sequence		# Extract surrounding sequence
-ATTACGCGGATC-ACGAAAGCTTTACGGACGGTAC		ATTACGCGGATC|ACGAAAGCTTTACGGACGGTAC	#1
-ATTACGCGGATCT-CGAAAGCTTTACGGACGGTAC		ATTACGCGGATCT|CGAAAGCTTTACGGACGGTAC	#2
-ATTACGCGGATCTA-GAAAGCTTTACGGACGGTAC		ATTACGCGGATCTA|GAAAGCTTTACGGACGGTAC	#3
-ATTACGCGGATCTAC-AAAGCTTTACGGACGGTAC		ATTACGCGGATCTAC|AAAGCTTTACGGACGGTAC	#4
-ATTACGCGGATCTACG-AAGCTTTACGGACGGTAC		ATTACGCGGATCTACG|AAGCTTTACGGACGGTAC	#5
-ATTACGCGGATCTACGAA-GCTTTACGGACGGTAC		ATTACGCGGATCTACGAA|GCTTTACGGACGGTAC	#6
-ATTACGCGGATCTACGAAA-CTTTACGGACGGTAC		ATTACGCGGATCTACGAAA|CTTTACGGACGGTAC	#7
-ATTACGCGGATCTACGAAAG-TTTACGGACGGTAC		ATTACGCGGATCTACGAAAG|TTTACGGACGGTAC	#8
-
-# Compare surrounding sequence from sled deletion to that from the original alignment
-ATTACGCGGATCTACGA|AGCTTTACGGACGGTAC		# Original alignment
-ATTACGCGGATCTACG|AAGCTTTACGGACGGTAC		# 5
-ATTACGCGGATCTACGAA|GCTTTACGGACGGTAC		# 6
-
-# Concatenate surrounding sequences
-ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# Original alignment
-ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# 5
-ATTACGCGGATCTACGAAGCTTTACGGACGGTAC		# 6
-
-# Deletion is discarded because it is NOT unambiguously aligned
-```
+To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and re-align/discard these ambiguously aligned deletions:
+<br/><br/>
+![Ambiguous deletions](http://www.rnaframework.com/images/ambiguous_deletions.png)
+<br/><br/>
 For more information, please refer to Smola *et al*., 2015 (PMID: [26426499](https://www.ncbi.nlm.nih.gov/pubmed/26426499)).
+<br/><br/>
+## Handling of mutations/indels
+
+By giving a rapid look to the numerous parameters provided by RF Count, it appears immediately clear that different parameter combinations produce very different outcomes.
+Here follows a brief scheme aimed at illustrating the different behaviors of RF Count with different parameter combinations (dots correspond to sites of assigned mutations):
+<br/><br/>
+![RF Count MaP handling](http://www.rnaframework.com/images/rf-count_MaP.png)
 <br/><br/>
 ## RC (RNA Count) format
 

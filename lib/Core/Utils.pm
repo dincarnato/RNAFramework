@@ -24,6 +24,7 @@ use Scalar::Util qw(reftype);
 
 use base qw(Exporter);
 
+our $VERSION = "2.6";
 our @EXPORT = qw(is checkparameters blessed clonehashref
                  clonearrayref clonefh uriescape uriunescape
                  unquotemeta striptags questionyn uniq
@@ -32,9 +33,14 @@ our @EXPORT = qw(is checkparameters blessed clonehashref
 
 sub uniq {
     
-    my %seen = ();
+    return unless(@_);
     
-    return(grep { !$seen{$_}++ } @_);
+    my ($reftype, %seen);
+    $reftype = ref($_[0]);
+    
+    if (!$reftype) { return(grep { !$seen{$_}++ } @_); }
+    elsif ($reftype eq "ARRAY") { return(grep { !$seen{ join($;, @{$_}) }++ } @_); }
+    else { throw("Unable to handle variables of type " . $reftype); }
 
 }
 

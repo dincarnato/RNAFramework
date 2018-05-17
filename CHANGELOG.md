@@ -1,3 +1,14 @@
+## [2.6] - 2018-05-17
+### Added
+- Introduced rf-map support for quality-based trimming of reads
+- Introduced new rf-count parameters to enable quality filtering of reads/mappings
+- Introduced rf-count support for insertions
+- Introduced rf-count support for the re-alignment of ambiguously aligned deletions in SHAPE-MaP experiments
+- Added sampling of Zuker suboptimal structures to rf-fold pseudoknots detection algorithm
+
+### API changes
+- Added the $VERSION variable to the Core::Utils package
+
 ## [2.5.5] - 2018-04-25
 ### Changed
 - Added rf-map support for gzipped FastQ files (function request issued by Omar Wagih)

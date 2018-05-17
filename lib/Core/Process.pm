@@ -142,7 +142,7 @@ sub wait {
   
     my $self = shift;
     
-    $self->throw("Cannot wait a detached process (PID: " . $self->{_pid} . ")") if ($self->{detached});
+    #$self->throw("Cannot wait a detached process (PID: " . $self->{_pid} . ")") if ($self->{detached});
 
     local $SIG{CHLD} = "IGNORE";
 

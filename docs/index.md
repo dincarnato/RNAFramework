@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[04-25-2018] RNA Framework v2.5.5 [minor release]:__<br/>- `rf-map` now also supports gzip compressed FastQ files (request issued by Omar Wagih)<br/>
+    __[05-17-2018] RNA Framework v2.6 [major release]:__<br/>- `rf-map` now also supports gzip compressed FastQ files (request issued by Omar Wagih)<br/>- `rf-map` can now perform quality-based trimming of reads<br/>- Added several new parameters to `rf-count` enabling pre-filtering of low quality mappings/reads<br/>- Added `rf-count` support for insertion handling in MaP experiments<br/>- Added `rf-count` support for the re-alignment of ambiguously aligned deletions in SHAPE-MaP experiments<br/>- Added sampling of Zuker suboptimal structures to `rf-fold` pseudoknots detection algorithm<br/>
 
 ## Introduction
 

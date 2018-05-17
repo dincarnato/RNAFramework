@@ -491,7 +491,7 @@ sub help {
     
     die <<HELP;
  
- RF Combine (v2.5)
+ RF Combine (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

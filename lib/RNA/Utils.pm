@@ -168,9 +168,14 @@ sub listpairs {
     
 }
 
+# The split parameter, when TRUE, splits subhelices:
+# e.g. ((((((....))).)))
+# split = 1  ->  2 helices (0-2/14-16 & 3-5/10-12)
+# split = 0  ->  1 helix (0-5/10-14)
 sub listhelices {
 
 	my $dotbracket = shift;
+	my $split = shift if (@_);
 	
     return if (!isdotbracket($dotbracket) ||
                !isdbbalanced($dotbracket));
@@ -208,6 +213,8 @@ sub listhelices {
 				
 				if ($dotbracket[$h5start] =~ m/^$open$/ &&
 					$dotbracket[$h3start] =~ m/^[$loop]$/) {
+				
+					last if ($split);
 					
 					my $last = $h3start;
 					
@@ -225,6 +232,8 @@ sub listhelices {
 				}
 				elsif ($dotbracket[$h5start] =~ m/^[$loop]$/ &&
 					   $dotbracket[$h3start] =~ m/^$close$/) {
+					
+					last if ($split);
 					
 					my $last = $h5start;
 					
@@ -602,7 +611,7 @@ sub rmpseudoknots {
 		
 		for my $helix (@{(listhelices($pairs))[1]}) { push(@pkpairs, map { [$helix->{h5bases}->[$_], $helix->{h3bases}->[$_]]} 0 .. $#{$helix->{h5bases}}); }
 		
-		#$pairs =~ s/[^\(\)\.]/./g; # Remove pseudoknotted base-pairs from original structure
+		$pairs =~ s/[^\(\)\.]/./g; # Remove pseudoknotted base-pairs from original structure
 		               
 		return($pairs, \@pkpairs); 
 		

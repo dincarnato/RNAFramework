@@ -508,7 +508,7 @@ sub help {
     
     die <<HELP;
  
- RF Index (v2.5)
+ RF Index (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

@@ -23,6 +23,9 @@ __-kl__ *or* __--keep-logs__ | | Disables logs folder deletion (mostly for debug
  | | __Cutadapt options__
 __-ca5__ *or* __--cutadapt-5adapter__ | string | Sequence of 5' adapter to clip (Default: __CAAGTCTCAAGATGTCAGGCTGCTAG__, Illumina Small RNA 5’ Adapter)<br/>__Note #1:__ Sequence of 5' adapter will be automatically reverse-complemented<br/>__Note #2:__ Multiple adapter sequences can be provided as a comma-separated list
 __-ca3__ *or* __--cutadapt-3adapter__ | string | Sequence of 3' adapter to clip (Default: __TGGAATTCTCGGGTGCCAAGG__, Illumina Small RNA 3’ Adapter)<br/>__Note:__ Multiple adapter sequences can be provided as a comma-separated list
+__-cq5__ *or* __--cutadapt-5quality__ | int | Quality threshold for trimming bases from read 5'-ends (Phred+33, Default: __0__ [no trimming])<br/>__Note:__ 5'-end quality trimming __must be avoided__ when analyzing data from RT-stop-based methods
+__-cq3__ *or* __--cutadapt-3quality__ | int | Quality threshold for trimming bases from read 3'-ends (Phred+33, Default: __20__)
+__-cqo__ *or* __--cutadapt-quality-only__ | | Disables adapters clipping (only performs quality-based trimming)
 __-cl__ *or* __--cutadapt-len__ | int | Minimum length to keep reads after clipping (&ge;10, Default: __25__)
 __-cm__ *or* __--cutadapt-min-align__ | int | Minimum alignment in nt to adapter’s sequence (&gt;0, Default: __1__)
 __-cp__ *or* __--clipped__ | | Assumes that reads have been already clipped
@@ -52,6 +55,7 @@ __-bdg__ *or* __--bowtie-rdg__ | int[,int] | Read's gap open and extend penaliti
 __-bfg__ *or* __--bowtie-rfg__ | int[,int] | Reference's gap open and extend penalities (&ge;0, Default: __5,3__)
 __-bs__ *or* __--bowtie-softclip__ | | Enables local alignment mode (Default: __entire read must align__)
 __-bma__ *or* __--bowtie-ma__ | int | Match bonus in local alignment mode (Default: __2__)
+__-bd__ *or* __--bowtie-dovetail__ | | Paired-end dovetailed reads are allowed (mates extend past each other)
 
 !!! note "Important"
     When using __Bowtie v1__, Bowtie's ``--best`` and ``--strata`` parameters are automatically added. Please check [Bowtie v1 documentation](http://bowtie-bio.sourceforge.net/manual.shtml) for additional information.

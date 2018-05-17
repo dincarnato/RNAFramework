@@ -68,7 +68,8 @@ my ($output, $ct, $input, $method,
     $pkwin, $pkstep, $p1, $p2,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $skparams, $keeptmp,
-    $pkpercentmfe, @pool, %lambda);
+    $pkpercentmfe, $nozuker, $zukersubopt, @pool,
+    %lambda);
 
 my %results : shared;
 my @xml : shared;
@@ -143,7 +144,9 @@ do {
                 "ks|pseudoknot-suboptimal=i" => \$pksubopt,
                 "kh|pseudoknot-helices=i"    => \$pkmax,
                 "km|pseudoknot-method=i"     => \$pkmethod,
-                "sk|shapeknots=s"            => \$shapeknots ) or help(1);
+                "sk|shapeknots=s"            => \$shapeknots,
+                "nz|no-zuker"                => \$nozuker,
+                "zs|zuker-suboptimal=i"      => \$zukersubopt ) or help(1);
     
     $input = $ARGV[0];
 
@@ -178,6 +181,7 @@ $p2 //= 0.65;
 $pkcutoff //= 0.5;
 $pkmax ||= 100;
 $pksubopt ||= 1000;
+$zukersubopt ||= 1000;
 $pkmethod ||= 1;
 $pkpercentmfe ||= 0.25;
 $viennarna ||= which("RNAfold");
@@ -1078,15 +1082,43 @@ sub pkdetect {
                 my $suboptenergy = RNA::energy_of_struct($entry->sequence(), $line);
                 $suboptenergy += pseudodG($line, $parameters{reactivity}) if (!$ignore);
                 
-                push(@subopt, [$line, $suboptenergy]) if ($suboptenergy < $mfetollerance);
+                # Here we compare the suboptimal energy and the mfetollerance down to the 1st decimal digit only
+                # to avoid being too stringent (in some cases the optimal helix is within less than 0.1kcal/mol from the tollerance)
+                push(@subopt, [$line, $suboptenergy]) if (sprintf("%.1f", $suboptenergy) <= sprintf("%.1f", $mfetollerance));
                 
+            }
+            
+            if (!$nozuker) {
+            
+                my $structs = 0;
+            
+                # I added this to sample suboptimal structures according to Zuker (increases the folding space searched)
+                foreach my $line (split(/\n/, `cat '$fastafile' | $rnasubopt -z`)) {
+            
+                    last if ($structs == $zukersubopt);
+            
+                    my @line = split(" ", $line);
+            
+                    next if (!isdotbracket($line[0]));
+                    
+                    my $suboptenergy = RNA::energy_of_struct($entry->sequence(), $line[0]);
+                    $suboptenergy += pseudodG($line[0], $parameters{reactivity}) if (!$ignore);
+                    
+                    # Here we compare the suboptimal energy and the mfetollerance down to the 1st decimal digit only
+                    # to avoid being too stringent (in some cases the optimal helix is within less than 0.1kcal/mol from the tollerance)
+                    push(@subopt, [$line[0], $suboptenergy]) if (sprintf("%.1f", $suboptenergy) <= sprintf("%.1f", $mfetollerance));
+
+                    $structs++;
+                    
+                }
+            
             }
             
             @subopt = uniq(@subopt); 
             
             foreach my $subopt (@subopt) {
    
-                foreach my $helix (@{(listhelices($subopt->[0]))[0]}) {
+                foreach my $helix (@{(listhelices($subopt->[0], 1))[0]}) { # Listed helices are split -> listhelices($db, 1)
                     
                     my ($pairedinmfe, $h5, $h3, $tmpsubopt,
                         $tmpenergy, @tmpsubopt, @pkbases);
@@ -1094,7 +1126,7 @@ sub pkdetect {
                     @pkbases = (@{$helix->{h5bases}}, @{$helix->{h3bases}});
                     $pairedinmfe += $mfepaired{$_} for (@pkbases);
                     
-                    next if ($pairedinmfe / @pkbases >= 0.5);
+                    next if ($pairedinmfe / @pkbases > 0.5);
                     
                     $tmpsubopt[$_] = "." for (@pkbases);
                     $tmpsubopt = join("", @tmpsubopt);
@@ -1598,8 +1630,8 @@ sub pseudodG {
         delete($allbases{$_}) for (@external);
         @internal = map { $_ } keys %allbases;
         
-        $dG += isnan($reactivity->[$_]) ? 0 : ($slope * log($reactivity->[$_] + 1) + $intercept) for (@external);
-        $dG += isnan($reactivity->[$_]) ? 0 : 2 * ($slope * log($reactivity->[$_] + 1) + $intercept) for (@internal);
+        $dG += isnegative($reactivity->[$_]) || isnan($reactivity->[$_]) ? 0 : ($slope * log($reactivity->[$_] + 1) + $intercept) for (@external);
+        $dG += isnegative($reactivity->[$_]) || isnan($reactivity->[$_]) ? 0 : 2 * ($slope * log($reactivity->[$_] + 1) + $intercept) for (@internal);
 
     }
     
@@ -1613,7 +1645,7 @@ sub help {
      
     die <<HELP;
  
- RF Fold (v2.5)
+ RF Fold (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -1667,6 +1699,8 @@ sub help {
  +- RNA Framework pseudoknots detection algorithm options
     -vrs or --vienna-rnasubopt      <string>    Path to ViennaRNA RNAsubopt executable (Default: assumes RNAsubopt is in PATH)
     -ks  or --pseudoknot-suboptimal <int>       Number of suboptimal structures to evaluate for pseudoknots prediction (>0, Default: 1000)
+    -nz  or --no-zuker                          Disables the inclusion of Zuker suboptimal structures (reduces the sampled folding space)
+    -zs  or --zuker-suboptimal                  Number of Zuker suboptimal structures to include (>0, Default: 1000)
 
  |
  +- ShapeKnots pseudoknots detection algorithm options

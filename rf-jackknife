@@ -22,6 +22,8 @@ use File::Path qw(mkpath rmtree);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use Math::BigFloat qw(:constant);
+use threads;
+use threads::shared;
 
 use lib $Bin . "/lib";
 
@@ -49,6 +51,8 @@ my ($input, $output, $overwrite, $reference,
              ioerr         => 0,
              diffseq       => 0,
              missingstruct => 0 );
+my @tested : shared;
+my @results : shared;
 
 do {
     
@@ -265,7 +269,7 @@ if (keys %files) {
     
     foreach my $id (sort keys %files) {
     
-        my (@tested);
+        my (@pool);
     
         print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "]";
     
@@ -273,9 +277,9 @@ if (keys %files) {
             
             for(my $in = $intercept[0]; $in <= $intercept[1]; $in += $istep) {
                 
-                push(@tested, [$sl, $in]);
+                push(@tested, shared_clone([$id, $sl, $in]));
                 
-                $processmanager->enqueue( command => join(" ", $rffold, $rfparams, "-sl", $sl, "-in", $in, "-o", $tmpdir . join("_", $id, @{$tested[-1]}), $files{$id}),
+                $processmanager->enqueue( command => join(" ", $rffold, $rfparams, "-sl", $sl, "-in", $in, "-o", $tmpdir . join("_", @{$tested[-1]}), $files{$id}),
                                           id      => $id . "; Slope: " . $sl . "; Intercept: " . $in,
                                           stdout  => "/dev/null" );
                 
@@ -291,32 +295,13 @@ if (keys %files) {
         
         print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "; PPV/Sensitivity calculation]";
         
-        foreach my $test (@tested) {
+        @pool = map{ threads->create(\&calc) } 1 .. $threads;
+        $_->join() for(@pool);
+        
+        for (@results) {
             
-            my ($testio, $entry, $p, $s);
-            
-            eval { $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db"); };
-            
-            if ($@) {
-                
-                $p = "NaN";
-                $s = "NaN";
-                
-            }
-            else {
-            
-                $entry = $testio->read();
-                $p = ppv($reference{$id}, $entry->structure(), $relaxed);
-                $s = sensitivity($reference{$id}, $entry->structure(), $relaxed);
-            
-            }
-            
-            push(@{$table{$test->[0]}->{$test->[1]}->{ppv}}, $p);
-            push(@{$table{$test->[0]}->{$test->[1]}->{sensitivity}}, $s);
-            
-            rmtree($tmpdir . join("_", $id, @{$test}), { safe      => 1,
-                                                         keep_root => 0,
-                                                         error     => \$error });
+            push(@{$table{$_->[0]}->{$_->[1]}->{ppv}}, $_->[2]);
+            push(@{$table{$_->[0]}->{$_->[1]}->{sensitivity}}, $_->[3]);
             
         }
         
@@ -341,6 +326,7 @@ if (keys %files) {
         my (@prow, @srow, @grow);
         @prow = ($sl);
         @srow = @prow;
+        @grow = @prow;
         
         foreach my $in (sort {$a <=> $b} keys %{$table{$sl}}) {
         
@@ -361,7 +347,7 @@ if (keys %files) {
             push(@prow, $ppv);
             push(@srow, $sensitivity);
             push(@grow, $geomean);
-            push(@table, [$sl, $in, $sensitivity, $ppv, $geomean]);
+            push(@table, [$sl, $in, $sensitivity, $ppv, $geomean]) if (!isnan($geomean));
         
         }
         
@@ -402,6 +388,47 @@ print "\n\n[+] All done.\n\n";
 
 cleanup();
 
+sub calc {
+    
+    while (1) {
+        
+        my ($test, $testio, $entry, $p,
+            $s, $id);
+        
+        { lock(@tested);
+          $test = shift(@tested) if (@tested); }
+        
+        last unless($test);
+        
+        $id = shift(@{$test});
+        
+        eval { $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db"); };
+        
+        if ($@) {
+
+            $p = "NaN";
+            $s = "NaN";
+                
+        }
+        else {
+        
+            $entry = $testio->read();
+            $p = ppv($reference{$id}, $entry->structure(), $relaxed);
+            $s = sensitivity($reference{$id}, $entry->structure(), $relaxed);
+        
+        }
+        
+        { lock(@results);
+          push(@results, shared_clone([@{$test}, $p, $s]));
+        
+          rmtree($tmpdir . join("_", $id, @{$test}), { safe      => 1,
+                                                       keep_root => 0,
+                                                       error     => \$error }); }
+        
+    }
+    
+}
+
 sub cleanup {
     
     unlink(glob($tmpdir . $tmp . "*"));
@@ -423,7 +450,7 @@ sub help {
     
     die <<HELP;
  
- RF JackKnife (v2.5)
+ RF JackKnife (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
     
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)

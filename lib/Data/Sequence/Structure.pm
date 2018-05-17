@@ -117,8 +117,23 @@ sub _fixproperties {
         defined $self->{structure}) {
         
         ($self->{basepairs}, $self->{_ncpairs}) = rmnoncanonical($self->{sequence}, (@{$self->{basepairs}} ? $self->{basepairs} : $self->{structure}));
-        @{$self->{basepairs}} = (@{$self->{basepairs}}, @{$self->{_ncpairs}}) if ($self->{noncanonical});
-        ($self->{structure}, $self->{_pkpairs}) = rmpseudoknots($self->{sequence}, $self->{basepairs});
+        
+        if ($self->{noncanonical}) { @{$self->{basepairs}} = (@{$self->{basepairs}}, @{$self->{_ncpairs}}); }
+        else {
+            
+            # This part speeds-up things with very long structures
+            # for which a dot-bracket structure has been provided
+            if (defined $self->{structure}) {
+                
+                my @structure = split(//, $self->{structure});
+                @structure[map { @{$_} } @{$self->{_ncpairs}}] = (".") x (2 * @{$self->{_ncpairs}});
+                $self->{structure} = join("", @structure);
+                
+            }
+            
+        }
+        
+        ($self->{structure}, $self->{_pkpairs}) = rmpseudoknots($self->{sequence}, defined $self->{structure} ? $self->{structure} : $self->{basepairs});
         
         if ($self->{pseudoknots}) { # Pseudoknots allowed
             
