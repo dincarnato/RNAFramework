@@ -39,7 +39,7 @@ our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                                        mode median round sum
                                        diff product maprange intersect
                                        variance inrange haspositive hasnegative
-                                       hasnan absolute) ] );
+                                       hasnan haszero absolute) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -174,6 +174,16 @@ sub hasnegative {
     
 }
 
+sub haszero {
+
+    my @values = @_;
+
+    return unless(isnumeric(@values));
+
+    return(scalar(grep { $_ == 0 } @values));
+
+}
+
 sub haspositive {
     
     my @values = @_;
@@ -284,6 +294,7 @@ sub geomean {
     Core::Utils::throw("Values array is empty") if (!@values);
     Core::Utils::throw("Values must be positive numbers") if (!ispositive(@values));
     
+    return(0) if (haszero(@values));
     return($values[0]) if (@values == 1);
     
     $_ = logarithm($_) for (@values);

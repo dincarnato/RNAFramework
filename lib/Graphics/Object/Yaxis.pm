@@ -18,6 +18,7 @@ sub new {
                    labels          => [],
                    ticksby         => undef,
                    yrange          => [undef, undef],
+                   forceyrange     => 0,
                    axisstroke      => "black",
                    plotstdev       => "both",
                    opacity         => 1,
@@ -62,6 +63,7 @@ sub _validate {
     $self->throw("Y axis range must be an ARRAY reference of 2 values") if (ref($self->{yrange}) ne "ARRAY" ||
                                                                             @{$self->{yrange}} != 2);
     $self->throw("Plot Y axis parameter must be bool") if (!isbool($self->{plotyaxis}));
+    $self->throw("Force Y range parameter must be bool") if (!isbool($self->{forceyrange}));
     $self->throw("Plot Y axis values parameter must be bool") if (!isbool($self->{plotyvalues}));
     $self->throw("Plot Y axis ticks parameter must be bool") if (!isbool($self->{plotticks}));
     $self->throw("Label rotation angle must be numeric ") if (!isnumeric($self->{labelrotate}));
@@ -100,7 +102,8 @@ sub _fixproperties {
     else {
     
         my $min = min(@{$self->{_values}->[0]});
-        $self->{yrange}->[0] = $min if ($self->{yrange}->[0] < $min);
+        $self->{yrange}->[0] = $min if ($self->{yrange}->[0] < $min &&
+                                        !$self->{forceyrange});
         
     }
     
@@ -108,7 +111,8 @@ sub _fixproperties {
     else {
         
         my $max = max(@{$self->{_values}->[1]});
-        $self->{yrange}->[1] = $max if ($self->{yrange}->[1] > $max);
+        $self->{yrange}->[1] = $max if ($self->{yrange}->[1] > $max &&
+                                        !$self->{forceyrange});
         
     }
     

@@ -658,6 +658,10 @@ sub fold { # Threads
             }
             else { push(@foldwins, [0, $length - 1, 0, 0]); }
             
+            # This fixes the cases in which the first or last windows are < MINWINLENGTH
+            $foldwins[0]->[2] = 0;
+            $foldwins[-1]->[3] = 0;
+            
             # Calculate window partition function
             for (@foldwins) {
                 
@@ -675,11 +679,11 @@ sub fold { # Threads
                                                  pos        => $start,
                                                  trim5      => $trim5,
                                                  trim3      => $trim3,
-                                                 pseudoknot => pkconstraint($start, \@pkpairs),
+                                                 pseudoknot => pkconstraint($start, $end, \@pkpairs),
                                                  constraint => "." x @winreact );
                 
-                if (!$win) {               
-               
+                if (!$win) {
+                    
                     lock(%results);
                     $results{folderr}++;
                     
@@ -694,7 +698,7 @@ sub fold { # Threads
                 push(@windows, [$start + $trim5, $end - $trim3]);
                 
             }
-           
+            
             @shannon = map { mean(@{$_}) } @shannon; # Shannon entropy vector
             
             # Just do this for windowed analysis, otherwise just fold
@@ -805,7 +809,7 @@ sub fold { # Threads
                                reactivity => \@winreact,
                                pos        => $start,
                                constraint => $winconst,
-                               pseudoknot => pkconstraint($start, \@pkpairs) );
+                               pseudoknot => pkconstraint($start, $end, \@pkpairs) );
             
             if (!$win) {               
            
@@ -1543,10 +1547,10 @@ sub hardbases { # Returns 0-based coords of bases to be hard-constrained
 
 sub pkconstraint {
     
-    my ($pos, $pk) = @_;
+    my ($start, $end, $pk) = @_;
     
     my @positions = map {@$_} @{$pk};
-    @positions = grep { ispositive($_) } (map { $_ - $pos } @positions);
+    @positions = grep { ispositive($_) } (map { $_ - $start } (grep { $_ <= $end} @positions));
     
     return(\@positions);
     

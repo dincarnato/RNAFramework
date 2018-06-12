@@ -18,8 +18,15 @@ sub new {
                    coverage   => [],
                    readscount => 0 }, \%parameters);
     
+    if (defined $self->{sequence}) {
+        
+        # Fix sequence and remove degeneracy
+        $self->{sequence} = uc(rna2dna($self->{sequence}));
+        $self->{sequence} =~ s/[BDHKMRSVWY-]/N/gi;
+        
+    }
+    
     $self->_validate();
-    $self->{sequence} = uc(rna2dna($self->{sequence})) if (defined $self->{sequence});
     
     return($self);
     

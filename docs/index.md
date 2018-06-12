@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[05-17-2018] RNA Framework v2.6 [major release]:__<br/>- `rf-map` now also supports gzip compressed FastQ files (request issued by Omar Wagih)<br/>- `rf-map` can now perform quality-based trimming of reads<br/>- Added several new parameters to `rf-count` enabling pre-filtering of low quality mappings/reads<br/>- Added `rf-count` support for insertion handling in MaP experiments<br/>- Added `rf-count` support for the re-alignment of ambiguously aligned deletions in SHAPE-MaP experiments<br/>- Added sampling of Zuker suboptimal structures to `rf-fold` pseudoknots detection algorithm<br/>
+    __[06-12-2018] RNA Framework v2.6.1 [minor release]:__<br/>- Added mutated reads statistics to `rf-count`<br/>- Fixed 2 bugs in `rf-fold`, one causing folding to fail with pseudoknotted structures in windowed mode, the other causing the software to crash when windowed analysis was performed using window sizes < 50 nt<br/>- Modified `rf-count` to handle reference sequences with degenerated bases<br/>
 
 ## Introduction
 
@@ -29,6 +29,8 @@ Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 
 
 ## Reference
+
+Incarnato *et al*., (2018) RNA Framework: an all-in-one toolkit for the analysis of RNA structures and post-transcriptional modifications ([Nucleic Acids Research](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gky486/5035169), *in press*).
 
 Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data (PMID: [26487736](https://www.ncbi.nlm.nih.gov/pubmed/26487736)).
 

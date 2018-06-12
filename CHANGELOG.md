@@ -1,3 +1,16 @@
+## [2.6.1] - 2018-06-12
+### Added
+- Added mutated reads statistics to rf-count output
+
+### Changed
+- Fixed a bug in rf-fold causing folding to fail with pseudoknotted structures under windowed folding mode
+- Fixed a bug in rf-fold causing the software to crash when the first/last windows are < 50 nt
+
+### API changes
+- Added haszero() function to Core::Mathematics
+- Added forceyrange parameter to Graphics::Object::Yaxis objects to force y-scale over the maximum/minimum Y values in the dataset
+- Modified RF::Data::RC module to handle reference sequences with degerated bases
+
 ## [2.6] - 2018-05-17
 ### Added
 - Introduced rf-map support for quality-based trimming of reads

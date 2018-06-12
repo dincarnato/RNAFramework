@@ -511,10 +511,12 @@ sub count {
         $covered = 0;
         %last = ( id       => undef,
                   sequence => undef );
-        %stats = ( A => 0,
-                   C => 0,
-                   G => 0,
-                   T => 0 );
+        %stats = ( A       => 0,
+                   C       => 0,
+                   G       => 0,
+                   T       => 0,
+                   mutated => 0,
+                   total   => 0 );
         
         { lock($lock);
           print "\n  [-] Processing sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "(Thread #" . threads->tid . ")..."; }
@@ -595,6 +597,7 @@ sub count {
                 }
                 
                 $readscount++;
+                $stats{total}++;
                 
                 if ($mutcount ||
                     $covonly) {  # Mutations count / Coverage only modes
@@ -607,6 +610,7 @@ sub count {
                         @mutations = parsemd(\@row, $last{sequence});
                         @mutations = uniq(@mutations, @{$ins}) if (!$noins);
                         @mutations = collapsemutations(@mutations) if ($collapse);
+                        $stats{mutated}++ if (@mutations);
                         
                         for (@mutations) {
                         
@@ -664,6 +668,8 @@ sub count {
                 
                 my $total = sum(map { $stats{$_} } qw(A C G T));
                 $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
+                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total}) . "\%) mutated reads" if ($mutcount &&
+                                                                                                                                                            $stats{total});
                 
             }
             
