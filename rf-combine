@@ -183,9 +183,9 @@ sub combine {
             $algorithm, $xml, @values1, @values2,
             @mean1, @stdev1, @mean2, @stdev2);
         
-        for (@xml) {
+        foreach my $dir (@xml) {
             
-            my $file = -d $_ ? $_ . $id . ".xml" : $_;
+            my $file = -d $dir ? $dir . $id . ".xml" : $dir;
             
             eval {
                 
