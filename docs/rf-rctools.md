@@ -1,4 +1,5 @@
 The RF RCTools module enables easy visualization/manipulation of RC files. It allows indexing, merging and dumping RC files.<br />
+This tool is particularly useful when the same sample is sequenced more than one time to increase its coverage. Now, instead of merging the BAM files and re-calling the `rf-count` on the whole dataset (that is very time-consuming), each sample can be processed independently and simply merged to the RC file from the previous analysis.<br/>
 # Usage
 To list the required parameters, simply type:
 
