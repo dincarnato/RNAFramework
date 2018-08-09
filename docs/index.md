@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[06-12-2018] RNA Framework v2.6.1 [minor release]:__<br/>- Added mutated reads statistics to `rf-count`<br/>- Fixed 2 bugs in `rf-fold`, one causing folding to fail with pseudoknotted structures in windowed mode, the other causing the software to crash when windowed analysis was performed using window sizes < 50 nt<br/>- Modified `rf-count` to handle reference sequences with degenerated bases<br/>
+    __[08-09-2018] RNA Framework v2.6.5 [minor release]:__<br/>- Added the `rf-rctools` tool for easy manipulation and visualization of RC files<br/>- Fixed the +x mode of RNA Framework's tools<br/>- The LWP::UserAgent module is no longer required (replaced with HTTP::Tiny)
 
 ## Introduction
 
@@ -30,7 +30,7 @@ Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 
 ## Reference
 
-Incarnato *et al*., (2018) RNA Framework: an all-in-one toolkit for the analysis of RNA structures and post-transcriptional modifications ([Nucleic Acids Research](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gky486/5035169), *in press*).
+Incarnato *et al*., (2018) RNA Framework: an all-in-one toolkit for the analysis of RNA structures and post-transcriptional modifications (PMID: [29893890](https://www.ncbi.nlm.nih.gov/pubmed/29893890)).
 
 Incarnato *et al*., (2015) RNA structure framework: automated transcriptome-wide reconstruction of RNA secondary structures from high-throughput structure probing data (PMID: [26487736](https://www.ncbi.nlm.nih.gov/pubmed/26487736)).
 
@@ -55,8 +55,7 @@ Please see <http://www.gnu.org/licenses/> for more information.
 - Perl v5.12 (or greater), with ithreads support
 - Perl non-CORE modules (<http://search.cpan.org/>):
 
-    1. DBD::mysql  
-    2. LWP::UserAgent  
+    1. DBD::mysql    
     3. RNA (installed by the __ViennaRNA__ package)  
     4. XML::LibXML
     5. Config::Simple  

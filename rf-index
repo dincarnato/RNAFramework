@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Index (v2.5)
+# RF Index
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -22,7 +22,7 @@ use File::Path qw(mkpath rmtree);
 use File::Slurp;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
-use LWP::UserAgent;
+use HTTP::Tiny;
 use XML::LibXML;
 
 use lib $Bin . "/lib";
@@ -117,10 +117,9 @@ if ($list ||
         die "\n  [!] Error: Invalid prebuilt index ID." .
             "\n             Please use -l (or --list) to list available indexes\n\n" if (!exists $indexes{$prebuilt});
         
-        my ($url, $ua, $downloaded, $reply,);
+        my ($url, $ua, $downloaded, $reply);
         $url = "http://www.rnaframework.com/data/indexes/" . ($bowtie2 ? "bowtie2/" : "bowtie/") . $indexes{$prebuilt}->{file};
-        $ua = LWP::UserAgent->new(timeout => $timeout);
-        $ua->default_header("Accept" => "application/x-gzip");
+        $ua = HTTP::Tiny->new(timeout => $timeout);
         $downloaded = 0;
         
         if (!defined $output) {
@@ -160,20 +159,21 @@ if ($list ||
         open(my $wh, ">:raw", $output . $indexes{$prebuilt}->{file}) or die "\n\n  [!] Error: Unable to write prebuilt index to file (" . $! . ")\n\n";
         select((select($wh), $|=1)[0]);
         
-        $reply = $ua->get($url,
-                          ":content_cb" => sub {
-                
-                            my ($chunk, $response) = @_;
-                            my $size = $response->content_length();
-                            $downloaded += length($chunk);
+        $reply = $ua->get( $url,
+                           { data_callback => sub {
+                             
+                             my ($chunk, $response) = @_;
+                             my $size = $response->{headers}->{"content-length"};
+                             $downloaded += length($chunk);
                             
-                            print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [" . sprintf("%.2f",  $downloaded / $size * 100) . "\%]";
+                             print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [" . sprintf("%.2f",  $downloaded / $size * 100) . "\%]";
           
-                            print $wh $chunk; });
+                             print $wh $chunk; },
+                             headers => { "Accept" => "application/x-gzip" } } );
         
         close($wh);
         
-        if (!$reply->is_success()) {
+        if (!$reply->{success}) {
                 
             print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [FAIL]";    
                 
@@ -183,7 +183,7 @@ if ($list ||
                               keep_root => 0,
                               error     => \$error });
                 
-            die "\n\n  [!] Error: Failed to download " . $indexes{$prebuilt}->{name} . " prebuilt index (" . $reply->message() . ")\n\n";
+            die "\n\n  [!] Error: Failed to download " . $indexes{$prebuilt}->{name} . " prebuilt index (" . $reply->{reason} . ")\n\n";
                 
         }
         
@@ -406,7 +406,7 @@ else {
             
             my ($ua, $downloaded, $content, $reply,
                 $status, $xml, $spacer, $size);
-            $ua = LWP::UserAgent->new(timeout => $timeout);
+            $ua = HTTP::Tiny->new(timeout => $timeout);
             $downloaded = 0;
             $size = 0;
             $spacer = " " x ($longer - length($chromosome) + 1);
@@ -414,9 +414,9 @@ else {
             print "\n  [*] Chromosome " . $chromosome . $spacer . "[0.00%]";
             
             $reply = $ua->get("http://genome.ucsc.edu/cgi-bin/das/" . $assembly . "/dna?segment=" . $chromosome,
-                              ":content_cb" => sub {
-                                
-                                my ($chunk, $response, $protocol) = @_;
+                              { data_callback => sub {
+                             
+                                my ($chunk, $response) = @_;
                                 my $percentage = 0;
                                 
                                 # We estimate the size of the data from the DNA tag
@@ -426,12 +426,12 @@ else {
                                 $percentage = sprintf("%.2f", $downloaded / $size * 100);
                                 
                                 print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[" . ($percentage > 100 ? "100.00" : $percentage) . "%]";
-                                  
-                                $content .= $chunk; });
+             
+                                $content .= $chunk; } } );
             
-            ($status) = $reply->header("x-das-status") =~ m/(\d+)/;
+            ($status) = $reply->{headers}->{"x-das-status"} =~ m/(\d+)/;
             
-            if (!$reply->is_success() ||
+            if (!$reply->{success} ||
                 $status != 200) {
                 
                 unlink(glob($output . "*"));
@@ -440,7 +440,7 @@ else {
                                   keep_root => 0,
                                   error     => \$error });
                 
-                die "\n\n  [!] Error: Failed to retrieve sequence for chromosome " . $chromosome . " (" . $reply->message() . ")\n\n";
+                die "\n\n  [!] Error: Failed to retrieve sequence for chromosome " . $chromosome . " (" . $reply->{reason} . ")\n\n";
                 
             }
             

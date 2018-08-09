@@ -1,0 +1,305 @@
+#!/usr/bin/env perl
+
+##
+# RF RCTools
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Easy manipulation of RC files
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use File::Basename;
+use File::Copy;
+use File::Path qw(mkpath rmtree);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Utils;
+use RF::Data::IO::RC;
+use RF::Data::RC;
+
+$|++;
+
+my ($output, $overwrite, $command, $help,
+    $tmp, $tmpdir, $madetmp, $index,
+    $tab, @index, @rc, %commands);
+
+%commands = map { $_ => 1 } qw(index view merge);
+
+do {
+    
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"         => \$help,
+                "o|output=s"     => \$output,
+                "ow|overwrite"   => \$overwrite,
+                "i|index=s"      => \$index,
+                "t|tab"          => \$tab,
+                "T|tmp-dir=s"    => \$tmpdir ) or help(1);
+    
+    $command = shift(@ARGV);
+    @rc = uniq(@ARGV);
+
+};
+
+help() if ($help);
+
+# Default
+$tmpdir ||= "/tmp";
+$tmp = randalphanum(0xf);
+$command = lc($command);
+undef($index) if ($command eq "index");
+@index = split(/,/, $index);
+
+$tmpdir =~ s/\/?$/\//;
+
+##
+# Input validation
+##
+
+die "\n  [!] Error: No command specified\n\n" unless($command);
+die "\n  [!] Error: Invalid command \"" . $command . "\"\n\n" unless(exists $commands{$command});
+die "\n  [!] Error: No RC file specified\n\n" unless(@rc);
+
+$SIG{__DIE__} = \&cleanup;
+
+if (!@index) {
+    
+    mktmpdir();
+    
+    for (@rc) {
+        
+        my ($file, $rc, $rci);
+        $file = (fileparse($_, qr/((\.[^.\s]+)+)$/))[0];
+        $rci = $tmpdir . $tmp . "_" . $file . ".rci";
+        $rc = RF::Data::IO::RC->new( file       => $_,
+                                     buildindex => 1,
+                                     index      => $rci );
+        
+        push(@index, $rci);
+        
+    }
+    
+}
+elsif (@index > 1 &&
+       @index != @rc) { die "\n  [!] Error: Different number of RC files and RCI index files provided\n\n" }
+else { @index = ($index) x @rc; }
+
+for (0 .. $#index) {
+    
+    die "\n  [!] Error: Provided RCI index file \"" . $index[$_] . "\" does not exist\n\n" if (!-e $index[$_]);
+    die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]);
+    
+}
+for (@rc) { die "\n  [!] Error: Provided RC file \"" . $_ . "\" does not exist\n\n" if (!-e $_); }
+
+if ($command eq "index") {
+    
+    for (@rc) {
+        
+        my $file = (fileparse($_, qr/((\.[^.\s]+)+)$/))[0];
+        move($tmpdir . $tmp . "_" . $file . ".rci", $_ . ".rci") or die "\n  [!] Error: Unable to copy RCI index file (" . $! . ")\n\n";
+        
+    }
+    
+}
+elsif ($command eq "view") {
+    
+    my $rcin = RF::Data::IO::RC->new( file  => $rc[0],
+                                      index => $index[0] );
+    
+    while(my $entry = $rcin->read()) {
+        
+        if ($tab) {
+            
+            my (@sequence, @counts, @coverage);
+            @sequence = split(//, $entry->sequence());
+            @counts = $entry->counts();
+            @coverage = $entry->coverage();
+            
+            print $entry->id();
+            print "\n" . join("\t", $sequence[$_], $counts[$_], $coverage[$_]) for (0 .. $#sequence);
+            print "\n\n";
+            
+        }
+        else { print join("\n", $entry->id(), $entry->sequence, join(",", $entry->counts()), join(",", $entry->coverage())) . "\n\n"; }
+        
+    }
+    
+}
+elsif ($command eq "merge") {
+    
+    $output ||= "merge.rc";
+    $output =~ s/(?:\.rc)?$/.rc/;
+   
+    die "\n  [!] Error: Output RC file already exists." .
+        "\n      Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output &&
+                                                                                    !$overwrite);
+   
+    # Easy check: RC files should have the same size, so if one of them differs, then it cannot be merged
+    die "\n [!] Error: Provided RC files have different sizes\n\n" if (@rc > 1 &&
+                                                                       sum(map { (-s $rc[$_]) - (-s $rc[$_ - 1]) } 1 .. $#rc));
+    
+    my ($rcout, @rcin);
+    $rcout = RF::Data::IO::RC->new( file       => $output,
+                                    index      => $output . ".rci",
+                                    buildindex => 1,
+                                    mode       => "w",
+                                    overwrite  => $overwrite );
+    @rcin = map { RF::Data::IO::RC->new( file  => $rc[$_],
+                                         index => $index[$_] ) } 0 .. $#rc;
+    
+    while(my $entry = $rcin[0]->read()) {
+        
+        my ($merge, @counts, @coverage);
+        @counts = $entry->counts();
+        @coverage = $entry->coverage();
+        
+        if (@rc > 1) {
+            
+            my @entries = map { $rcin[$_]->read($entry->id()) } 1 .. $#rcin;
+            
+            for (0 .. $#entries) {
+                
+                die "\n  [!] Error: Different sequence for transcript " . $entries[$_]->id() .
+                    " between files \"" . $rc[0] . "\" and \"" . $rc[$_+1] . "\"\n\n" if ($entry->sequence() ne $entries[$_]->sequence());
+                
+                my (@tmpcounts, @tmpcoverage);
+                @tmpcounts = $entries[$_]->counts();
+                @tmpcoverage = $entries[$_]->coverage();
+                @counts = map { $counts[$_] + $tmpcounts[$_] } 0 .. $#counts;
+                @coverage = map { $coverage[$_] + $tmpcoverage[$_] } 0 .. $#coverage;
+                    
+            }
+            
+        }
+        
+        $merge = RF::Data::RC->new( id       => $entry->id(),
+                                    sequence => $entry->sequence(),
+                                    counts   => \@counts,
+                                    coverage => \@coverage );
+        $rcout->write($merge);
+        
+    }
+    
+    $rcout->close();
+    
+}
+
+cleanup();
+
+sub mktmpdir {
+    
+    my ($error);
+    
+    if (!-e $tmpdir) {
+    
+        mkpath($tmpdir, { mode  => 0755,
+                          error => \$error });
+        
+        die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        
+        $madetmp = 1;
+        
+    }
+    else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+    
+}
+
+sub cleanup {
+    
+    my ($error);
+    
+    unlink(glob($tmpdir . $tmp . "*"));
+    
+    if ($madetmp &&
+        isdirempty($tmpdir)) {
+    
+        rmtree($tmpdir, { safe      => 1,
+                          keep_root => 0,
+                          error     => \$error });
+        
+    }
+    
+}
+
+sub help {
+    
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+    print "\n  [!] Error: Invalid command \"" . $command . "\"\n" if (!exists $commands{$command});
+    
+    print <<HELP;
+ 
+ RF RCTools (v$Core::Utils::VERSION)
+ RNA Framework [http://www.rnaframework.com]
+    
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Easy manipulation of RC files
+HELP
+
+    if ($command eq "index") {
+        
+        die <<HELP;
+    
+ Usage:   rf-rctools index Sample1.rc Sample2.rc ... Samplen.rc
+ 
+HELP
+        
+    }
+    elsif ($command eq "view") {
+        
+        die <<HELP;
+    
+ Usage:   rf-rctools view [options] Sample.rc
+ 
+ Options                Description
+ -t  or --tab           Switch to tabular output format
+ 
+HELP
+        
+    }
+    elsif ($command eq "merge") {
+        
+        die <<HELP;
+    
+ Usage:   rf-rctools merge [options] Sample1.rc Sample2.rc ... Samplen.rc
+ 
+ Options                                     Description
+ -o  or --output     <string>                Output RC filename (Default: merge.rc)
+ -ow or --overwrite                          Overwrites output file if already exists
+ -i  or --index      <string>[,<string>]     A comma separated (no spaces) list of RCI index files for the provided RC files.
+                                             Note: RCI files must be provided in the same order as RC files.
+                                                   If a single RCI file is specified along with multiple RC files, it will be
+                                                   used for all of them.
+ -T  or --tmp-dir    <string>                Temporary directory (Default: /tmp)
+ 
+HELP
+        
+    }
+    else {
+    
+        die <<HELP;
+    
+ Usage:   rf-rctools [command]
+ 
+ Commands         Description
+ view             Dumps to screen the content of the provided RC file         
+ merge            Combines multiple RC files
+ index            Generates RCI index
+ 
+HELP
+
+    }
+    
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Map (v2.5)
+# RF Map
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -376,8 +376,9 @@ else { die "\n  [!] Error: No Bowtie index provided\n\n"; }
 
 # We are processing paired-end data, and we have performed 5'-end quality trimming
 if ($haspaired &&
-    $cq5 &&
-    !$clipped) {
+    (($cq5 &&
+     !$clipped) ||
+     $trim5)) {
     
     if (!$bowtie2) {
         
@@ -389,7 +390,7 @@ if ($haspaired &&
     else {
         
         warn "\n  [!] Warning: at least one of the provided datasets has a paired-end layout," .
-             "\n               and 5'-end quality trimming has been enabled." .
+             "\n               and 5'-end quality clipping/trimming has been enabled." .
              "\n               Enabling the -bd (or --bowtie-dovetail) parameter is strongly encouraged.\n" if (!$bd &&
                                                                                                                 $mp !~ m/--dovetail/); # Dovetail disabled
              

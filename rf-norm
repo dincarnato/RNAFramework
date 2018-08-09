@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Norm (v2.5.1)
+# RF Norm
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -196,7 +196,7 @@ die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(
 # The new index will be generated in the same path of the rc file, with extension .rci
 if (!@index) {
     
-    print "\n[+] Regenerating RTI index files...";
+    print "\n[+] Regenerating RCI index files...";
     
     $rc = RF::Data::IO::RC->new( file       => $untreated,
                                  buildindex => 1 ) if ($hasctrl);
@@ -208,7 +208,7 @@ if (!@index) {
 }
 elsif (@index > 1) {
     
-    die "\n\n  [!] Error: 2 RTI index files provided, but 3 expected\n\n" if (@index < 3 &&
+    die "\n\n  [!] Error: 2 RCI index files provided, but 3 expected\n\n" if (@index < 3 &&
                                                                               $config->scoremethod() == 3 &&
                                                                               defined $denatured);
     
@@ -699,7 +699,7 @@ sub help {
  -u  or --untreated           <string>              Untreated sample RC file (required by Ding/Siegfried scoring methods)
  -d  or --denatured           <string>              Denatured sample RC file (optional for Siegfried scoring method)
  -t  or --treated             <string>              Treated sample RC file
- -i  or --index               <string>[,<string>]   A comma separated (no spaces) list of RTI index files for the provided RC files.
+ -i  or --index               <string>[,<string>]   A comma separated (no spaces) list of RCI index files for the provided RC files.
                                                     Note: RCI files must be provided in the order: 1. Untreated, 2. Denatured and 3. Treated.
                                                           If a single RCI file is specified along with both untreated and treated sample (and
                                                           denatured sample), it will be used for all samples.

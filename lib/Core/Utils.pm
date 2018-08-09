@@ -20,17 +20,18 @@ use strict;
 use Carp;
 use Fcntl qw(F_GETFL SEEK_SET);
 use File::Spec;
+use HTTP::Tiny;
 use Scalar::Util qw(reftype);
 
 use base qw(Exporter);
 
-our $VERSION = "2.6.1";
+our $VERSION = "2.6.5";
 our @EXPORT = qw(is checkparameters blessed clonehashref
                  clonearrayref clonefh uriescape uriunescape
                  unquotemeta striptags questionyn uniq
                  randint randnum randalpha randalphanum
-                 randmixed which isdirempty);
-
+                 randmixed which isdirempty isup2date);
+                 
 sub uniq {
     
     return unless(@_);
@@ -341,6 +342,42 @@ sub isdirempty {
 	
 	return(1);
 	
+}
+
+sub isup2date {
+    
+    my ($reply, $up2date);
+    $up2date = 1;
+    $reply = HTTP::Tiny->new->get("https://raw.githubusercontent.com/dincarnato/RNAFramework/master/VERSION");
+ 
+    if ($reply->{success}) {
+    
+        my $latest = $reply->{content};
+       
+        if ($latest =~ m/^[\d\.]+$/) {
+        
+            my (@latest, @current);
+            @latest = split(/\./, $latest);
+            @current = split(/\./, $VERSION);
+         
+            for (my $i=0; $i < @latest; $i++) {
+         
+                 if ($latest[$i] > $current[$i]) {
+                     
+                     $up2date = 0;
+                     
+                     last;
+                     
+                 }
+         
+            }
+         
+        }
+        
+        CORE::warn  "\n  [i] Note: RNA Framework v" . $latest . " is available. Issue a 'git pull' to update.\n" unless($up2date);
+     
+    }
+    
 }
 
 1;

@@ -18,7 +18,7 @@ package Data::IO;
 
 use strict;
 use Fcntl qw(SEEK_SET);
-use LWP::UserAgent;
+use HTTP::Tiny;
 use Core::Mathematics;
 use Core::Utils;
 
@@ -30,17 +30,18 @@ sub new {
     my %parameters = @_ if (@_);
     
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ file      => undef,
-                   data      => undef,
-                   mode      => "r",
-                   flush     => 0,
-                   autoreset => 0,
-                   timeout   => 10,
-                   retries   => 3,
-                   overwrite => 0,
-                   binmode   => undef,
-                   _prev     => [],
-                   _fh       => undef }, \%parameters);
+    $self->_init({ file       => undef,
+                   data       => undef,
+                   mode       => "r",
+                   flush      => 0,
+                   autoreset  => 0,
+                   timeout    => 10,
+                   retries    => 3,
+                   overwrite  => 0,
+                   binmode    => undef,
+                   iseparator => "\n",
+                   _prev      => [],
+                   _fh        => undef }, \%parameters);
     
     $self->_checkfile();
     $self->flush($self->{flush});
@@ -92,14 +93,13 @@ sub _checkfile {
                 for (1 .. $self->{retries}) {
             
                     my ($useragent, $reply);
-                    $useragent = LWP::UserAgent->new( agent   => "Chimaera",
-                                                      timeout => $self->{timeout} );
+                    $useragent = HTTP::Tiny->new(timeout => $self->{timeout});
                     $reply = $useragent->get($file);
                         
-                    if (!$reply->is_success()) { $self->warn($reply->status_line()); }
+                    if (!$reply->{success}) { $self->warn($reply->{status} . " (" . $reply->{reason} . ")"); }
                     else {
                         
-                        $data = $reply->content();
+                        $data = $reply->{content};
                     
                         last;
                         
@@ -151,11 +151,42 @@ sub _openfh {
     
 }
 
+sub iseparator {
+    
+    my $self = shift;
+    
+    $self->warn("Setting the input record separator has no effect on a write/append filehandle") if ($self->{mode} ne "r");
+    $self->throw("Unable to change input record separator on a non-generic Data::IO object") if (ref($self) ne "Data::IO");
+    
+    $self->{iseparator} = $_[0] if (@_);
+    
+    return($self->{iseparator});
+    
+}
+
 sub read {
     
     my $self = shift;
     
-    $self->throw("Unable to call method on a generic object");
+    $self->throw("Unable to read from a write/append filehandle") if ($self->{mode} ne "r");
+    
+    my ($fh, $row);
+    $fh = $self->{_fh};
+    
+    if (eof($fh)) {
+        
+        $self->reset() if ($self->{autoreset});
+        
+        return;
+        
+    }
+
+    local $/ = $self->{iseparator};
+    
+    $row = <$fh>;
+    chomp($row);
+    
+    return($row);
     
 }
 
@@ -163,7 +194,9 @@ sub write {
     
     my $self = shift;
     my $string = shift if (@_);
-        
+    
+    $self->throw("Unable to write on a read-only filehandle") if ($self->{mode} eq "r");
+    
     my $fh = $self->{_fh};
 
     print $fh $string;

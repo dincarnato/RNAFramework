@@ -1,3 +1,10 @@
+## [2.6.5] - 2018-08-09
+### Added
+- Added rf-rctools utility for RC files manipulation
+
+### API changes
+- API modified to use HTTP::Tiny (CORE) instead of LWP::UserAgent
+
 ## [2.6.1] - 2018-06-12
 ### Added
 - Added mutated reads statistics to rf-count output

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Count (v2.5)
+# RF Count
 # Epigenetics Unit @ HuGeF [Human Genetics Foundation]
 #
 # Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
@@ -48,7 +48,7 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($tmp, $tmpdir, $output, $wt,
     $samtools, $multifasta, $sam, $sorted,
     $help, $overwrite, $error, $bam_trim5,
-    $hex, $offset, $threads, $processmanager,
+    $offset, $threads, $processmanager,
     $madetmp, $table, $mutcount, $seqio,
     $rcio, $includeclip, $nomapcount, $covonly,
     $nodel, $pp, $po, $fromhead,
@@ -100,9 +100,8 @@ do {
 help() if ($help);
 
 # Default values
-$hex = 5;
 $madetmp = 0;
-$tmp ||= randalphanum(0xf);
+$tmp = randalphanum(0xf);
 $output ||= "rf_count/";
 $tmpdir ||= $output . "/tmp/";
 $wt ||= 1;
