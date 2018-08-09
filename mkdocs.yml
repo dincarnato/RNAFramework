@@ -5,6 +5,7 @@ pages:
     - 'rf-index': 'rf-index.md'
     - 'rf-map': 'rf-map.md'
     - 'rf-count': 'rf-count.md'
+    - 'rf-rctools': 'rf-rctools.md'
     - 'rf-norm': 'rf-norm.md'
     - 'rf-fold': 'rf-fold.md'
     - 'rf-jackknife': 'rf-jackknife.md'
