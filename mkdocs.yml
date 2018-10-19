@@ -1,4 +1,10 @@
 site_name: RNA Framework
+theme:
+    name: readthedocs
+    highlightjs: true
+    hljs_languages:
+        - yaml
+        - rust
 pages:
     - 'Overview': 'index.md'
     - 'Framework components': 'components.md'
