@@ -48,14 +48,15 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($tmp, $tmpdir, $output, $wt,
     $samtools, $multifasta, $sam, $sorted,
     $help, $overwrite, $error, $bam_trim5,
-    $offset, $threads, $processmanager,
+    $offset, $threads, $processmanager, $mbfile,
     $madetmp, $table, $mutcount, $seqio,
     $rcio, $includeclip, $nomapcount, $covonly,
     $nodel, $pp, $po, $fromhead,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $rightalign,
-    @bam_trim5, @pool, %transcripts, %spacer, %files);
+    @bam_trim5, @pool, %transcripts, %spacer,
+    %files, %masks);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -77,6 +78,7 @@ do {
                 "p|processors=i"             => \$threads,
                 "f|fasta=s"                  => \$multifasta,
                 "m|count-mutations"          => \$mutcount,
+                "mf|mask-file=s"             => \$mbfile,
                 "ic|include-clipped"         => \$includeclip,
                 "co|coverage-only"           => \$covonly,
                 "nd|no-deletions"            => \$nodel,
@@ -126,6 +128,8 @@ $output =~ s/\/?$/\//;
 die "\n  [!] Error: No sample SAM/BAM file provided\n\n" if (!@ARGV);
 die "\n  [!] Error: No FASTA file provided\n\n" if (!defined $multifasta);
 die "\n  [!] Error: Provided FASTA file doesn't exist\n\n" if (!-e $multifasta);
+die "\n  [!] Error: Provided mask file doesn't exist\n\n" if (defined $mbfile &&
+                                                              !-e $mbfile);
 die "\n  [!] Error: Parameters -co and -m are mutually exclusive\n\n" if ($mutcount &&
                                                                           $covonly);
 die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) ||
@@ -478,6 +482,60 @@ if (!$nomapcount) {
 }
 else { print "\n[+] Skipping total mapped reads counting..."; }
 
+if (-e $mbfile) {
+
+    my $masked = 0;
+
+    print "\n[+] Applying mask to transcript bases...";
+    
+    open(my $mh, "<", $mbfile) or die "\n\n  [!] Error: Unable to read from mask file (" . $! . ")\n\n";
+    while(my $line = <$mh>) {
+        
+        chomp($line);
+        my @line = split(/[,;]/, $line);
+        
+        next if (@line < 2);
+        next if (!exists $transcripts{$line[0]});
+        
+        foreach my $i (1 .. $#line) {
+            
+            my $sequence = $seqio->read($line[0])->sequence();
+            $line[$i] =~ s/\s//g;
+            
+            if (isna($line[$i])) {
+                
+                $line[$i] = rna2dna($line[$i]);
+                my $index = index($sequence, $line[$i]);
+                
+                next if ($index == -1);
+                
+                push(@{$masks{$line[0]}}, [$index, $index + length($line[$i])]);
+                $masked++;
+                
+            }
+            elsif ($line[$i] =~ m/^(\d+)-(\d+)$/) {
+                
+                my ($start, $end) = ($1 - 1, $2 - 1);
+                
+                next if (!ispositive($start) ||
+                         $start > $end ||
+                         $start > $transcripts{$line[0]} - 1 ||
+                         $end > $transcripts{$line[0]} - 1);
+                
+                push(@{$masks{$line[0]}}, [$start, $end]);
+                $masked++;
+                
+            }
+            
+        }
+        
+    }
+    close($mh);
+    
+    print " [$masked masks applied]";
+
+}
+
 print "\n[+] Calculating per-base " . ($covonly ? "coverage" : ($mutcount ? "mutation counts" : "RT-stops") . " and coverage") . ". This may take a while...\n";
 
 @pool = map{ threads->create(\&count) } 1 .. $threads;
@@ -566,7 +624,14 @@ sub count {
                 if ($row[2] ne $last{id}) {
                     
                     if (defined $last{id}) {
-                    
+                        
+                        if (exists $masks{$last{id}}) {
+                            
+                            @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                            @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                            
+                        }
+                        
                         my $rentry = RF::Data::RC->new( id         => $last{id},
                                                         sequence   => $last{sequence},
                                                         counts     => \@counts,
@@ -644,6 +709,18 @@ sub count {
             # Writes the last entry after EOF has been reached
             if (defined $last{id}) {
             
+                if (exists $masks{$last{id}}) {
+                    
+                    print "\n\n" . join(",", @coverage) . "\n\n";
+                    
+                    
+                    @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                    @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                    
+                    print "\n\n" . join(",", @coverage) . "\n\n";
+                    
+                }
+            
                 my $rentry = RF::Data::RC->new( id         => $last{id},
                                                 sequence   => $last{sequence},
                                                 counts     => \@counts,
@@ -667,8 +744,8 @@ sub count {
                 
                 my $total = sum(map { $stats{$_} } qw(A C G T));
                 $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
-                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total}) . "\%) mutated reads" if ($mutcount &&
-                                                                                                                                                            $stats{total});
+                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total} * 100) . "\%) mutated reads" if ($mutcount &&
+                                                                                                                                                                  $stats{total});
                 
             }
             
@@ -1006,6 +1083,7 @@ sub help {
  -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
                                              Note: Transcripts in this file must match transcripts in SAM/BAM file headers.
                                              This can be omitted if a Bowtie index is specified by -bi (or --bowtie-index).
+ -mf or --mask-file           <string>       Path to a mask file
  -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
                                              both mates are mapped will be considered
  -pp or --properly-paired                    When processing SAM/BAM files from paired-end experiments, only those reads mapped in a

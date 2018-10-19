@@ -930,11 +930,11 @@ sub fold { # Threads
         
             my ($file, $image, $io, $reactivity,
                 $shannon, $mea, $pairprob, $ruler,
-                $ticksby, $minheight, $maxheight);
+                $ticksby, $minheight, $maxheight, $sum);
             
             # Plot only base-pairing probabilities >= 5%
             @dotplot = grep { $_->[2] >= 0.05 } sort { $a->[2] <=> $b->[2] } @dotplot;
-            
+            $sum = sum(grep { isnumeric($_) } @reactivity);
             $minheight = 250;
             $maxheight = 500;
             
@@ -955,14 +955,20 @@ sub fold { # Threads
             $io = Data::IO->new( file    => $file,
                                  mode    => "w",
                                  binmode => ":encoding(utf-8)" );
-            $reactivity = Graphics::Object::Barplot->new( fontsize  => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
-                                                          height    => 1,
-                                                          values    => [ map { isnumeric($_) ? min($_, 2) : "NaN" } @reactivity ],
-                                                          stdev     => [$xmlref->reactivity_error()],
-                                                          plotstdev => "up",
-                                                          yname     => "Reactivity",
-                                                          barfill   => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ],
-                                                          barstroke => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ] );
+            
+            if ($sum) {
+                
+                $reactivity = Graphics::Object::Barplot->new( fontsize  => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
+                                                              height    => 1,
+                                                              values    => [ map { isnumeric($_) ? min($_, 2) : "NaN" } @reactivity ],
+                                                              stdev     => [$xmlref->reactivity_error()],
+                                                              plotstdev => "up",
+                                                              yname     => "Reactivity",
+                                                              barfill   => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ],
+                                                              barstroke => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ] );
+            
+            }
+            
             $mea = Graphics::Object::RNAarcs->new( height    => 2,
                                                    length    => $length,
                                                    flip      => "down",
@@ -993,10 +999,16 @@ sub fold { # Threads
                                                             basepairs => [ map { [$_->[0], $_->[1]] } @dotplot ],
                                                             stroke    => [ map { $_->[2] < 0.1 ? "rgb(150,150,150)" : ($_->[2] < 0.4 ? "rgb(255,204,0)" : ($_->[2] < 0.7 ? "rgb(71,142,204)" : "rgb(81,183,71)")) } @dotplot ] );
             
-                $image->addobjects($reactivity, 0, $mea, $shannon, 0, $pairprob, 0.05, $ruler);
+                if ($sum) { $image->addobjects($reactivity, 0, $mea, $shannon, 0, $pairprob, 0.05, $ruler); }
+                else { $image->addobjects($mea, $shannon, 0, $pairprob, 0.05, $ruler); }
             
             }
-            else { $image->addobjects($reactivity, 0, $mea, 0.05, $ruler); } 
+            else {
+                
+                if ($sum) { $image->addobjects($reactivity, 0, $mea, 0.05, $ruler); }
+                else { $image->addobjects($mea, 0.05, $ruler); }
+                
+            } 
             
             $io->write($image->xml());
         

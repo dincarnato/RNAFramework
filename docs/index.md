@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[08-09-2018] RNA Framework v2.6.5 [minor release]:__<br/>- Added the `rf-rctools` tool for easy manipulation and visualization of RC files<br/>- Fixed the +x mode of RNA Framework's tools<br/>- The LWP::UserAgent module is no longer required (replaced with HTTP::Tiny)
+    __[08-09-2018] RNA Framework v2.6.6 [minor release]:__<br/>- Added mask file support to the `rf-count` tool for excluding target transcript regions from being counted<br/>- Fixed a minor bug in `rf-count` causing the software to report the frequency of mutated reads rather than their percentage
 
 ## Introduction
 

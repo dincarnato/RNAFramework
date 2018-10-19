@@ -20,6 +20,7 @@ __-r__ *or* __--sorted__ | | In case SAM/BAM files are passed, assumes that they
 __-t5__ *or* __--trim-5prime__ | int[,int] | Comma separated list (no spaces) of values indicating the number of bases trimmed from the 5'-end of reads in the respective sample SAM/BAM files (Default: __0__)<br/>__Note #1:__ Values must be provided in the same order as the input files (e.g. rf-count -t5 0,5 file1.bam file2.bam, will consider 0 bases trimmed from file1 reads, and 5 bases trimmed from file2 reads)<br/>__Note #2:__ If a single value is specified along with multiple SAM/BAM files, it will be used for all files
 __-fh__ *or* __--from-header__ | | Instead of providing the number of bases trimmed from 5'-end of reads through the ``-t5`` (or ``--trim-5prime``) parameter, RF Count will try to guess it automatically from the header of the provided SAM/BAM files
 __-f__ *or* __--fasta__ | string | Path to a FASTA file containing the reference transcripts<br/>__Note #1:__ Transcripts in this file must match transcripts in SAM/BAM file headers<br/>__Note #2:__ This can be omitted if a Bowtie index is specified by ``-bi`` (or ``--bowtie-index``)
+__-mf__ *or* __--mask-file__ | string | Path to a mask file
 __-po__ *or* __--paired-only__ | | When processing SAM/BAM files from paired-end experiments, only those reads for which both mates are mapped will be considered
 __-pp__ *or* __--properly-paired__ | | When processing SAM/BAM files from paired-end experiments, only those reads mapped in a proper pair will be considered
 __-i__ *or* __--include-clipped__ | | Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops<br/>__Note:__ The default behavior is to exclude soft/hard-clipped reads. When this option is active, the RT-stop position is considered to be the position preceding the clipped bases. This option has no effect when ``-m`` (or ``--count-mutations``) is enabled.
@@ -89,3 +90,16 @@ __offset__ | Offset of transcript in the RC file | uint64\_t
 
 !!! note "Information"
     All values are forced to be in little-endian byte-order.
+
+<br/>
+## Mask file
+The mask file allows excluding specific transcript regions from being counted. This is particularly useful when performing targeted MaP analyses, in order to mask the primer pairing regions.<br/>
+The mask file is composed of one or more lines, each one reporting the transcript ID and one or more base ranges (1-based, inclusive) that must be masked (or the nucleotide sequence of the regions that need to be masked), either separated by commas or semicolons (also mixed):<br/>
+
+```
+Transcript_1;AGCGTATTAGCGATGCGATGCGA;25-38;504-551
+Transcript_2,331-402,AUAUGGAUCGGACG,984-1008
+Transcript_3;GUUACAUUCGA,98-123;47-68
+```
+<br/>
+Transcript regions specified in the mask file will have both 0 counts and coverage in the resulting RC file.

@@ -159,6 +159,8 @@ sub _calcticksby {
     my ($n, $multi10, $divfactor);
     $n = abs(diff(@{$self->{yrange}}));
     
+    $self->throw("Y-range start value must differ from end value") unless($n);
+    
     while($n < 10) { $n *= 10; $multi10++; }
     while(abs(int($n) - $n) > 1e-6) { $n *= 10; $multi10++; }
     
