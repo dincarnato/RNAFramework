@@ -1,3 +1,10 @@
+## [2.6.6] - 2018-10-19
+### Added
+- Added mask file support to rf-count
+
+### Changed
+- Fixed a bug in rf-fold causing the software to get stuck when generating graphical reports for transcripts with only 0/NaN reactivity values (thanks to Uciel Pablo Chorostecki for reporting the bug)
+
 ## [2.6.5] - 2018-08-09
 ### Added
 - Added rf-rctools utility for RC files manipulation
