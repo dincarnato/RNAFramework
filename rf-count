@@ -492,6 +492,9 @@ if (-e $mbfile) {
     while(my $line = <$mh>) {
         
         chomp($line);
+        
+        next if ($line =~ m/^\s?#/);
+        
         my @line = split(/[,;]/, $line);
         
         next if (@line < 2);
@@ -509,7 +512,7 @@ if (-e $mbfile) {
                 
                 next if ($index == -1);
                 
-                push(@{$masks{$line[0]}}, [$index, $index + length($line[$i])]);
+                push(@{$masks{$line[0]}}, [$index, $index + length($line[$i]) - 1]);
                 $masked++;
                 
             }
@@ -711,13 +714,8 @@ sub count {
             
                 if (exists $masks{$last{id}}) {
                     
-                    print "\n\n" . join(",", @coverage) . "\n\n";
-                    
-                    
                     @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
                     @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
-                    
-                    print "\n\n" . join(",", @coverage) . "\n\n";
                     
                 }
             
