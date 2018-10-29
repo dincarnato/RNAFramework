@@ -21,8 +21,8 @@ In step III, a window is slid along the RNA, and MFE folding is performed, inclu
 At this stage, if step I has been peformed, pseudoknotted base-pairs are added back to the structure, and the free energy is computed. Along with the predicted structure, the windowed method also produces a WIGGLE track file containing per-base Shannon entropies.<br/>Regions with higher Shannon entropies are likely to form alternative structures, while those with low Shannon entropies correspond to regions with well-defined RNA structures, or persistent single-strandedness (Siegfried *et al*., 2014).<br/>
 Shannon entropy is calculated as: <br/>
 
-<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo><msub><mi>p</mi><mi>i&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i</mi></msub></math><br/>
-where *p<sub>i</sub>* is the probability of base *i* of being base-paired.<br/>
+<math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo> <munderover><mo>&sum;</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>J</mi></munderover><msub><mi>p</mi><mi>i,j&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i,j</mi></msub></math><br/>
+where *p<sub>i,j</sub>* is the probability of base *i* of being base-paired to base *j*, over all its potential J pairing partners.<br/>
 Since version 2.5, RF Fold generates vector graphical reports (SVG format) for each structure, reporting the per-base reactivity, the MEA structure, the per-base Shannon entropy, and the base-pairing probabilities:<br/><br/>
 ![ShapeKnots/RNA Framework comparison](http://www.rnaframework.com/images/graphical_report.png)
 <br/><br/>
