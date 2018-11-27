@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Fold (v2.5)
+# RF Fold
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -20,7 +20,7 @@ use strict;
 use Config;
 use Cwd;
 use File::Basename;
-use File::Path qw(mkpath rmtree);
+use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
@@ -68,8 +68,8 @@ my ($output, $ct, $input, $method,
     $pkwin, $pkstep, $p1, $p2,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $skparams, $keeptmp,
-    $pkpercentmfe, $nozuker, $zukersubopt, @pool,
-    %lambda);
+    $pkpercentmfe, $nozuker, $zukersubopt, $pkslope,
+    $pkintercept, @pool, %lambda);
 
 my %results : shared;
 my @xml : shared;
@@ -138,6 +138,8 @@ do {
                 "vrs|vienna-rnasubopt=s"     => \$rnasubopt,
                 "kw|pseudoknot-window=i"     => \$pkwin,
                 "ko|pseudoknot-offset=i"     => \$pkstep,
+                "ksl|pseudoknot-slope=s"     => \$pkslope,
+                "kin|pseudoknot-intercept=s" => \$pkintercept,
                 "kp1|pseudoknot-penality1=s" => \$p1,
                 "kp2|pseudoknot-penality2=s" => \$p2,
                 "kc|pseudoknot-cutoff=s"     => \$pkcutoff,
@@ -165,6 +167,8 @@ $t //= 37.0;
 $cutoff //= 0.7;
 $slope //= 1.8;
 $intercept //= -0.6;
+$pkslope //= $slope;
+$pkintercept //= $intercept;
 $constmethod ||= 1;
 $constconversion ||= 1;
 $beta //= 0.5;
@@ -361,8 +365,15 @@ if ($method == 1 ||
 if ($method == 2 ||
     $pkmethod == 2) { # RNAstructure
     
-    $rsfoldparams .= " -si " . $intercept . " -sm " . $slope if (!$ignore);
     $skparams = $rsfoldparams;
+    
+    if (!$ignore) {
+        
+        $rsfoldparams .= " -si " . $intercept . " -sm " . $slope;
+        $skparams .= " -si " . $pkintercept . " -sm " . $pkslope;
+        
+    }
+    
     $rsfoldparams .= " -md " . $maxdist if ($maxdist);
     $rsfoldparams .= " -t " . ($t + 273.15);         # RNAstructure expects a temperature in Kelvin degrees
     
@@ -375,11 +386,9 @@ if (-e $output) {
 
     if ($overwrite) {
         
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        my $error = rmtree($output);
         
-        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error}); 
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error); 
         
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
@@ -468,10 +477,8 @@ print "\n[+] Folding statistics:\n" .
       
 print "\n                             " . $results{pkerr} . " pseudoknotted folding failed" if ($pk);
 
-rmtree($tmpdir, { safe      => 1,
-                  keep_root => 0,
-                  error     => \$error }) if ($madetmp &&
-                                              !$keeptmp);
+rmtree($tmpdir) if ($madetmp &&
+                    !$keeptmp);
 
 print "\n\n[+] All done.\n\n";
 
@@ -516,7 +523,7 @@ sub fold { # Threads
         
         if ($pk) { # Pseudoknot detection
             
-            my (%pkpairs);
+            my (@keptpkpairs, %pkpairs, %basepairs);
             $nwins = max(1, floor(($length - $pkwin) / $pkstep) + 1);
             
             # Define windows to be analyzed
@@ -567,13 +574,13 @@ sub fold { # Threads
                 @winreact = @reactivity[$start .. $end];
                 $tmpfile = $id . "_" . $start . "-" . $end . "_" . threads->tid();
                 
-                my $win = pkdetect( file       => $tmpfile,
-                                    sequence   => $subseq,
-                                    reactivity => \@winreact,
-                                    pos        => $start,
-                                    constraint => "." x @winreact );
+                my ($winpk, $winbp) = pkdetect( file       => $tmpfile,
+                                                sequence   => $subseq,
+                                                reactivity => \@winreact,
+                                                pos        => $start,
+                                                constraint => "." x @winreact );
                 
-                if (!$win) {               
+                if (!$winpk) {               
                
                     lock(%results);
                     $results{pkerr}++;
@@ -584,7 +591,8 @@ sub fold { # Threads
                     
                 }
                  
-                $pkpairs{$_}->{pairs}++ for (keys %{$win});
+                $pkpairs{$_}++ for (keys %{$winpk});
+                $basepairs{$_}++ for (keys %{$winbp});
                 push(@windows, [$start, $end]);
                 
             }
@@ -598,11 +606,19 @@ sub fold { # Threads
                 for (@windows) { $n1++ if (inrange($i, $_));
                                  $n2++ if (inrange($j, $_)); }
                 
+                # We essentially check whether the pseudoknot base-pair exists in other windows,
+                # even if it has not been marked as a pseudoknot
+                $pkpairs{$pair} += $basepairs{$pair} if (exists $basepairs{$pair});
+                
                 # If pseudoknotted pair is present in > 0.50 windows
-                push(@pkpairs, [$i, $j]) if ($pkpairs{$pair}->{pairs} / $n1 > 0.5 &&
-                                             $pkpairs{$pair}->{pairs} / $n2 > 0.5);
+                push(@pkpairs, [$i, $j]) if ($pkpairs{$pair} / $n1 > 0.5 &&
+                                             $pkpairs{$pair} / $n2 > 0.5);
                 
             }
+            
+            # In case we have incompatible base-pairs, we let rmpseudoknots() resolve that
+            @keptpkpairs = rmpseudoknots($sequence, \@pkpairs);
+            @pkpairs = @{$keptpkpairs[1]} ? @{$keptpkpairs[1]} : listpairs($keptpkpairs[0]);
             
             undef($nwins);
             undef(@foldwins);
@@ -1034,7 +1050,8 @@ sub pkdetect {
     my ($ret, $fastafile, $cmd, $energy,
         $pktollerance, $mfetollerance, $io, $count,
         @subopt, @results, @hardconstraint, @pkpairs,
-        @pkreact, %pkpairs, %mfepaired, %candidatepk);
+        @basepairs, @pkreact, %pkpairs, %mfepaired,
+        %candidatepk, %basepairs);
     $count = 0;
     $fastafile = $parameters{file} . ".fa";
     @hardconstraint = @{hardbases(@{$parameters{reactivity}})} if (!$ignore &&
@@ -1265,7 +1282,7 @@ sub pkdetect {
        
         return if ($ret !~ m/#+\s+DONE\s+#+/m);
         
-        # If the sequence is all single-stranded, ShapeKnots returns an empty CT file
+        # If the sequence is all single-stranded, ShapeKnots may return an empty CT file
         if (-s $parameters{file} . ".ct") {
             
             eval { $io = Data::IO::Sequence->new( file        => $parameters{file} . ".ct",
@@ -1274,7 +1291,12 @@ sub pkdetect {
             
             if ($@) { return; }
             
-            if (my $entry = $io->read()) { @pkpairs = $entry->pkpairs(); }
+            if (my $entry = $io->read()) {
+                
+                @pkpairs = $entry->pkpairs();
+                @basepairs = $entry->basepairs();
+                
+            }
             else { return; }
             
         }
@@ -1285,11 +1307,16 @@ sub pkdetect {
     
     if ($ignore ||
         !@pkreact ||
-        mean(@pkreact) <= $pkcutoff) { $pkpairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@pkpairs); }
+        mean(@pkreact) <= $pkcutoff) {
+        
+        $pkpairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@pkpairs);
+        $basepairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@basepairs);
+        
+    }
     
     unlink(glob($parameters{file} . "*")) unless($keeptmp);
     
-    return(\%pkpairs);
+    return(\%pkpairs, \%basepairs);
     
 }
 
@@ -1700,6 +1727,8 @@ sub help {
  -dp  or --dotplot                           Enables generation of dot-plots of base-pairing probabilities
  -sh  or --shannon-entropy                   Enables generation of a WIGGLE track file with per-base Shannon entropies
  -pk  or --pseudoknots                       Enables detection of pseudoknots (computationally intensive)
+ -ksl or --pseudoknot-slope      <float>     Sets slope used for pseudoknots prediction (Default: same as -sl <slope>)
+ -kin or --pseudoknot-intercept  <float>     Sets intercept used for pseudoknots prediction (Default: same as -in <intercept>)
  -kp1 or --pseudoknot-penality1  <float>     Pseudoknot penality P1 (Default: 0.35)
  -kp2 or --pseudoknot-penality2  <float>     Pseudoknot penality P2 (Default: 0.65)
  -kt  or --pseudoknot-tollerance <float>     Maximum tollerated deviation of suboptimal structures energy from MFE (>0-1, Default: 0.25 [25%])

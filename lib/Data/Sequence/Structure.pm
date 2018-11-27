@@ -275,12 +275,13 @@ sub energy {
 sub helices {
     
     my $self = shift;
+    my $split = shift if (@_);
     
     if (!@{$self->{_helices}}) {
         
         if (@{$self->{basepairs}}) {
             
-            my ($helices, $pkhelices) = listhelices($self->{structure});
+            my ($helices, $pkhelices) = listhelices($self->{structure}, $split);
             
             push(@{$self->{_helices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$helices});
             push(@{$self->{_pkhelices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$pkhelices});

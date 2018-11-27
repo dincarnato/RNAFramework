@@ -18,7 +18,7 @@
 use strict;
 use DBI;
 use Digest::MD5 qw(md5_hex);
-use File::Path qw(mkpath rmtree);
+use File::Path qw(mkpath);
 use File::Slurp;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
@@ -137,11 +137,9 @@ if ($list ||
         
             if ($overwrite) {
                 
-                rmtree($output, { safe      => 1,
-                                  keep_root => 0,
-                                  error     => \$error });
-                
-                die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+                my $error = rmtree($output);
+        
+                die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
                 
             }
             else { die "\n\n  [!] Error: Output directory already exists." .
@@ -178,10 +176,7 @@ if ($list ||
             print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [FAIL]";    
                 
             unlink(glob($output . "*"));
-                
-            rmtree($output, { safe      => 1,
-                              keep_root => 0,
-                              error     => \$error });
+            rmtree($output);
                 
             die "\n\n  [!] Error: Failed to download " . $indexes{$prebuilt}->{name} . " prebuilt index (" . $reply->{reason} . ")\n\n";
                 
@@ -263,11 +258,9 @@ else {
     
         if ($overwrite) {
             
-            rmtree($output, { safe      => 1,
-                              keep_root => 0,
-                              error     => \$error });
-            
-            die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+            my $error = rmtree($output);
+                    
+            die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
             
         }
         else { die "\n\n  [!] Error: Output directory already exists." .
@@ -291,9 +284,7 @@ else {
     
     if ($@) {
     
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        rmtree($output);
         
         die "\n\n  [!] Error: Connection to UCSC genome database failed." .
             "\n             Please check the genome assembly and try again.\n\n";
@@ -304,9 +295,7 @@ else {
     
     if (!table_exists($annotation)) {
         
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        rmtree($output);
         
         die "\n\n  [!] Error: Table \"" . $annotation . "\" doesn't exist." .
             "\n             Please check annotation's name and try again\n\n";
@@ -324,9 +313,7 @@ else {
         
         if (!exists $columns{$_}) {
             
-            rmtree($output, { safe      => 1,
-                              keep_root => 0,
-                              error     => \$error });
+            rmtree($output);
             
             die "\n\n  [!] Error: Table \"" . $annotation . "\" doesn't look like a genes annotation (missing \"" . $_ . "\" column)\n\n";
             
@@ -341,9 +328,7 @@ else {
     
     if ($@) {
     
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        rmtree($output);
             
         die "\n\n  [!] Error: Annotation data download failed\n\n";
     
@@ -436,9 +421,7 @@ else {
                 
                 unlink(glob($output . "*"));
                 
-                rmtree($output, { safe      => 1,
-                                  keep_root => 0,
-                                  error     => \$error });
+                rmtree($output);
                 
                 die "\n\n  [!] Error: Failed to retrieve sequence for chromosome " . $chromosome . " (" . $reply->{reason} . ")\n\n";
                 
@@ -453,9 +436,7 @@ else {
                 
                 unlink(glob($output . "*"));
                 
-                rmtree($output, { safe      => 1,
-                                  keep_root => 0,
-                                  error     => \$error });
+                rmtree($output);
                 
                 die "\n\n  [!] Error: Failed to parse UCSC DAS XML reply (" . $@ . ")\n\n";
                 
@@ -496,9 +477,7 @@ else {
     
 }
 
-rmtree($output . "logs/", { safe      => 1,
-                            keep_root => 0,
-                            error     => \$error });
+rmtree($output);
 
 sub table_exists { return(scalar(@{$dbh->selectcol_arrayref("SHOW TABLES LIKE '" . $_[0] . "'")})); }
 

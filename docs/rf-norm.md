@@ -45,6 +45,10 @@ __Box-plot Normalization__ | Values greater than 1.5x the interquartile range (n
 <br/>
 Normalized reactivities can be further remapped to values ranging from 0 to 1 according to Zarringhalam *et al.*, 2012 (PMID: [23091593](https://www.ncbi.nlm.nih.gov/pubmed/23091593)). In this approach, values < 0.25 are linearly mapped to [0-0.35[, values &ge; 0.25 and < 0.3 are linearly mapped to [0.35-0.55[, values &ge; 0.3 and < 0.7 are linearly mapped to [0.55-0.85[, and values &ge; 0.7 are linearly mapped to [0.85-1].<br /><br />
 
+## Sliding-window normalization
+RF Norm supports data normalization in sliding windows. Windows can be both static (default) or dynamic. When a window size is chosen, data normalization is performed by sliding by the chosen offset, a window of that size. While choice of window's type is irrelevant with SHAPE data, it becomes particularly important when dealing with base-specific reagents. Let consider the example below, in which an RNA has been modified by DMS, which only reacts with A and C residues.<br/><br/>![Static vs. Dynamic windows](http://www.rnaframework.com/images/static_vs_dynamic_windows.png)<br/><br/>
+In the above example, use of static windows of size __10 nt__ results in an erroneous overestimation of base reactivities for certain residues (marked in red). This is caused by the fact that A/C residues are unevenly distributed along the transcript, thus causing certain windows to have far less than 50% of A/C bases (contrary to what it would be expected by chance). Instead, use of dynamic windows of size __10 nt__ avoids this overestimation, as the window's size is dynamically adjusted to always include 10 A/C residues.</br> The overestimation effect can also be minimized by increasing the size of static windows.
+<br/><br/>
 # Usage
 To list the required parameters, simply type:
 
@@ -68,6 +72,7 @@ __-r__ *or* __--raw__ | | Reports raw reactivities (skips data normalization)
 __-rm__ *or* __--remap-reactivities__ | | Remaps normalized reactivities to values ranging from 0 to 1 according to Zarringhalam *et al*., 2012
 __-rb__ *or* __--reactive-bases__ | string | Reactive bases to consider for signal normalization (Default: __N__ [ACGT])<br/>__Note:__ This parameter accepts any IUPAC code, or their combination (e.g. ``-rb M``, or ``-rb AC``). Any other base will be reported as NaN
 __-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be normalized independently (e.g. -rb AC -ni will independently normalize A and C residues)
+__-dw__ *or* __--dynamic-window__ | | When enabled, the normalization window is dynamically resized to include at least that number of reactive bases (e.g. ``-rb AC -nw 50 -dw`` instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
 __-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
 __-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])

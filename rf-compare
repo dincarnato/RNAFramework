@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF Compare (v2.5)
+# RF Compare
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -17,7 +17,7 @@
 
 use strict;
 use File::Basename;
-use File::Path qw(mkpath rmtree);
+use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 
@@ -38,7 +38,7 @@ $|++;
 my ($input, $reference, $refio, $help,
     $table, $relaxed, $kn, $kp,
     $kl, $img, $output, $overwrite,
-    $error, %results);
+    $ignoreseq, $error, %results);
 %results = ( compared      => 0,
              ioerr         => 0,
              diffseq       => 0,
@@ -56,7 +56,8 @@ do {
                 "kl|keep-lonelypairs"  => \$kl,
                 "g|img"                => \$img,
                 "o|output-dir=s"       => \$output,
-                "ow|overwrite"         => \$overwrite ) or help(1);
+                "ow|overwrite"         => \$overwrite,
+                "i|ignore-sequence"    => \$ignoreseq ) or help(1);
 
     $input = $ARGV[0];
                 
@@ -90,11 +91,9 @@ if ($img) {
     
         if ($overwrite) {
             
-            rmtree($output, { safe      => 1,
-                              keep_root => 0,
-                              error     => \$error });
-            
-            die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error}); 
+            my $error = rmtree($output);
+        
+            die "\n\n  [!] Error: " . $error . "\n\n" if ($error); 
             
         }
         else { die "\n\n  [!] Error: Output directory already exists." .
@@ -178,7 +177,8 @@ while(my $ref = $refio->read()) {
         
     }
     
-    if ($queryseq ne $refseq) {
+    if ($queryseq ne $refseq &&
+	!$ignoreseq) {
         
         $results{diffseq}++;
         
@@ -279,6 +279,7 @@ sub help {
  -kn or --keep-noncanonical             Keeps non-canonical basepairs in reference structure
  -kp or --keep-pseudoknots              Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs              Keeps lonely basepairs (helices of length 1 bp) in reference structure
+ -i  or --ignore-sequence               Ignores sequence differences (e.g. SNVs) between the compared structures
  
 HELP
     

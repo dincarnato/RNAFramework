@@ -19,18 +19,20 @@ package Core::Utils;
 use strict;
 use Carp;
 use Fcntl qw(F_GETFL SEEK_SET);
+use File::Find qw(finddepth);
 use File::Spec;
 use HTTP::Tiny;
 use Scalar::Util qw(reftype);
 
 use base qw(Exporter);
 
-our $VERSION = "2.6.6";
+our $VERSION = "2.6.7";
 our @EXPORT = qw(is checkparameters blessed clonehashref
                  clonearrayref clonefh uriescape uriunescape
                  unquotemeta striptags questionyn uniq
                  randint randnum randalpha randalphanum
-                 randmixed which isdirempty isup2date);
+                 randmixed which isdirempty rmtree
+                 isup2date);
                  
 sub uniq {
     
@@ -342,6 +344,25 @@ sub isdirempty {
 	
 	return(1);
 	
+}
+
+sub rmtree {
+
+    my $path = shift;
+    
+    my ($error);
+    
+    finddepth {
+        no_chdir  => 1,
+        wanted    => sub {
+            
+            if (!-l && -d _) { rmdir($_) or ($error = "Unable to delete folder \"" . $_ . "\" (" . $! . ")" and return()); }
+            else { unlink($_) or ($error = "Unable to delete file \"" . $_ . "\" (" . $! . ")" and return()); }
+        }
+    } => $path;
+
+    return($error);
+    
 }
 
 sub isup2date {

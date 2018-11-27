@@ -20,7 +20,7 @@ use Config;
 use Fcntl qw(SEEK_SET);
 use File::Basename;
 use File::Copy;
-use File::Path qw(mkpath rmtree);
+use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Fcntl qw(SEEK_SET SEEK_END);
@@ -173,11 +173,9 @@ if (-e $output) {
 
     if ($overwrite) {
         
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        my $error = rmtree($output);
         
-        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
         
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
@@ -768,14 +766,8 @@ sub cleanup {
     
     unlink(glob($tmpdir . $tmp . "*"));
     
-    if ($madetmp &&
-        isdirempty($tmpdir)) {
-    
-        rmtree($tmpdir, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
-        
-    }
+    rmtree($tmpdir) if ($madetmp &&
+                        isdirempty($tmpdir));
     
 }
 

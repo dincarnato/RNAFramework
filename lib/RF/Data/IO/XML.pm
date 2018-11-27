@@ -6,6 +6,16 @@ use Data::Sequence::Utils;
 
 use base qw(Data::IO);
 
+our (%allowedtags);
+
+BEGIN {
+    
+    %allowedtags = map { $_            => 1,
+                         $_ . "-error" => 1 } qw(sequence reactivity score ratio
+                                                 probability shannon);
+    
+}
+
 sub new {
     
     my $class = shift;
@@ -64,6 +74,7 @@ sub _readxml {
         $line++;
         
         next unless($_);
+        next if ($_ =~ m/^<\?xml/);
         
         if ($_ =~ m/^<([^\s>]+)/) {
             
@@ -71,7 +82,7 @@ sub _readxml {
             
             if ($lasttag =~ /^data|transcript$/) {
                 
-                $_ =~ s/^<|>$//g;
+                $_ =~ s/^<$lasttag\s?|>$//g;
                 
                 foreach my $attribute (split(/\s/, $_)) {
                     
@@ -83,11 +94,22 @@ sub _readxml {
                 }
                 
             }
+            else {
+            
+                next if ($lasttag =~ m/^\//);
+                
+                $_ =~ s/^<$lasttag>|<\/$lasttag>$//g;
+                
+                $self->throw("Malformed XML at line " . $line) if (!exists $allowedtags{$lasttag});
+                
+                $values{$lasttag} .= $_;
+                
+            }
             
         }
         else {
             
-            $self->throw("Malformed XML at line " . $line) if ($lasttag !~ m/^(?:sequence|reactivity|score|ratio|probability|shannon)(?:-error)?$/);
+            $self->throw("Malformed XML at line " . $line) if (!exists $allowedtags{$lasttag});
             
             $values{$lasttag} .= $_;
             
@@ -99,6 +121,7 @@ sub _readxml {
         
         my $value = $values{$tag};
         $value =~ s/\n|\r//g;
+        $value =~ s/<\/.+?>//g;
         
         $self->throw("Sequence contains invalid characters") if ($tag eq "sequence" &&
                                                                  !isna($value));

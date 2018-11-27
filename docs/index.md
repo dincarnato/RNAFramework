@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[08-09-2018] RNA Framework v2.6.6 [minor release]:__<br/>- Added mask file support to the `rf-count` tool for excluding target transcript regions from being counted<br/>- Fixed a minor bug in `rf-count` causing the software to report the frequency of mutated reads rather than their percentage
+    __[2018-11-27] RNA Framework v2.6.7 [minor release]:__<br/>- Added to rf-norm support for dynamic windows<br/>- Fixed an unexpected behaviour causing rf-fold to not report pseudoknotted helices under certain circumstances<br/>- Several bug fixes and stability improvements
 
 ## Introduction
 

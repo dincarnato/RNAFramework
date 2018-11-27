@@ -19,7 +19,7 @@ use strict;
 use Config;
 use File::Basename;
 use File::Copy;
-use File::Path qw(mkpath rmtree);
+use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
@@ -241,11 +241,9 @@ if (-e $output) {
 
     if ($overwrite) {
         
-        rmtree($output, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
+        my $error = rmtree($output);
         
-        die "\n\n  [!] Error: Unable to overwrite output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
         
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
@@ -613,9 +611,7 @@ while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable t
 
 cleanup();
 
-rmtree($logdir, { safe      => 1,
-                  keep_root => 0,
-                  error     => \$error }) if (!$keeplogs);
+rmtree($logdir) if (!$keeplogs);
 
 print "\n\n[+] All done.\n\n";
 
@@ -623,14 +619,8 @@ sub cleanup {
     
     unlink(glob($tmpdir . $tmp . "*"));
     
-    if ($madetmp &&
-        isdirempty($tmpdir)) {
-    
-        rmtree($tmpdir, { safe      => 1,
-                          keep_root => 0,
-                          error     => \$error });
-        
-    }
+    rmtree($tmpdir) if ($madetmp &&
+                        isdirempty($tmpdir));
     
 }
 

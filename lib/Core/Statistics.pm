@@ -37,7 +37,16 @@ $tolerance /= 2 while ((1 + $tolerance / 2) > 1);
 
 sub pearson {
     
-    my @data = @_;
+    my @data = @_[0..1];
+    my $rmnan = $_[2] if (@_ == 3);
+    
+    if ($rmnan) {
+        
+        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices]; 
+        
+    }
 
     my ($avgx, $avgy, $stdevx, $stdevy,
         $n, $r, $t, $p, $size);
@@ -67,13 +76,22 @@ sub pearson {
     $r = $n / (($size - 1) * $stdevx * $stdevy);
     $p = _pcorr($r, $size);
 
-    return($r, $p);
+    return(wantarray() ? ($r, $p) : $r);
     
 }
 
 sub spearman {
     
-    my @data = @_;
+    my @data = @_[0..1];
+    my $rmnan = $_[2] if (@_ == 3);
+    
+    if ($rmnan) {
+        
+        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices]; 
+        
+    }
     
     my ($squareddiff, $n, $rho, $t,
         $p, @rank1, @rank2);
@@ -102,7 +120,7 @@ sub spearman {
     $rho = 1 - (6 * $squareddiff / ($n * (($n ** 2) - 1)));
     $p = _pcorr($rho, scalar(@{$data[0]}));
 
-    return($rho, $p);
+    return(wantarray() ? ($rho, $p) : $rho);
 
 }
 
@@ -110,16 +128,21 @@ sub _pcorr {
     
     my ($r, $df) = @_;
     
-    return(0) if (abs($r) == 1);
-    
     # Calculates the p-value:
     # PFromT(T_Value, DF) = BetaI(DF /2, 1/2, DF / (DF + T_Value^2))
     # PFromR(R_Value) = PFromT(|R_Value| / SQRT((1 - R_Value^2)/DF) , DF)
     
-    my ($p, $t);
+    my ($p, $t, $denom);
     $df -= 2;
-    $t = abs($r) / sqrt((1 - $r ** 2) / $df);
-    $p = betai($df / 2, 0.5, $df / ($df + $t ** 2));
+    $denom = sqrt((1 - min(1, $r ** 2)) / $df);
+    
+    if ($denom) {
+        
+        $t = abs($r) / $denom;
+        $p = betai($df / 2, 0.5, $df / ($df + $t ** 2));
+        
+    }
+    else { $p = 0; }
     
     return($p);
     
@@ -903,6 +926,9 @@ sub ttest { # Welch's t-test
     my ($df, $t, $p, @variance);
     $df = @{$data[0]} + @{$data[1]} - 2;
     @variance = (variance(@{$data[0]}), variance(@{$data[1]}));
+    
+    return("NaN") if (!$variance[0] ||
+                      !$variance[1]);
     
     $df = (($variance[0] / @{$data[0]}) + ($variance[1]/ @{$data[1]})) ** 2;
     $df /= ($variance[0] / @{$data[0]}) ** 2 / (@{$data[0]} - 1) + ($variance[1] / @{$data[1]}) ** 2 / (@{$data[1]} - 1);

@@ -419,7 +419,7 @@ sub rmpseudoknots {
 	
 	Core::Utils::throw("Scoring function must be a CODE reference") if (defined $scoresub &&
 																		ref($scoresub) ne "CODE");
-	$scoresub = \&Core::Mathematics::sum;
+	$scoresub = \&Core::Mathematics::sum unless(defined $scoresub);
 	
 	if (ref($pairs) eq "ARRAY") {
 	

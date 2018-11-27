@@ -64,6 +64,8 @@ __-wt__ *or* __--window-trim__ | int | Number of bases to trim from both ends of
 __-dp__ *or* __--dotplot__ | | Enables generation of dot-plots of base-pairing probabilities
 __-sh__ *or* __--shannon-entropy__ | | Enables generation of a WIGGLE track file with per-base Shannon entropies
 __-pk__ *or* __--pseudoknots__ | | Enables detection of pseudoknots (computationally intensive)
+__-ksl__ *or* __--pseudoknot-slope__ | float | Sets slope used for pseudoknots prediction (Default: same as ``-sl <slope>``)
+__-kin__ *or* __--pseudoknot-intercept__ | float | Sets intercept used for pseudoknots prediction (Default: same as ``-in <intercept>``)
 __-kp1__ *or* __--pseudoknot-penality1__ | float | Pseudoknot penality P1 (Default: __0.35__)
 __-kp2__ *or* __--pseudoknot-penality2__ | float | Pseudoknot penality P2 (Default: __0.65__)
 __-kt__ *or* __--pseudoknot-tollerance__ | float | Maximum tollerated deviation of suboptimal structures energy from MFE (>0-1, Default: __0.25__ [25%])

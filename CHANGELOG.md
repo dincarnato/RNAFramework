@@ -1,3 +1,20 @@
+## [2.6.7] - 2018-11-27
+### Added
+- Added flag "-i" to rf-compare to allow comparison between structures with different sequences (useful in case of SNVs)
+- Added flags "-ksl" and "-kin" to allow using a different set of folding parameters for pseudoknots prediction
+- Added RF Norm support for dynamic windows
+
+### Changed
+- Fixed a bug in rf-fold causing the software to not report pseudoknots even if present (in certain windows the pseudoknot was predicted as a regular helix, causing its rejection due to the requirement of being present in at least 50% of the analyzed windows)
+
+### API changes
+- Replaced the File::Path rmtree() function with a thread-safe version (introduced in the Core::Utils library)
+- Added a third parameter to the pearson() and spearman() functions from Core::Statistics to allow handling of arrays containing NaNs (when TRUE, only non-NaN elements from both arrays are kept)
+- Modified the pearson() and spearman() functions from Core::Statistics to only return the correlation coefficient when called in scalar context
+- Added the split parameter to the helices() method from Data::Sequence::Structure (when TRUE, allows splitting helices with single-nucleotide bulges)
+- Fixed a bug causing the RF::Data::IO::XML module to fail reading XML files when a newline was missing between values and tags
+- Fixed a bug in the rmpseudoknots() function of RNA::Utils causing any scoring subroutine passed to the function to be overriden by the Core::Mathematics::sum() function
+
 ## [2.6.6] - 2018-10-19
 ### Added
 - Added mask file support to rf-count

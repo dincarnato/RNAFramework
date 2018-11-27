@@ -23,6 +23,7 @@ __-x__ *or* __--relaxed__ | | Uses relaxed criteria (described in Deigan *et al.
 __-kn__ *or* __--keep-noncanonical__ | | Keeps non-canonical basepairs in reference structure
 __-kp__ *or* __--keep-pseudoknots__ | | Keeps pseudoknotted basepairs in reference structure
 __-kl__ *or* __--keep-lonelypairs__ | | Keeps lonely basepairs (helices of length 1 bp) in reference structure
+__-i__ *or* __--ignore-sequence__ | | Ignores sequence differences (e.g. SNVs) between the compared structures
 
 !!! note "Note"
     When parameter ``--relaxed`` is specified, a basepair i-j is considered as present in the reference structure if any of the following pairs exist: i/j; i-1/j; i+1/j; i/j-1; i/j+1. For additional details, please refer to Deigan *et al*., 2009 (PMID: [19109441](https://www.ncbi.nlm.nih.gov/pubmed/19109441))
