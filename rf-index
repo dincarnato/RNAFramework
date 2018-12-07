@@ -477,7 +477,7 @@ else {
     
 }
 
-rmtree($output);
+rmtree($output . "logs/");
 
 sub table_exists { return(scalar(@{$dbh->selectcol_arrayref("SHOW TABLES LIKE '" . $_[0] . "'")})); }
 
