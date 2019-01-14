@@ -110,33 +110,19 @@ $ rf-norm -t rf_count/Sc_Tag_rRNA.rc -i rf_count/index.rci -sm 4 -nm 2 -rb AC
 A folder named "*Sc_Tag_rRNA_norm/*" will be generated, containing one XML file for each analyzed transcript.<br/><br/>
 # 3. SHAPE-MaP
 
-__1.__ Download and decompress SRA file to FastQ format using the [__NCBI SRA Toolkit__](https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software):
-
-```bash
-# Download/decompress reads
-$ fastq-dump -A SRR1301979		# Denatured
-$ fastq-dump -A SRR1301974		# 1M7
-$ fastq-dump -A SRR1301978		# Untreated
-
-# Rename files
-$ mv SRR1301979.fastq Denatured.fastq
-$ mv SRR1301974.fastq 1M7.fastq
-$ mv SRR1301978.fastq Untreated.fastq
-```
-<br/>
-__2.__ Obtain the [HIV-1 genome](https://www.ncbi.nlm.nih.gov/nuccore/M19921.2?report=fasta&log$=seqview&format=text)'s sequence from NCBI (extracting only bases 455-9626, corresponding to the primary transcript) and save it to HIV.fasta. In case you have [__Entrez Direct__](https://www.ncbi.nlm.nih.gov/books/NBK179288/) installed, simply type:
+__1.__ Obtain the [HIV-1 genome](https://www.ncbi.nlm.nih.gov/nuccore/M19921.2?report=fasta&log$=seqview&format=text)'s sequence from NCBI (extracting only bases 455-9626, corresponding to the primary transcript) and save it to HIV.fasta. In case you have [__Entrez Direct__](https://www.ncbi.nlm.nih.gov/books/NBK179288/) installed, simply type:
 
 ```bash
 $ esearch -db nucleotide -query "M19921.2" | efetch -format fasta | perl -e 'while(<>) { chomp; next if (m/^>/); $seq .= $_; } print ">HIV\n" . substr($seq, 454, 9172) . "\n";' > HIV.fasta
 ```
 <br/>
-__3.__ Create the reference index:
+__2.__ Create the reference index:
 
 ```bash
 $ bowtie2-build HIV.fasta HIV
 ``` 
 <br/>
-__4.__ Obtain FastQ files from SRA Database:
+__3.__ Obtain FastQ files from SRA Database:
 
 ```bash
 $ fastq-dump -A SRR1301979 --split-files -O Denatured/ 
@@ -144,7 +130,7 @@ $ fastq-dump -A SRR1301974 --split-files -O 1M7/
 $ fastq-dump -A SRR1301978 --split-files -O Untreated/
 ``` 
 <br/>
-__5.__ Rename FastQ files:
+__4.__ Rename FastQ files:
 
 ```bash
 $ mv Denatured/SRR1301979_1.fastq Denatured_R1.fastq
@@ -154,7 +140,7 @@ $ mv 1M7/SRR1301974_2.fastq 1M7_R2.fastq$ mv Untreated/SRR1301978_1.fastq Untre
 $ mv Untreated/SRR1301978_2.fastq Untreated_R2.fastq
 ``` 
 <br/>
-__6.__ Map reads to reference using ``rf-map``:
+__5.__ Map reads to reference using ``rf-map``:
 
 ```bash
 $ rf-map -p 3 -b2 -cqo -cq5 20 -bs -bl 15 -bN 1 -bD 20 -bR 3 -bdp 100 -bma 2 -bmp 6,2 -bdg 5,1 -bfg 5,1 -bd \
@@ -162,13 +148,13 @@ $ rf-map -p 3 -b2 -cqo -cq5 20 -bs -bl 15 -bN 1 -bD 20 -bR 3 -bdp 100 -bma 2 -bm
 Untreated_R1.fastq,Untreated_R1.fastq
 ```
 <br/>
-__7.__ Count mutations using ``rf-count``:
+__6.__ Count mutations using ``rf-count``:
 
 ```bash
 $ rf-count -p 3 -nm -r -f HIV.fasta -m -na -md 200 rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
 ```
 <br/>
-__8.__ Normalize data using ``rf-norm``:
+__7.__ Normalize data using ``rf-norm``:
 
 ```bash
 # Data will be normalized using Siegfried et al., 2014 
@@ -178,7 +164,7 @@ $ rf-norm -t rf_count/1M7.rc -u rf_count/Untreated.rc -d rf_count/Denatured.rc -
 ```
 
 A folder named "*HIV_norm/*" will be generated, containing a single XML file.<br/><br/>
-__9.__ Fold HIV-1 genome using ``rf-fold``:
+__8.__ Fold HIV-1 genome using ``rf-fold``:
 
 ```bash
 $ rf-fold -m 2 -g -md 500 -w -pk -km 2 -ko 100 -pw 1600 -po 375 -wt 300 -fw 3000 -fo 300 HIV_norm/
