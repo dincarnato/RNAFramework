@@ -500,7 +500,7 @@ if (-e $mbfile) {
         
         foreach my $i (1 .. $#line) {
             
-            my $sequence = $seqio->read($line[0])->sequence();
+            my $sequence = uc($seqio->read($line[0])->sequence());
             $line[$i] =~ s/\s//g;
             
             if (isna($line[$i])) {
