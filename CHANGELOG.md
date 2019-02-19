@@ -1,3 +1,10 @@
+## [2.6.8] - 2019-02-20
+### Added
+- Added flag "--max-mutation-rate" to rf-norm to allow excluding bases with mutation rate > than a user-defined threshold (for MaP experiments)
+
+### API changes
+- Changed rf-norm algorithm to exclude non-covered bases and bases with too high mutation rates from normalization
+
 ## [2.6.7] - 2018-11-27
 ### Added
 - Added flag "-i" to rf-compare to allow comparison between structures with different sequences (useful in case of SNVs)
