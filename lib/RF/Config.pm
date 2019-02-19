@@ -2,7 +2,7 @@ package RF::Config;
 
 use strict;
 use Config::Simple;
-use Core::Mathematics;
+use Core::Mathematics qw(:all);
 use Core::Utils;
 use Data::Sequence::Utils;
 use Term::Table;
@@ -47,6 +47,7 @@ sub new {
                    mediancoverage    => 0,
                    remapreactivities => 0,
                    maxuntreatedmut   => 0.05,
+                   maxmutationrate   => 0.2,
                    raw               => 0,
                    autowrite         => 1 }, \%parameters); 
     
@@ -90,7 +91,8 @@ sub _validate {
     $self->throw("remapReactivities value must be boolean") if ($self->{remapreactivities} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
     $self->throw("Automatic configuration file writing must be boolean") if ($self->{autowrite} !~ m/^[01]$/);
     $self->throw("Invalid maxUntreatedMut value") if (!ispositive($self->{maxuntreatedmut}));
-    $self->throw("maxUntreatedMut value should be lower than or equal to 1") if ($self->{maxuntreatedmut} > 1);
+    $self->throw("maxUntreatedMut value should be comprised between 0 and 1") if (!inrange($self->{maxuntreatedmut}, [0, 1]));
+    $self->throw("maxMutationRate value should be comprised between 0 and 1") if (!inrange($self->{maxmutationrate}, [0, 1]));
     
 }
 
@@ -134,6 +136,8 @@ sub remapreactivities { return($_[0]->{remapreactivities}); }
 
 sub maxuntreatedmut { return($_[0]->{maxuntreatedmut}); }
 
+sub maxmutationrate { return($_[0]->{maxmutationrate}); }
+
 sub summary {
     
     my $self = shift;
@@ -152,6 +156,12 @@ sub summary {
     elsif ($self->{scoremethod} == 3) { # Siegfried
         
         $table->row("Maximum untreated sample mutation rate", $self->{maxuntreatedmut});
+        
+    }
+    
+    if ($self->{scoremethod} =~ m/^[34]$/) { # Siegfried/Zubradt
+        
+        $table->row("Maximum mutation rate", $self->{maxmutationrate});
         
     }
     
@@ -190,6 +200,12 @@ sub write {
     elsif ($self->{scoremethod} == 3) { # Siegfried
         
         print $fh "maxUntreatedMut=" . $self->{maxuntreatedmut} . "\n";
+        
+    }
+    
+    if ($self->{scoremethod} =~ m/^[34]$/) { # Siegfried/Zubradt
+        
+        print $fh "maxMutationRate=" . $self->{maxmutationrate} . "\n";
         
     }
     

@@ -84,6 +84,9 @@ __-pc__ *or* __--pseudocount__ | float | Pseudocount added to reactivities to av
 __-s__ *or* __--max-score__ | float | Score threshold for capping raw reactivities (&gt;0, Default: __10__)
  | | __Scoring method #3 options (Siegfried *et al*., 2014)__
 __-mu__ *or* __--max-untreated-mut__ | float | Maximum per-base mutation rate in untreated sample (&le;1, Default: __0.05__ [5%])
+__-mm__ *or* __--max-mutation-rate__ | float | Maximum per-base mutation rate (&le;1, Default: __0.2__ [20%])
+ | | __Scoring method #4 options (Zubradt *et al*., 2017)__
+__-mm__ *or* __--max-mutation-rate__ | float | Maximum per-base mutation rate (&le;1, Default: __0.2__ [20%])
 
 <br/>
 ## Configuration files
@@ -105,7 +108,8 @@ __remapReactivities__ | TRUE/FALSE; Yes/No; 1/0 | __FALSE__
 __maxScore__ | Positive float &gt; 0 | __10__
 __pseudoCount__ | Positive float &gt; 0 | __1__
  | __Scoring method #3 options__ | 
-__maxUntreatedMut__ | Positive float &le; 1 | __0.05__
+__maxUntreatedMut__ | 0 &le; r &le; 1 | __0.05__
+__maxMutationRate__ | 0 &le; r &le; 1 | __0.2__
 
 
 ```bash
@@ -144,4 +148,7 @@ __remap__ | TRUE/FALSE | Whether normalized reactivities have been remapped acco
 __max__ | Positive float &gt; 0 | Score threshold for capping raw reactivities
 __pseudo__ | Positive float &gt; 0 | Pseudocount added to avoid division by 0 during reactivity calculation
  | | __Scoring method #3 (Siegfried *et al*., 2014)__
-__maxumut__ | Positive float &le; 1 | Maximum per-base mutation rate in untreated sample
+__maxumut__ | 0 &le; r &le; 1 | Maximum per-base mutation rate in untreated sample
+__maxmutrate__ | 0 &le; r &le; 1 | Maximum per-base mutation rate
+ | | __Scoring method #4 (Zubradt *et al*., 2017)__
+__maxmutrate__ | 0 &le; r &le; 1 | Maximum per-base mutation rate

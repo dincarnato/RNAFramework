@@ -3,8 +3,8 @@
 <br />  
 
 !!! warning "Important"
-    __[2018-11-27] RNA Framework v2.6.7 [minor release]:__<br/>- Added to rf-norm support for dynamic windows<br/>- Fixed an unexpected behaviour causing rf-fold to not report pseudoknotted helices under certain circumstances<br/>- Several bug fixes and stability improvements
-
+    __[2019-02-20] RNA Framework v2.6.8 [major release]:__<br/>This version introduces a substantial change in the way rf-norm performs reactivity data normalization. Bases that are below a certain coverage or that have mutation rates > than a user-defined threshold, are now excluded from data normalization.
+    
 ## Introduction
 
 The recent advent of Next Generation Sequencing (NGS) techniques, has enabled transcriptome-scale analysis of the RNA epistructurome.
@@ -24,8 +24,9 @@ For support requests, please post your questions to: <https://groups.google.com/
 
 ## Author
 
-Danny Incarnato (dincarnato[at]rnaframework.com)  
-Epigenetics Unit @ HuGeF [Human Genetics Foundation]  
+Danny Incarnato (dincarnato[at]rnaframework.com)<br/>
+Assistant Professor @ University of Groningen<br/>
+Department of Molecular Genetics  
 
 
 ## Reference

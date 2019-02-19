@@ -38,6 +38,7 @@ sub new {
                    _max                 => undef,
                    _pseudo              => undef,
                    _maxumut             => undef,
+                   _maxmutrate          => undef,
                    _tosmaller           => undef,
                    _combined            => undef,
                    _reactivity          => [],
@@ -224,6 +225,8 @@ sub max { return($_[0]->{_max}); }
 sub pseudocount { return($_[0]->{_pseudo}); }
 
 sub maxuntreatedmut { return($_[0]->{_maxumut}); }
+
+sub maxmutationrate { return($_[0]->{_maxmutrate}); }
 
 sub tosmaller { return($_[0]->{_tosmaller}); }
 

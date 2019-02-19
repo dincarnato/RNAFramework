@@ -47,7 +47,7 @@ my ($help, $output, $overwrite, $configfile,
     $index, $config, $error, $threads,
     $rc, $hasctrl, $decimals, $nan,
     $remap, $raw, $suffix, $maxumut,
-    $denatured, $dynwin, @index, @pool);
+    $denatured, $dynwin, $maxmutrate, @index, @pool);
 
 my @ids : shared;
 my %results : shared;
@@ -86,7 +86,8 @@ do {
                 "n|nan=i"                => \$nan,
                 "rm|remap-reactivities"  => \$remap,
                 "r|raw"                  => \$raw,
-                "mu|max-untreated-mut=s" => \$maxumut ) or help(1);
+                "mu|max-untreated-mut=s" => \$maxumut,
+                "mm|max-mutation-rate=s" => \$maxmutrate ) or help(1);
 
 };
 
@@ -98,6 +99,7 @@ $scoremethod ||= 1;
 $normmethod ||= 1;
 $nan ||= 10;
 $maxumut //= 0.05;
+$maxmutrate //= 0.2;
 $normwin ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
 $winoffset ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
 $suffix = $raw ? "_raw/" : "_norm/";
@@ -124,6 +126,7 @@ $config = RF::Config->new( file              => $configfile,
                            mediancoverage    => $mediancov,
                            remapreactivities => $remap,
                            maxuntreatedmut   => $maxumut,
+                           maxmutationrate   => $maxmutrate,
                            raw               => $raw ? 1 : 0 );
 
 $config->summary();
@@ -263,8 +266,9 @@ sub norm {
         
         last unless($id); 
         
-        my ($tentry, $sequence, @tcounts, @ucounts,
-            @tcov, @ucov, @dcov, @last, @norm);
+        my ($tentry, $sequence, $seqmask, @seqmask,
+            @tcounts, @ucounts, @dcounts, @tcov,
+            @ucov, @dcov, @last, @norm);
         $tentry = $trc->read($id);
         
         if ($tentry->meancoverage() < $config->meancoverage() ||
@@ -278,6 +282,7 @@ sub norm {
         }
         
         $sequence = $tentry->sequence();
+        @seqmask = split(//, $sequence);
         @tcounts = $tentry->counts();
         @tcov = $tentry->coverage();
         
@@ -318,8 +323,6 @@ sub norm {
             }
              
             if ($config->scoremethod() == 3) { # Siegfried
-                
-                my (@dcounts);
                 
                 if (defined $denatured) {
                     
@@ -365,11 +368,13 @@ sub norm {
                         $ucov[$_] < $nan ||
                         (defined $denatured &&
                          $dcov[$_] < $nan) ||    
-                        $ucounts[$_] / $ucov[$_] > $maxumut) { # Mutation rate in untreated sample > $maxumut
+                        $ucounts[$_] / $ucov[$_] > $maxumut ||
+                        $ucounts[$_] / $ucov[$_] > $maxmutrate ||
+                        $tcounts[$_] / $tcov[$_] > $maxmutrate ||
+                        (defined $denatured &&
+                         $dcounts[$_] / $dcov[$_] > $maxmutrate)) { # Mutation rate in untreated sample > $maxumut
                         
-                        $ucounts[$_] = 0;
-                        $tcounts[$_] = 0;
-                        $dcounts[$_] = 0;
+                        $seqmask[$_] = "X";
                         
                     }
                     else {
@@ -392,6 +397,9 @@ sub norm {
                     
                     $ucounts[$_] = log($ucounts[$_] + $config->pseudocount());
                     $tcounts[$_] = log($tcounts[$_] + $config->pseudocount());
+                    
+                    $seqmask[$_] = "X" if ($ucov[$_] < $nan ||
+                                           $tcov[$_] < $nan);
                     
                 }
                 
@@ -416,16 +424,33 @@ sub norm {
         }
         else {
             
-            if ($config->scoremethod() == 4) { @tcounts = map { $tcov[$_] ? $tcounts[$_] / $tcov[$_] : 0 } 0 .. $#tcounts; } # Zubradt method
+            if ($config->scoremethod() == 4) { # Zubradt method
+                
+                for (0 .. $#tcounts) {
+                    
+                    if ($tcov[$_] < $nan ||
+                        $tcounts[$_] / $tcov[$_] > $maxmutrate) { $seqmask[$_] = "X"; }
+                    else { $tcounts[$_] = $tcounts[$_] / $tcov[$_]; }
+                    
+                }
+                
+            }
+            else { # Rouskin
+                
+                for (0 .. $#tcounts) { $seqmask[$_] = "X" if ($tcov[$_] < $nan); }
+                
+            }
             
         }
+        
+        $seqmask = join("", @seqmask);
         
         if ($raw) { # Skips normalization
         
             my $bases = $config->reactivebases();
             @norm = @tcounts;
             
-            undef($norm[$-[0]]) while($sequence =~ m/[^$bases]/g);
+            undef($norm[$-[0]]) while($seqmask =~ m/[^$bases]/g);
             
         }
         else { # Performs normalization
@@ -444,21 +469,22 @@ sub norm {
                 
                 while($tmpsequence =~ m/^((?:[$bases][^$bases]*){$winlen}[$bases])/) { # Regex to capture a window containing $bases x $winlen
     
-                    my ($winseq, @wincounts, @winnorm); 
+                    my ($winseq, $winmask, @wincounts, @winnorm); 
                     $winseq = $1;
                     $i = index($sequence, $winseq, $i);
+                    $winmask = substr($seqmask, $i, length($winseq));
                     @wincounts = @tcounts[$i .. $i + length($winseq) - 1];
                     
                     foreach my $base ($config->normindependent() ? split(//, $bases) : $bases) {
                         
                         my (@base, @basenorm);
                         
-                        push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                        push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified (unmasked) bases
                         
                         @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
                         @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
                         
-                        $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
+                        $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
                         push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
                        
                     }
@@ -475,15 +501,21 @@ sub norm {
                 
                 if ($tmpsequence =~ m/[$bases]/) { # There are still $bases in the remaining sequence (or the window was larger than the analyzed sequence)
                     
-                    my ($winseq, @wincounts, @winnorm);
+                    my ($winseq, $winmask, @wincounts, @winnorm);
                     
                     if ($sequence =~ m/((?:[$bases][^$bases]*){$winlen}[$bases])[^$bases]*$/) { # To avoid end biases, $winlen bases are extracted from the end if possible
                         
                         $winseq = $1;
                         $i = index($sequence, $winseq, $i); #changeme with $i = length($sequence) - length($winseq);
+                        $winmask = substr($seqmask, $i, length($winseq));
                         
                     }
-                    else { $winseq = $sequence; }
+                    else {
+                        
+                        $winseq = $sequence;
+                        $winmask = substr($seqmask, -length($winseq));
+                        
+                    }
     
                     @wincounts = @tcounts[$i .. $i + length($winseq) - 1];
                     
@@ -491,12 +523,12 @@ sub norm {
                         
                         my (@base, @basenorm);
                         
-                        push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                        push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
                         
                         @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
                         @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
                         
-                        $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
+                        $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
                         push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
                        
                     }
@@ -513,21 +545,21 @@ sub norm {
                 
                 for(my $i = 0; $i + $winlen - 1 <= $#tcounts; $i += $winoffset) {
                 
-                    my ($winseq, @wincounts, @winnorm);
-                    $winseq = substr($sequence, $i, $winlen);
+                    my ($winmask, @wincounts, @winnorm);
+                    $winmask = substr($seqmask, $i, $winlen);
                     @wincounts = @tcounts[$i .. $i + $winlen - 1];
                     
                     foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
                         
                         my (@base, @basenorm);
                         
-                        push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                        push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
                         
                         @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
                         @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
                         
-                        $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
-                        push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
+                        $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
+                        push(@winnorm, undef) while (@winnorm < length($winmask)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
                        
                     }
                     
@@ -537,22 +569,22 @@ sub norm {
                 
                 if (@norm < @tcounts) { # Missing the last window
         
-                    my ($winseq, $i, @wincounts, @winnorm);
+                    my ($winmask, $i, @wincounts, @winnorm);
                     $i = @tcounts - $winlen;
-                    $winseq = substr($sequence, $i);
+                    $winmask = substr($seqmask, $i);
                     @wincounts = @tcounts[$i .. $#tcounts];
                     
                     foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
                         
                         my (@base, @basenorm);
                         
-                        push(@base, $wincounts[$-[0]]) while($winseq =~ m/[$base]/g); # Extracts reactivities only on specified bases
+                        push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
                         
                         @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
                         @basenorm = (0) x scalar(@base) if (!@basenorm); # In case this window has not been covered
                         
-                        $winnorm[$-[0]] = shift(@basenorm) while($winseq =~ m/[$base]/g);
-                        push(@winnorm, undef) while (@winnorm < length($winseq)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
+                        $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
+                        push(@winnorm, undef) while (@winnorm < length($winmask)); # If winseq doesn't end with a $base, winnorm will be shorter than winseq
                         
                     }
                     
@@ -567,18 +599,8 @@ sub norm {
         
         }
         
-        # Set positions behind coverage threshold to NaN  
-        @norm = map { $tcov[$_] >= $nan ? $norm[$_] : undef } 0 .. $#tcov;
-        
-        if ($hasctrl) {
-            
-            @norm = map { $ucov[$_] >= $nan ||
-                          ($config->scoremethod() == 3 &&
-                           (defined $denatured &&
-                            $dcov[$_] >= $nan) &&
-                           $ucounts[$_] / $ucov[$_] <= $maxumut) ? $norm[$_] : undef } 0 .. $#ucov;
-            
-        }
+        # Set masked positions to NaN  
+        @norm = map { $seqmask[$_] ne "X" ? $norm[$_] : undef } 0 .. $#tcov;
         
         # This control has been added because in certain cases the coverage is above threshold, but the signal
         # is limited to non-probed bases, thus the final reactivity profile is NaN for all bases.
@@ -617,6 +639,12 @@ sub norm {
           
             $attributes->{maxumut} = $config->maxuntreatedmut();
           
+        }
+        
+        if ($config->scoremethod() =~ m/^[34]$/) { # Siegfried/Zubradt
+            
+            $attributes->{maxmutrate} = $config->maxmutationrate();
+            
         }
         
         $xmlio = Data::IO->new( file      => $output . $id . ".xml",  
@@ -816,8 +844,11 @@ sub help {
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)
  -s  or --max-score           <float>               Score threshold for capping raw reactivities (>0, Default: 10)
  
- Scoring method #1 options (Siegfried et al., 2014)
- -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (<=1, Default: 0.05 [5%])
+ Scoring method #3 options (Siegfried et al., 2014)
+ -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (0<=r<=1, Default: 0.05 [5%])
+ 
+ Scoring methods #3 and #4 (mutational profiling) options
+ -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 0.2 [20%])
  
 HELP
     
