@@ -173,12 +173,12 @@ $constmethod ||= 1;
 $constconversion ||= 1;
 $beta //= 0.5;
 $maxdist //= 0;
-$partwin ||= $windowed ? 1000000 : 600;
+$partwin ||= 600;
 $partstep ||= 200;
 $wintrim //= 100;
-$foldwin ||= $windowed ? 1000000 : 600;
+$foldwin ||= 600;
 $foldstep ||= 200;
-$pkwin ||= $windowed ? 1000000 : 600;
+$pkwin ||= 600;
 $pkstep ||= 200;
 $p1 //= 0.35;
 $p2 //= 0.65;
@@ -524,7 +524,7 @@ sub fold { # Threads
         if ($pk) { # Pseudoknot detection
             
             my (@keptpkpairs, %pkpairs, %basepairs);
-            $nwins = max(1, floor(($length - $pkwin) / $pkstep) + 1);
+            $nwins = $windowed ? max(1, floor(($length - $pkwin) / $pkstep) + 1) : 1;
             
             # Define windows to be analyzed
             # Windows are defined as: [start, end]
@@ -636,7 +636,7 @@ sub fold { # Threads
             $sh ||
             $dp) { 
         
-            $nwins = max(1, floor(($length - $partwin) / $partstep) + 1);
+            $nwins = $windowed ? max(1, floor(($length - $partwin) / $partstep) + 1) : 1;
             
             # Define windows to be analyzed
             # Windows are defined as: [start, end, 5'-trim, 3'-trim]
@@ -762,7 +762,7 @@ sub fold { # Threads
 
         ######### MFE folding block ##########
         
-        $nwins = max(1, floor(($length - $foldwin) / $foldstep) + 1);
+        $nwins = $windowed ? max(1, floor(($length - $foldwin) / $foldstep) + 1) : 1;
         
         # Define windows to be analyzed
         # Windows are defined as: [start, end]
