@@ -131,6 +131,19 @@ sub _readxml {
         
     }
     
+    $self->throw("Sequence and reactivity have unequal lengths") if (@{$self->{_reactivity}} &&
+                                                                     length($self->{_sequence}) != @{$self->{_reactivity}});
+    $self->throw("Sequence and reactivity-error have unequal lengths") if (@{$self->{"_reactivity-error"}} &&
+                                                                           length($self->{_sequence}) != @{$self->{"_reactivity-error"}});
+    $self->throw("Sequence and probability have unequal lengths") if (@{$self->{_probability}} &&
+                                                                      length($self->{_sequence}) != @{$self->{_probability}});
+    $self->throw("Sequence and Shannon entropy have unequal lengths") if (@{$self->{_shannon}} &&
+                                                                          length($self->{_sequence}) != @{$self->{_shannon}});
+    $self->throw("Sequence and score have unequal lengths") if (@{$self->{_score}} &&
+                                                                length($self->{_sequence}) != @{$self->{_score}});
+    $self->throw("Sequence and ratio have unequal lengths") if (@{$self->{_ratio}} &&
+                                                                length($self->{_sequence}) != @{$self->{_ratio}});
+    
 }
 
 #sub _readxml {
