@@ -84,7 +84,7 @@ sub _exception {
     if ($verbosity == 1 &&
         @stack) {
     
-        $message .= "\n\n    Stack TraceDump (descending):\n";
+        $message .= "\n\n    Stack dump (descending):\n";
     
         foreach my $caller (@stack) {
         

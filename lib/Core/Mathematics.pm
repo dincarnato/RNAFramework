@@ -39,7 +39,8 @@ our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                                        mode median round sum
                                        diff product maprange intersect
                                        variance inrange haspositive hasnegative
-                                       hasnan haszero absolute) ] );
+                                       hasnan haszero absolute euclideandist
+                                       normeuclideandist) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -484,6 +485,57 @@ sub inrange {
     
     return(1) if (intersect($range, [$value, $value]));
     
+}
+ 
+sub euclideandist {
+
+    my @data = @_[0..1];
+    my $rmnan = $_[2] if (@_ == 3);
+    
+    if ($rmnan) {
+        
+        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices]; 
+        
+    }
+    
+    for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
+    
+    Core::Utils::throw("Insufficient parameters") if (@data < 2);
+    Core::Utils::throw("Euclidean distance calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
+    Core::Utils::throw("Values ARRAY references are empty") unless (@{$data[0]});
+
+    my @dists = map { ($data[0]->[$_] - $data[1]->[$_]) ** 2 } 0 .. $#{$data[0]};
+
+    return(sqrt(sum(@dists)));
+
+}
+
+sub normeuclideandist {
+
+    my @data = @_[0..1];
+    my $rmnan = $_[2] if (@_ == 3);
+    
+    if ($rmnan) {
+        
+        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices]; 
+        
+    }
+    
+    for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
+    
+    Core::Utils::throw("Insufficient parameters") if (@data < 2);
+    Core::Utils::throw("Euclidean distance calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
+    Core::Utils::throw("Values ARRAY references are empty") unless (@{$data[0]});
+
+    return("NaN") if (uniq(@{$data[0]}) == 1 &&
+                      uniq(@{$data[1]}) == 1);
+    
+    return(0.5 * (stdev(map { $data[0]->[$_] - $data[1]->[$_] } 0 .. $#{$data[0]}) ** 2) / (stdev(@{$data[0]}) ** 2 + stdev(@{$data[1]}) ** 2));
+
 }
                
 1;
