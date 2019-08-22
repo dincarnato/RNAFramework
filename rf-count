@@ -601,6 +601,9 @@ sub count {
                 $row = <$fh>;
                 chomp($row);
                 @row = split(/\t/, $row);
+                
+                next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
+                
                 ($clip5, $cov, $ins) = parsecigar($row[5]);
                 @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
