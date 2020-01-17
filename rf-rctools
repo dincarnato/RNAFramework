@@ -267,7 +267,8 @@ sub cleanup {
 sub help {
     
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    print "\n  [!] Error: Invalid command \"" . $command . "\"\n" if (!exists $commands{$command});
+    print "\n  [!] Error: Invalid command \"" . $command . "\"\n" if ($command &&
+                                                                      !exists $commands{$command});
     
     print <<HELP;
  
