@@ -26,13 +26,13 @@ use Scalar::Util qw(reftype);
 
 use base qw(Exporter);
 
-our $VERSION = "2.6.7";
+our $VERSION = "2.6.9";
 our @EXPORT = qw(is checkparameters blessed clonehashref
                  clonearrayref clonefh uriescape uriunescape
                  unquotemeta striptags questionyn uniq
                  randint randnum randalpha randalphanum
                  randmixed which isdirempty rmtree
-                 isup2date);
+                 mktree isup2date ncores);
                  
 sub uniq {
     
@@ -114,14 +114,14 @@ sub is {
 
 sub checkparameters {
     
-    my ($default, $parameters) = @_;
+    my ($default, $parameters, $level) = @_;
     
     return unless(ref($default) eq "HASH" &&
                   ref($parameters) eq "HASH");
     
     foreach my $key (keys %{$parameters}) {
 	
-        next if (!exists $default->{$key} ||
+        next if ((!$level && !exists $default->{$key}) ||
                  substr($key, 0, 1) eq "_");
         
         if (ref($default->{$key}) eq "ARRAY" &&
@@ -131,7 +131,7 @@ sub checkparameters {
             
         }
         elsif (ref($default->{$key}) eq "HASH" &&
-               ref($parameters->{$key}) eq "HASH") { $default->{$key} = checkparameters($default->{$key}, $parameters->{$key}); }
+               ref($parameters->{$key}) eq "HASH") { $default->{$key} = checkparameters($default->{$key}, $parameters->{$key}, 1); }
         else { $default->{$key} = $parameters->{$key} if (defined $parameters->{$key}); }
 	
     }
@@ -346,6 +346,34 @@ sub isdirempty {
 	
 }
 
+sub mktree {
+    
+    my $path = shift;
+    my $mode = shift || 0777;
+    
+    Core::Utils::throw("Invalid directory mode \"" . $mode . "\"") if ($mode !~ m/^[0-7]{3}$/);
+    
+    my ($last, @path);
+    @path = split(/\//, $path);
+    
+    foreach my $folder (@path) {
+        
+        if (!$folder) { $last = "/"; }
+        else {
+            
+            $last .= $folder . "/";
+            
+            next if ($folder =~ m/^\.{1,2}$/);
+            
+        }
+        
+        if (-e $last) { Core::Utils::throw("A file with the same name already exists (" . $last . ")") if (!-d $last); }
+        else { mkdir($last, $mode) or Core::Utils::throw("Unable to create directory (" . $! . ")"); }
+        
+    }
+    
+}
+
 sub rmtree {
 
     my $path = shift;
@@ -398,6 +426,17 @@ sub isup2date {
         CORE::warn  "\n  [i] Note: RNA Framework v" . $latest . " is available. Issue a 'git pull' to update.\n" unless($up2date);
      
     }
+    
+}
+
+sub ncores {
+    
+    my ($ncores);
+    
+    if ($^O eq "darwin") { chomp($ncores = `sysctl -n hw.ncpu`); }
+    elsif ($^O eq "linux") { chomp($ncores = `grep -c -P '^processor\\s+:' /proc/cpuinfo`); }
+    
+    return($ncores);
     
 }
 

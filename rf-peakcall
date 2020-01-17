@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 ##
-# RF PeakCall (v2.5)
+# RF PeakCall
 # RNA Framework [http://www.rnaframework.com]
 #    
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
@@ -29,6 +29,10 @@ use lib $Bin . "/lib";
 use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
+use Data::IO;
+use Graphics::Container;
+use Graphics::Object::Path;
+use Graphics::Object::Ruler;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 
@@ -40,11 +44,18 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($help, $output, $overwrite, $win,
     $pvalue, $pseudocount, $meancov, $mediancov,
     $control, $ip, $index, $enrich,
-    $threads, $rc, $decimals, $offset,
-    $mergedist, @index, @pool, @imeans);
+    $threads, $iprc, $ctrlrc, $decimals, 
+    $mergedist, $img, $error, $metaplot,
+    $refine, $summit, $relaxed, $offset,
+    $metaonlyenriched, @index, @pool, @imeans);
 
+my $ctrlnreads : shared;
+my $ipnreads : shared;
 my @qcaller : shared;
 my @qresults : shared;
+my @metaip : shared;
+my @metactrl : shared;
+my @metapeaks : shared;
 my %results : shared;
 %results = ( cov      => 0,
              incov    => 0,
@@ -57,22 +68,28 @@ do {
     
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"               => \$help,
-                "o|output=s"           => \$output,
-                "ow|overwrite"         => \$overwrite,
-                "w|window=i"           => \$win,
-                "mc|mean-coverage=s"   => \$meancov,
-                "ec|median-coverage=s" => \$mediancov,
-                "c|control=s"          => \$control,
-                "I|IP=s"               => \$ip,
-                "i|index=s"            => \$index,
-                "D|decimals=i"         => \$decimals,
-                "p|processors=i"       => \$threads,
-                "f|offset=i"           => \$offset,
-                "e|enrichment=s"       => \$enrich,
-                "v|p-value=s"          => \$pvalue,
-                "pc|pseudocount=s"     => \$pseudocount,
-                "md|merge-distance=i"  => \$mergedist ) or help(1);
+    GetOptions( "h|help"                => \$help,
+                "o|output=s"            => \$output,
+                "ow|overwrite"          => \$overwrite,
+                "g|img"                 => \$img,
+                "mp|meta-plot"          => \$metaplot,
+                "eo|plot-enriched-only" => \$metaonlyenriched,
+                "w|window=i"            => \$win,
+                "mc|mean-coverage=s"    => \$meancov,
+                "ec|median-coverage=s"  => \$mediancov,
+                "c|control=s"           => \$control,
+                "I|IP=s"                => \$ip,
+                "i|index=s"             => \$index,
+                "D|decimals=i"          => \$decimals,
+                "p|processors=i"        => \$threads,
+                "f|offset=i"            => \$offset,
+                "e|enrichment=s"        => \$enrich,
+                "v|p-value=s"           => \$pvalue,
+                "r|refine"              => \$refine,
+                "x|relaxed"             => \$relaxed,
+                "s|summit"              => \$summit,
+                "pc|pseudocount=s"      => \$pseudocount,
+                "md|merge-distance=i"   => \$mergedist ) or help(1);
 
 };
 
@@ -97,7 +114,8 @@ die "\n  [!] Error: Provided control sample RC file doesn't exist\n\n" if (defin
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
                                                                                           $decimals > 10);
-die "\n  [!] Error: Window's size must be an integer >= 10" if ($win < 10);
+die "\n  [!] Error: Window's size must be an integer >= 10\n\n" if ($win < 10);
+die "\n  [!] Error: Offset cannot exceed window's size\n\n" if ($offset > $win);
 die "\n  [!] Error: P-value must be numeric\n\n" if (!isnumeric($pvalue));
 die "\n  [!] Error: P-value must be comprised between 0 and 1\n\n" if (!ispositive($pvalue) ||
                                                                        $pvalue > 1);
@@ -109,6 +127,10 @@ die "\n  [!] Error: Mean coverage value must be numeric\n\n" if (!isnumeric($mea
 die "\n  [!] Error: Mean coverage value must be >= 0\n\n" if (!ispositive($meancov));
 die "\n  [!] Error: Median coverage value must be numeric\n\n" if (!isnumeric($mediancov));
 die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($mediancov));
+die "\n  [!] Error: Parameter -x requires peaks refinement (-r) to be active\n\n" if ($relaxed &&
+                                                                                      !$refine);
+die "\n  [!] Error: Parameter -eo requires meta-plot generation (-mp) to be active\n\n" if ($metaonlyenriched &&
+                                                                                            !$metaplot);
 
 warn "\n  [!] Warning: No control sample RC file provided. Background will be estimated on IP sample only.\n" if (!defined $control);
 
@@ -118,41 +140,48 @@ if (!defined $output) {
     $cid = fileparse($control, qr/\.[^.]*/) if (defined $control);
     $iid = fileparse($ip, qr/\.[^.]*/);
     
-    $output = (defined $control ? $iid . "_vs_" . $cid : $iid) . ".bed";
+    $output = (defined $control ? $iid . "_vs_" . $cid : $iid) . "/";
     
 }
-else { $output =~ s/(\.bed)?$/.bed/; }
-
-print "\n[+] Checking output file...";
+else { $output =~ s/\/?$/\//; }
+    
+print "\n[+] Making output directory...";
 
 if (-e $output) {
 
-    if ($overwrite) { unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n"; }
-    else { die "\n\n  [!] Error: Output file already exists." .
-               "\n      Please use -ow (or --overwrite) to overwrite output file\n\n"; }
+    if ($overwrite) {
+        
+        my $error = rmtree($output);
+    
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error); 
+        
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
     
 }
+
+mkpath($output, { mode  => 0755,
+                  error => \$error });
+mkpath($output . "plots", { mode  => 0755,
+                            error => \$error }) if ($metaplot);
+mkpath($output . "plots/transcripts", { mode  => 0755,
+                                        error => \$error }) if ($img);
 
 @index = split(/,/, $index);
 
 # In case no index has been provided, we rebuild the index before generating the working threads
 # The new index will be generated in the same path of the rc file, with extension .rci
-if (!@index) {
-    
-    print "\n[+] Regenerating RTI index files...";
-    
-    $rc = RF::Data::IO::RC->new( file       => $control,
-                                 buildindex => 1 ) if (defined $control);
-    
-}
-
-$rc = RF::Data::IO::RC->new( file       => $ip,
-                             index      => @index ? $index[-1] : undef,
-                             buildindex => 1 );
+print "\n[+] Regenerating RCI index files..." if (!@index);
+$ctrlrc = RF::Data::IO::RC->new( file       => $control,
+                                     buildindex => @index ? 0 : 1 ) if ($control);
+$iprc = RF::Data::IO::RC->new( file       => $ip,
+                               index      => @index ? $index[-1] : undef,
+                               buildindex => 1 );
 
 print "\n[+] Loading transcript IDs... ";
 
-@qcaller = $rc->ids();
+@qcaller = $iprc->ids();
 
 print scalar(@qcaller) . " transcripts loaded." .
       "\n[+] Calling peaks [Last: none]";
@@ -170,10 +199,33 @@ if ($results{peaks}) {
     
     print "\n[+] Writing output BED file...";
     
-    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output BED file (" . $! . ")\n\n";
+    open(my $wh, ">", $output  . "/peaks.bed") or die "\n\n  [!] Error: Unable to write peaks BED file (" . $! . ")\n\n";
     select((select($wh), $|=1)[0]);
-    print $wh join("\t", @{$_}) . "\n" for (@qresults);
+    print $wh join("\t", @{$_}[0 .. 4]) . "\n" for (@qresults);
     close($wh);
+    
+    if ($summit) {
+        
+        open(my $wh, ">", $output  . "/summits.bed") or die "\n\n  [!] Error: Unable to write summits BED file (" . $! . ")\n\n";
+        select((select($wh), $|=1)[0]);
+        print $wh join("\t", @{$_}[0, 5, 6]) . "\n" for (@qresults);
+        close($wh);
+        
+    }
+    
+}
+
+if ($metaplot &&
+    (($metaonlyenriched &&
+      @qresults) ||
+     !$metaonlyenriched)) {
+    
+    my (@icov, @ccov, @pcov);
+    @icov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ipnreads : $iprc->mappedreads()) * (10 ** 6) } @metaip;
+    @ccov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ctrlnreads : $ctrlrc->mappedreads()) * (10 ** 6) } @metactrl if ($control);
+    @pcov = map { $_ / @qresults * 100 } @metapeaks if (@qresults);
+    
+    plotcoverage($output . "plots/meta-gene.svg", \@icov, \@ccov, \@pcov);
     
 }
 
@@ -190,7 +242,8 @@ print "\n\n[+] All done.\n\n";
 
 sub call {
     
-    my ($crc, $irc, $attributes, $scale);
+    my ($crc, $irc, $attributes, $scale,
+        @cmeta, @imeta, @pmeta);
     
     $crc = RF::Data::IO::RC->new( file  => $control,
                                   index => @index ? $index[0] : $control . ".rci" ) if (defined $control);
@@ -200,19 +253,32 @@ sub call {
     
     while (1) {
         
-        my ($id);
+        my ($id, $initial);
         
         { lock(@qcaller);
-          $id = shift(@qcaller) if (@qcaller); }
+          $id = shift(@qcaller) if (@qcaller);
+          
+          if ($id) {
+            
+            print CLRRET . "[+] Calling peaks [Last: $id]";
+            
+            $initial = uc(substr($id, 0, 1));
+            mkpath($output . "plots/transcripts/" . $initial, { mode  => 0755,
+                                                                error => \$error }) if ($img &&
+                                                                                        !-e $output . "plots/transcripts/" . $initial);
+            
+          } }
         
         last unless($id); 
         
         my ($ientry, $sequence, $imedian, $cmedian,
-            $last, @icov, @ccov, @pvalues,
-            @wins);
-        $ientry = $irc->read($id);
+            $last, $length, $ssummit, $esummit,
+            $cnreads, @icov, @ccov,
+            @pvalues, @wins, @enrich);
+        $ientry = $irc->read($id); 
         $imedian = $ientry->mediancoverage();
         $sequence = $ientry->sequence();
+        $length = length($sequence);
         @icov = $ientry->coverage();
         
         if (defined $control) {
@@ -240,6 +306,7 @@ sub call {
                     
                 }
                 
+                $cnreads = $centry->readscount();
                 @ccov = $centry->coverage();
                 
             }
@@ -254,10 +321,42 @@ sub call {
         
         }
         
+        # Calculates per-base enrichment
+        @enrich = $control ? map { logarithm((($icov[$_] + $pseudocount) / ($imedian + $pseudocount)) / (($ccov[$_] + $pseudocount) / ($cmedian + $pseudocount)), 2) } 0 .. $length - 1 : 
+                             map { logarithm((($icov[$_] + $pseudocount) / ($imedian + $pseudocount)), 2) } 0 .. $length - 1;
+        
+        if ($metaplot &&
+            !$metaonlyenriched) {
+            
+            my (@metacoverage);
+            
+            if ($control) {
+                
+                @metacoverage = metacoverage(@ccov);
+                @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. 999;
+                
+                undef(@metacoverage);
+                
+            }
+            
+            @metacoverage = metacoverage(@icov);
+            @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. 999;
+            
+        }
+        
+        if ($img) {
+            
+            my ($icov, $ccov);
+            @{$icov} = map { $_ / $irc->mappedreads() * (10 ** 6) } @icov;
+            @{$ccov} = map { $_ / $crc->mappedreads() * (10 ** 6) } @ccov if ($control);
+            
+            plotcoverage($output . "/plots/transcripts/" . $initial . "/" . $id . ".svg", $icov, $ccov);
+            
+        }
+        
         for (my $i = 0; $i < $#icov; $i += $offset) {
         
-            my ($start, $end, $score, $cmean, $imean,
-                $p, @ctrlwin, @ipwin);
+            my ($start, $end, $score);
             $start = $i;
             
             if ($start + $win > $#icov) {
@@ -268,35 +367,23 @@ sub call {
             }
             else { $end = $start + $win; }
             
-            $imean = mean(@icov[$start .. $end]);
+            $score = mean(@enrich[$start .. $end]);
             
-            if (defined $control) {
-            
-                $cmean = mean(@ccov[$start .. $end]);
-                $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)) / (($cmean + $pseudocount) / ($cmedian + $pseudocount)), 2);
-            
-            }
-            else { $score = logarithm((($imean + $pseudocount) / ($imedian + $pseudocount)), 2); }
-        
             push(@wins, { coords => [$start, $end],
                           score  => [$score],
-                          imean  => $imean,
-                          cmean  => $cmean,
                           pvalue => undef });
         
         }
         
         { lock(%results);
-          $results{cov}++;
-                  
-          print CLRRET . "[+] Calling peaks [Last: $id]"; }
+          $results{cov}++; }
             
-        @imeans = map { $_->{imean} } @wins;
+        @imeans = map { mean(@icov[$_->{coords}->[0] .. $_->{coords}->[1]]) } @wins;
         
         foreach my $win (@wins) {
             
-            my $p = defined $control ? fisher(round($win->{imean}), round($imedian), round($win->{cmean}), round($cmedian), 1) :
-                                       fisher(round($win->{imean}), round($imedian), round(mean(@imeans)), round($imedian), 1);
+            my $p = defined $control ? fisher(round(mean(@icov[$win->{coords}->[0] .. $win->{coords}->[1]])), round($imedian), round(mean(@ccov[$win->{coords}->[0] .. $win->{coords}->[1]])), round($cmedian), 1) :
+                                       fisher(round(mean(@icov[$win->{coords}->[0] .. $win->{coords}->[1]])), round($imedian), round(mean(@imeans)), round($imedian), 1);
             $win->{pvalue} = $p;
             
         }
@@ -340,24 +427,290 @@ sub call {
             }
             else {
                 
+                $last = refinepeak( peak       => $last,
+                                    imedian    => $imedian,
+                                    cmedian    => $cmedian,
+                                    length     => $length,
+                                    icov       => \@icov,
+                                    ccov       => \@ccov,
+                                    enrichment => \@enrich ) if ($refine);
+                
                 { lock(%results);
                   $results{peaks}++; }
                 
                 { lock(@qresults);
-                  push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))])); }
+                  push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S")), summit($last->{coords}->[0], $last->{coords}->[1], \@icov)]));
+                  
+                  my @metapeak = metacoverage((0) x $last->{coords}->[0], (1) x ($last->{coords}->[1] - $last->{coords}->[0] + 1), (0) x ($length - 1 - $last->{coords}->[1]));
+                  @pmeta = map { $pmeta[$_] + $metapeak[$_] } 0 .. 999; }
                 
                 $last = $current;
                 
             }
         
         }
+
+        $last = refinepeak( peak       => $last,
+                            imedian    => $imedian,
+                            cmedian    => $cmedian,
+                            length     => $length,
+                            icov       => \@icov,
+                            ccov       => \@ccov,
+                            enrichment => \@enrich ) if ($refine);
         
         { lock(@qresults); 
-          push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S"))])); }
-        
-        { lock(%results);
+          push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S")), summit($last->{coords}->[0], $last->{coords}->[1], \@icov)]));
+          
+          my @metapeak = metacoverage((0) x $last->{coords}->[0], (1) x ($last->{coords}->[1] - $last->{coords}->[0] + 1), (0) x ($length - 1 - $last->{coords}->[1]));
+          @pmeta = map { $pmeta[$_] + $metapeak[$_] } 0 .. 999;
+                  
+          lock(%results);
           $results{pass}++;
           $results{peaks}++; }
+        
+        if ($metaplot &&
+            $metaonlyenriched) {
+            
+            my (@metacoverage);
+            
+            if ($control) {
+                
+                { lock($ctrlnreads);
+                  $ctrlnreads += $cnreads; }
+                
+                @metacoverage = metacoverage(@ccov);
+                @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. 999;
+                
+                undef(@metacoverage);
+                
+            }
+            
+            { lock($ipnreads);
+              $ipnreads += $ientry->readscount(); }
+            
+            @metacoverage = metacoverage(@icov);
+            @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. 999;
+            
+        }
+        
+    }
+    
+    if ($metaplot) {
+    
+        if ($control) {
+            
+            lock(@metactrl);
+            @metactrl = map { $metactrl[$_] + $cmeta[$_] } 0 .. 999;
+            
+        }
+        
+        { lock(@metaip);
+          @metaip = map { $metaip[$_] + $imeta[$_] } 0 .. 999; }
+        
+        { lock(@metapeaks);
+          @metapeaks = map { $metapeaks[$_] + $pmeta[$_] } 0 .. 999; }
+        
+    }
+    
+}
+
+sub refinepeak {
+    
+    my %parameters = @_;
+                        
+    my ($start, $end, $imean, $cmean,
+        $peakicovmedian);
+    ($start, $end) = ($parameters{peak}->{coords}->[0], $parameters{peak}->{coords}->[1]);
+    $peakicovmedian = median(@{$parameters{icov}});
+                        
+    for (my $i = $parameters{peak}->{coords}->[0]; $i <= $parameters{peak}->{coords}->[1]; $i++) {
+         
+        my $enrichment = $relaxed ? mround($parameters{enrichment}->[$i], 0.5) : $parameters{enrichment}->[$i];
+         
+        if ($enrichment >= $enrich &&
+            $parameters{icov}->[$i] >= $peakicovmedian) {
+            
+            $start = $i;
+            
+            last;
+            
+        }
+        
+    }
+    
+    if ($start == $parameters{peak}->{coords}->[0]) {
+        
+        for (my $i = $parameters{peak}->{coords}->[0]; $i >= 0; $i--) {
+        
+            my $enrichment = $relaxed ? mround($parameters{enrichment}->[$i], 0.5) : $parameters{enrichment}->[$i];
+        
+            last if ($enrichment < $enrich ||
+                     $parameters{icov}->[$i] < $peakicovmedian);
+            
+            $start = $i;
+            
+        }
+          
+    }
+    
+    for (my $i = $parameters{peak}->{coords}->[1]; $i >= $parameters{peak}->{coords}->[0]; $i--) {
+        
+        my $enrichment = $relaxed ? mround($parameters{enrichment}->[$i], 0.5) : $parameters{enrichment}->[$i];
+        
+        if ($enrichment >= $enrich  &&
+            $parameters{icov}->[$i] >= $peakicovmedian) {
+            
+            $end = $i;
+            
+            last;
+            
+        }
+        
+    }
+    
+    if ($end == $parameters{peak}->{coords}->[1]) {
+        
+        for (my $i = $parameters{peak}->{coords}->[1]; $i < $parameters{length}; $i++) {
+
+            my $enrichment = $relaxed ? mround($parameters{enrichment}->[$i], 0.5) : $parameters{enrichment}->[$i];
+        
+            last if ($enrichment < $enrich ||
+                     $parameters{icov}->[$i] < $peakicovmedian);
+            
+            $end = $i;
+            
+        }
+          
+    }
+    
+    ($parameters{peak}->{coords}->[0], $parameters{peak}->{coords}->[1]) = ($start, $end);
+    
+    $imean = mean(@{$parameters{icov}}[$start .. $end]);
+            
+    if ($control) {
+            
+        $cmean = mean(@{$parameters{ccov}}[$start .. $end]);
+        @{$parameters{peak}->{score}} = logarithm((($imean + $pseudocount) / ($parameters{imedian} + $pseudocount)) / (($cmean + $pseudocount) / ($parameters{cmedian} + $pseudocount)), 2);
+            
+    }
+    else {  @{$parameters{peak}->{score}} = logarithm((($imean + $pseudocount) / ($parameters{imedian} + $pseudocount)), 2); }
+    
+    return($parameters{peak});
+    
+}
+
+sub summit {
+    
+    my ($start, $end, $icov) = @_;
+    
+    if ($summit &&
+        $icov) {
+        
+        my ($max, $first, @max, @win, @last);
+        $max = max(@{$icov}[$start .. $end]);
+        @max = grep { $icov->[$_] == $max } $start .. $end;
+        $first = shift(@max);
+        @last = ($first, $first + 1);
+        @win = @last;
+        
+        while(my $base = shift(@max)) {
+            
+            if ($base == $win[1]) { $win[1] = $base + 1; }
+            else {
+                
+                if (($win[1] - $win[0]) > ($last[1] - $last[0])) {
+                    
+                    @last = @win;
+                    @win = ($base, $base + 1);
+                    
+                }
+                
+            }
+            
+        }
+        
+        @last = @win if (($win[1] - $win[0]) > ($last[1] - $last[0]));
+        
+        return(@last);
+        
+    }
+    
+}
+
+sub metacoverage {
+    
+    my @coverage = @_;
+    
+    my @metacoverage = map { $coverage[round($_ / 999 * $#coverage)] } 0 .. 999;
+    
+    return(@metacoverage);
+    
+}
+
+sub plotcoverage {
+    
+    my ($file, $ip, $ctrl, $peak) = @_;
+    
+    my ($maxy, $image, $io, $icov,
+        $ccov, $pcov, $ruler, $metaprofile);
+    $metaprofile = $file =~ m/meta-gene/ ? 1 : 0;
+    $maxy = $control ? max(@{$ip}, @{$ctrl}) : max(@{$ip});
+    
+    if ($maxy) {
+    
+        $image = Graphics::Container->new( height  => $control ? 450 : 250,
+                                           width   => 1000,
+                                           spacing => 0.05 );
+        $io = Data::IO->new( file    => $file,
+                             mode    => "w",
+                             binmode => ":encoding(utf-8)" );
+        
+        if ($control) {
+            
+            $ccov = Graphics::Object::Path->new( fontsize    => 15,
+                                                  height      => 1,
+                                                  yrange      => [0, $maxy],
+                                                  forceyrange => 1,
+                                                  values      => $ctrl,
+                                                  stroke      => "rgb(0, 100, 0)",
+                                                  yname       => "Control (RPM)" );
+            
+        }
+        
+        $icov = Graphics::Object::Path->new( fontsize    => 15,
+                                             height      => 1,
+                                             yrange      => [0, $maxy],
+                                             forceyrange => 1,
+                                             values      => $ip,
+                                             stroke      => "rgb(55, 110, 174)",
+                                             yname       => "IP (RPM)" );
+         
+        $ruler = Graphics::Object::Ruler->new( fontsize => 15,
+                                               height   => 1,
+                                               range    => $metaprofile ? [0, 100] : [0, scalar(@{$ip})],
+                                               ticksby  => $metaprofile ? 10 : max(1, round(scalar(@{$ip}) / 10)),
+                                               name     => $metaprofile ? "Relative position (\%)" : "Position (nt)",
+                                               toend    => 1 );
+        
+        $image->addobjects($ccov) if ($control);
+        $image->addobject($icov);
+        
+        if ($metaprofile &&
+            @{$peak}) {
+            
+            $pcov = Graphics::Object::Path->new( fontsize    => 15,
+                                                 height      => 1,
+                                                 values      => $peak,
+                                                 stroke      => "rgb(0, 0, 0)",
+                                                 yname       => "\% of peaks" );
+        
+            $image->addobject($pcov);
+            
+        }
+        
+        $image->addobject($ruler);
+        
+        $io->write($image->xml());
         
     }
     
@@ -380,27 +733,32 @@ sub help {
  Options                                        Description
  -c  or --control          <string>             Control sample RC file
  -I  or --IP               <string>             Immunoprecipitated (IP) sample RC file
- -i  or --index            <string>[,<string>]  A comma separated (no spaces) list of RTI index files for the provided RC files.
+ -i  or --index            <string>[,<string>]  A comma separated (no spaces) list of RCI index files for the provided RC files.
                                                 Note: RCI files must be provided in the order: 1. Control, 2. IP.
                                                 If a single RCI file is specified along with both control and IP sample,
                                                 it will be used for all samples.
                                                 If no RCI index is provided, it will be created at runtime, and stored in
                                                 the same folder of the control, and IP samples.
  -p  or --processors       <int>                Number of processors to use (Default: 1)
- -o  or --output           <string>             Output file (Default: <IP>_vs_<Control>.bed if a control RC file is provided, or
-                                                                      <IP>.bed if only IP RC file is provided)
- -ow or --overwrite                             Overwrites output file (if the specified file already exists)
+ -o  or --output           <string>             Output folder (Default: <IP>_vs_<Control> if a control RC file is provided, or
+                                                                        <IP> if only the IP RC file is provided)
+ -ow or --overwrite                             Overwrites output folder (if the specified folder already exists)
+ -g  or --img                                   Enables the generation of coverage plots
+ -mp or --meta-plot                             Enables the generation of meta-gene plots
+ -eo or --plot-enriched-only                    Meta-gene plots will be calculated only on transcripts with a detected enrichment (requires -mp)
  -w  or --window           <int>                Window's size for peak calling (>=10, Default: 150)
  -f  or --offset           <int>                Offset for window sliding (>=1, Default: Window's size / 2)
  -md or --merge-distance   <int>                Maximum distance in nt for merging non-overlapping windows (>=0, Default: 50)
  -e  or --enrichment       <float>              Minimum log2 enrichment in IP vs. control sample, for reporting a peak (>=1, Default: 3)
  -v  or --p-value          <float>              P-value cutoff for reporting a peak (0<=p<=1, Default: 0.05)
+ -s  or --summit                                Generates an additional BED file containing the coordinates of peak summits
+ -r  or --refine                                Refines peak boundaries
+ -x  or --relaxed                               Uses more relaxed criteria to refine peak boundaries (requires -r)
  -pc or --pseudocount      <float>              Pseudocount added to read counts to avoid division by 0 (>0, Default: 1)
- -mc or --mean-coverage    <float>              Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
- -ec or --median-coverage  <float>              Discards any transcript with median coverage below this threshold (>=0, Default: 0)
+ -mc or --mean-coverage    <float>              Discards any transcript with mean coverage below this threshold in the control sample (>=0, Default: 0)
+ -ec or --median-coverage  <float>              Discards any transcript with median coverage below this threshold in the control sample (>=0, Default: 0)
  -D  or --decimals         <int>                Number of decimals for reporting enrichment/p-value (1-10, Default: 3)
 
 HELP
     
 }
-

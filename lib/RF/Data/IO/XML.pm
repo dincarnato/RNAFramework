@@ -12,7 +12,7 @@ BEGIN {
     
     %allowedtags = map { $_            => 1,
                          $_ . "-error" => 1 } qw(sequence reactivity score ratio
-                                                 probability shannon);
+                                                 probability shannon structure);
     
 }
 
@@ -41,6 +41,7 @@ sub new {
                    _maxmutrate          => undef,
                    _tosmaller           => undef,
                    _combined            => undef,
+                   _structure           => undef,
                    _reactivity          => [],
                    _probability         => [],
                    _shannon             => [],
@@ -123,6 +124,7 @@ sub _readxml {
         my $value = $values{$tag};
         $value =~ s/\n|\r//g;
         $value =~ s/<\/.+?>//g;
+        $value =~ s/ //g;
         
         $self->throw("Sequence contains invalid characters") if ($tag eq "sequence" &&
                                                                  !isna($value));

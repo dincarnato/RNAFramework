@@ -35,7 +35,7 @@ my ($output, $overwrite, $command, $help,
     $tmp, $tmpdir, $madetmp, $index,
     $tab, @index, @rc, %commands);
 
-%commands = map { $_ => 1 } qw(index view merge);
+%commands = map { $_ => 1 } qw(index view merge stats);
 
 do {
     
@@ -78,12 +78,12 @@ if (!@index) {
     
     mktmpdir();
     
-    for (@rc) {
+    for (0 .. ($command =~ /^view|stats$/ ? 0 : $#rc)) {
         
         my ($file, $rc, $rci);
-        $file = (fileparse($_, qr/((\.[^.\s]+)+)$/))[0];
+        $file = (fileparse($rc[$_], qr/((\.[^.\s]+)+)$/))[0];
         $rci = $tmpdir . $tmp . "_" . $file . ".rci";
-        $rc = RF::Data::IO::RC->new( file       => $_,
+        $rc = RF::Data::IO::RC->new( file       => $rc[$_],
                                      buildindex => 1,
                                      index      => $rci );
         
@@ -99,10 +99,11 @@ else { @index = ($index) x @rc; }
 for (0 .. $#index) {
     
     die "\n  [!] Error: Provided RCI index file \"" . $index[$_] . "\" does not exist\n\n" if (!-e $index[$_]);
-    die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]);
+    #die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]);
     
 }
-for (@rc) { die "\n  [!] Error: Provided RC file \"" . $_ . "\" does not exist\n\n" if (!-e $_); }
+
+for (0 .. ($command =~ /^view|stats$/ ? 0 : $#rc)) { die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]); }
 
 if ($command eq "index") {
     
@@ -114,28 +115,35 @@ if ($command eq "index") {
     }
     
 }
-elsif ($command eq "view") {
+elsif ($command =~ m/^view|stats$/) {
     
     my $rcin = RF::Data::IO::RC->new( file  => $rc[0],
                                       index => $index[0] );
     
-    while(my $entry = $rcin->read()) {
+    if ($rc[1]) {
         
-        if ($tab) {
+        for (split(/[;,]/, $rc[1])) {
             
-            my (@sequence, @counts, @coverage);
-            @sequence = split(//, $entry->sequence());
-            @counts = $entry->counts();
-            @coverage = $entry->coverage();
+            my $entry = $rcin->read($_);
             
-            print $entry->id();
-            print "\n" . join("\t", $sequence[$_], $counts[$_], $coverage[$_]) for (0 .. $#sequence);
-            print "\n\n";
+            if ($command eq "view") { formatentry($entry); }
+            else { print $entry->id() . "\t" . $entry->readscount() . "\n"; }
             
         }
-        else { print join("\n", $entry->id(), $entry->sequence, join(",", $entry->counts()), join(",", $entry->coverage())) . "\n\n"; }
         
     }
+    else {
+        
+        while(my $entry = $rcin->read()) {
+            
+            if ($command eq "view") { formatentry($entry); }
+            else { print $entry->id() . "\t" . $entry->readscount() . "\n"; }
+            
+        }
+        
+    }
+    
+    print "\nTotal\t" . $rcin->mappedreads() . "\n\n" if ($command eq "stats");
     
 }
 elsif ($command eq "merge") {
@@ -151,7 +159,8 @@ elsif ($command eq "merge") {
     die "\n [!] Error: Provided RC files have different sizes\n\n" if (@rc > 1 &&
                                                                        sum(map { (-s $rc[$_]) - (-s $rc[$_ - 1]) } 1 .. $#rc));
     
-    my ($rcout, @rcin);
+    my ($rcout, $mappedreads, @rcin);
+    $mappedreads = 0;
     $rcout = RF::Data::IO::RC->new( file       => $output,
                                     index      => $output . ".rci",
                                     buildindex => 1,
@@ -162,7 +171,7 @@ elsif ($command eq "merge") {
     
     while(my $entry = $rcin[0]->read()) {
         
-        my ($merge, @counts, @coverage);
+        my ($merge, $readscount, @counts, @coverage);
         @counts = $entry->counts();
         @coverage = $entry->coverage();
         
@@ -176,6 +185,7 @@ elsif ($command eq "merge") {
                     " between files \"" . $rc[0] . "\" and \"" . $rc[$_+1] . "\"\n\n" if ($entry->sequence() ne $entries[$_]->sequence());
                 
                 my (@tmpcounts, @tmpcoverage);
+                $readscount += $entries[$_]->readscount();
                 @tmpcounts = $entries[$_]->counts();
                 @tmpcoverage = $entries[$_]->coverage();
                 @counts = map { $counts[$_] + $tmpcounts[$_] } 0 .. $#counts;
@@ -185,19 +195,45 @@ elsif ($command eq "merge") {
             
         }
         
-        $merge = RF::Data::RC->new( id       => $entry->id(),
-                                    sequence => $entry->sequence(),
-                                    counts   => \@counts,
-                                    coverage => \@coverage );
+        $merge = RF::Data::RC->new( id         => $entry->id(),
+                                    sequence   => $entry->sequence(),
+                                    counts     => \@counts,
+                                    coverage   => \@coverage,
+                                    readscount => $readscount );
         $rcout->write($merge);
         
     }
     
+    $mappedreads += $_->mappedreads() for (@rcin);
+    
+    $rcout->mappedreads($mappedreads);
     $rcout->close();
     
 }
 
 cleanup();
+
+sub formatentry {
+    
+    my $entry = shift;
+    
+    return unless($entry);
+    
+    if ($tab) {
+            
+        my (@sequence, @counts, @coverage);
+        @sequence = split(//, $entry->sequence());
+        @counts = $entry->counts();
+        @coverage = $entry->coverage();
+        
+        print $entry->id();
+        print "\n" . join("\t", $sequence[$_], $counts[$_], $coverage[$_]) for (0 .. $#sequence);
+        print "\n\n";
+        
+    }
+    else { print join("\n", $entry->id(), $entry->sequence, join(",", $entry->counts()), join(",", $entry->coverage())) . "\n\n"; }
+    
+}
 
 sub mktmpdir {
     
@@ -291,6 +327,7 @@ HELP
  view             Dumps to screen the content of the provided RC file         
  merge            Combines multiple RC files
  index            Generates RCI index
+ stats            Prints per-transcript and global reads mapping statistics
  
 HELP
 

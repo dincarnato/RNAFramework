@@ -28,6 +28,8 @@ __-cq3__ *or* __--cutadapt-3quality__ | int | Quality threshold for trimming bas
 __-cqo__ *or* __--cutadapt-quality-only__ | | Disables adapters clipping (only performs quality-based trimming)
 __-cl__ *or* __--cutadapt-len__ | int | Minimum length to keep reads after clipping (&ge;10, Default: __25__)
 __-cm__ *or* __--cutadapt-min-align__ | int | Minimum alignment in nt to adapter’s sequence (&gt;0, Default: __1__)
+__-ctn__ *or* __--cutadapt-trim-N__ | | Trims Ns at the end of the read
+__-cmn__ *or* __--cutadapt-max-N__ | float | Discards reads with more than this number of Ns (Default: __off__)<br/>__Note:__ if a value between 0 and 1 is provided, this is interpreted as a fraction of read's length
 __-cp__ *or* __--clipped__ | | Assumes that reads have been already clipped
  | | __Mapping options__
 __-mp__ *or* __--mapping-params__ | string | Manually specify additional aligner parameters (e.g. ``-mp "-n 2 -l 15"``)<br/>__Note:__ for a complete list of aligner's parameters, please check the aligner's documentation

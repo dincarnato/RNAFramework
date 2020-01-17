@@ -50,13 +50,13 @@ my ($tmp, $tmpdir, $output, $wt,
     $help, $overwrite, $error, $bam_trim5,
     $offset, $threads, $processmanager, $mbfile,
     $madetmp, $table, $mutcount, $seqio,
-    $rcio, $includeclip, $nomapcount, $covonly,
+    $rcio, $includeclip, $covonly,
     $nodel, $pp, $po, $fromhead,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $rightalign,
-    @bam_trim5, @pool, %transcripts, %spacer,
-    %files, %masks);
+    $discardshorter, @bam_trim5, @pool, %transcripts,
+    %spacer, %files, %masks);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -70,7 +70,6 @@ do {
                 "t|tmp-dir=s"                => \$tmpdir,
                 "o|output-dir=s"             => \$output,
                 "ow|overwrite"               => \$overwrite,
-                "nm|no-mapped-count"         => \$nomapcount,
                 "t5|trim-5prime=s"           => \$bam_trim5,
                 "wt|working-threads=i"       => \$wt,
                 "s|samtools=s"               => \$samtools,
@@ -95,7 +94,8 @@ do {
                 "eq|median-quality=i"        => \$medianqual,
                 "cc|collapse-consecutive"    => \$collapse,
                 "mc|max-collapse-distance=i" => \$maxmutdist,
-                "es|eval-surrounding"        => \$evalsurround ) or help(1);
+                "es|eval-surrounding"        => \$evalsurround,
+                "ds|discard-shorter=i"       => \$discardshorter ) or help(1);
 
 };
 
@@ -116,6 +116,7 @@ $mapqual //= 10;
 $maxdel //= 10;
 $maxmutdist //= 2;
 $maxmut ||= 0.15;
+$discardshorter //= 0;
 $samtools ||= which("samtools");
 
 $tmpdir =~ s/\/?$/\//;
@@ -226,7 +227,6 @@ foreach my $sample (uniq(@ARGV)) {
                                    type    => guess_type($sample),
                                    head    => undef,
                                    trim5   => 0,
-                                   nreads  => 0,
                                    hashead => 0 }));
     
     $files{$file} = $#qcounter;
@@ -447,38 +447,39 @@ else {
     
 }
 
-# Count mapped reads
-
-if (!$nomapcount) {
-
-    print "\n[+] Getting total mapped reads count...\n";
-    
-    $processmanager->onstart(sub { print "\n  [-] Counting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-        
-    foreach my $sample (@qcounter) {
-        
-        my $path = $sample->{path};
-        
-        $processmanager->enqueue( command => sub { my $n = `samtools view -F 0x40 "$path" | cut -f1 | sort -T "$tmpdir" | uniq | wc -l`; chomp($n); return($n); },
-                                  id      => $sample->{file} );
-        
-    }
-    
-    $processmanager->start();
-    $processmanager->waitall();
-    
-    while (my $sample = $processmanager->dequeue()) {
-        
-        die "\n\n  [!] Error: Unable to count total mapped reads for sample \"" . $sample->id() . "\"\n\n" if (!ispositive($sample->exitcode()));
-        
-        $qcounter[$files{$sample->id()}]->{nreads} = $sample->exitcode();
-        
-    }
-    
-    print "\n";
-    
-}
-else { print "\n[+] Skipping total mapped reads counting..."; }
+# Removed, now total reads is just the sum of all reads processed
+## Count mapped reads
+#
+#if ($mapcount) {
+#
+#    print "\n[+] Getting total mapped reads count...\n";
+#    
+#    $processmanager->onstart(sub { print "\n  [-] Counting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+#        
+#    foreach my $sample (@qcounter) {
+#        
+#        my $path = $sample->{path};
+#        
+#        $processmanager->enqueue( command => sub { my $n = `samtools view -F 0x40 "$path" | cut -f1 | LC_ALL=C sort -T "$tmpdir" | uniq | wc -l`; chomp($n); return($n); },
+#                                  id      => $sample->{file} );
+#        
+#    }
+#    
+#    $processmanager->start();
+#    $processmanager->waitall();
+#    
+#    while (my $sample = $processmanager->dequeue()) {
+#        
+#        die "\n\n  [!] Error: Unable to count total mapped reads for sample \"" . $sample->id() . "\"\n\n" if (!ispositive($sample->exitcode()));
+#        
+#        $qcounter[$files{$sample->id()}]->{nreads} = $sample->exitcode();
+#        
+#    }
+#    
+#    print "\n";
+#    
+#}
+#else { print "\n[+] Skipping total mapped reads counting..."; }
 
 if (-e $mbfile) {
 
@@ -597,20 +598,24 @@ sub count {
             while (!eof($fh)) {
                 
                 my ($row, $clip5, $cov, $ins,
-                    $editdist, @row);
+                    $editdist, $truelen, @row);
                 $row = <$fh>;
                 chomp($row);
                 @row = split(/\t/, $row);
                 
                 next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
                 
-                ($clip5, $cov, $ins) = parsecigar($row[5]);
+                ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
                 @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
                 
-                next if ($editdist / $cov > $maxmut);
                 next if (!exists $transcripts{$row[2]});
-                next if (median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
+                next if ($mutcount &&
+                         $truelen < $discardshorter);
+                next if ($mutcount &&
+                         $editdist / $cov > $maxmut);
+                next if ($mutcount &&
+                         median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
                 next if ($po &&
                          $row[1] & 1 &&
                          $row[1] & 8); # Read is one of a pair, but one mate is unmapped
@@ -674,7 +679,9 @@ sub count {
                     if ($mutcount &&
                         $row !~ m/NM:i:0/) {
                         
-                        my (@mutations, @uniqmutations);
+                        my ($start, $end, @mutations, @uniqmutations);
+                        $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+                        $end = $row[3] + $cov - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 2;
                         @mutations = parsemd(\@row, $last{sequence});
                         @mutations = uniq(@mutations, @{$ins}) if (!$noins);
                         @mutations = collapsemutations(@mutations) if ($collapse);
@@ -734,7 +741,7 @@ sub count {
             
             close($fh);
             
-            $rcio->mappedreads($sample->{nreads});
+            $rcio->mappedreads($stats{total});
             $rcio->close();
             
             $stats = "\n  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " transcripts covered";
@@ -911,8 +918,9 @@ sub parsecigar {
     
     my $cigar = shift;
     
-    my ($clip, $cov, $last, @ins);
-    ($clip, $cov, $last) = (0, 0, 0);
+    my ($clip, $cov, $truelen, $last,
+        @ins);
+    ($clip, $cov, $truelen, $last) = (0, 0, 0, 0);
     
     while ($cigar =~ m/^(\d+[SH])/) {
         
@@ -931,13 +939,14 @@ sub parsecigar {
         $cov += $n if (($includeclip && $op =~ m/^[DNM=XSH]$/) ||
                        (!$includeclip && $op =~ m/^[DNM=X]$/));
         $last += $n if ($op =~ m/^[DNM=X]$/);
+        $truelen += $n if ($op =~ m/^[MI]$/);
         push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
         
         $cigar =~ s/^$n$op//;
         
     }
     
-    return($clip, $cov, \@ins);
+    return($clip, $cov, $truelen, \@ins);
     
 }
 
@@ -951,8 +960,8 @@ sub editdist {
         
         my ($md, $del, $mut);
         $md = $1;
-        $del = $md =~ s/\^[ACGT]+//g;
-        $mut = $md =~ tr/ACGT/ACGT/;
+        ($del) = $md =~ s/\^(?:N*[ACGT]+|[ACGT]+N*)[ACGTN]*//g; # This is to avoid counting N-only deletions
+        ($mut) = $md =~ tr/ACGT/ACGT/;
         $dist = $del + $mut;
         
     }
@@ -1060,9 +1069,6 @@ sub help {
  -t  or --tmp-dir             <string>       Temporary directory (Default: <output>/tmp)
  -o  or --output-dir          <string>       Output directory (Default: rf_count/)
  -ow or --overwrite                          Overwrites output directory (if the specified path already exists)
- -nm or --no-mapped-count                    Disables counting of total mapped reads
-                                             Note: This option should be avoided when processing SAM/BAM files from Psi-seq/Pseudo-seq
-                                                   and 2OMe-seq experiments
  -r  or --sorted                             Assumes that the provided SAM/BAM files are already sorted lexicographically by
                                              transcript ID, and numerically by position
  -t5 or --trim-5prime         <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
@@ -1074,8 +1080,7 @@ sub help {
                                              --trim-5prime) parameter, RF Count will try to guess it automatically from the header of
                                              the provided SAM/BAM files
  -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
-                                             Note: Transcripts in this file must match transcripts in SAM/BAM file headers.
-                                             This can be omitted if a Bowtie index is specified by -bi (or --bowtie-index).
+                                             Note: Transcripts in this file must match transcripts in SAM/BAM file headers
  -mf or --mask-file           <string>       Path to a mask file
  -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
                                              both mates are mapped will be considered
@@ -1092,6 +1097,7 @@ sub help {
   
  |
  +- Mutation count mode options
+    -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: disabled)
     -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
     -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
                                                   Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
@@ -1106,7 +1112,6 @@ sub help {
     -eq or --median-quality          <int>        Median quality score threshold for discarding low-quality reads (Phred+33, Default: 20)
     -cc or --collapse-consecutive                 Collapses consecutive mutations/indels toward the 3'-most one
     -mc or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
- 
  
 HELP
     

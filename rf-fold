@@ -963,7 +963,7 @@ sub fold { # Threads
                 
             }
             
-            $ticksby = $length < 10 ? 1 : (10 ** (length($length) - 1)) / 2;
+            $ticksby = $length < 10 ? 1 : (10 ** (length($length) - 1)) / 4;
             $file = $output . "images/" . $id . ".svg";
             $image = Graphics::Container->new( height  => abs(maprange(0, 1000, -$maxheight, -$minheight, min($length, 1000))), # Min: 500 / Max: 1000px
                                                width   => 1000,
@@ -1705,7 +1705,7 @@ sub help {
                                                                                              [2] RNAstructure 
  
  -p   or --processors            <int>       Number of processors to use for the analysis (Default: 1)
- -g   or --img                               Enables generation of graphical reports
+ -g   or --img                               Enables the generation of graphical reports
  -t   or --temperature           <float>     Temperature in Celsius degrees (Default: 37.0)
  -sl  or --slope                 <float>     Sets slope used with structural probing data restraints (Default: 1.8 [kcal/mol])
  -in  or --intercept             <float>     Sets intercept used with structural probing data restraints (Default: -0.6 [kcal/mol])

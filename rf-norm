@@ -68,7 +68,7 @@ do {
                 "c|config-file=s"        => \$configfile,
                 "sm|scoring-method=s"    => \$scoremethod,
                 "nm|norm-method=s"       => \$normmethod,
-                "nw|norm-window=i"       => \$normwin,
+                "nw|norm-window=s"       => \$normwin,
                 "wo|window-offset=i"     => \$winoffset,
                 "dw|dynamic-window"      => \$dynwin,
                 "rb|reactive-bases=s"    => \$reactive,
@@ -107,6 +107,8 @@ $suffix = $raw ? "_raw/" : "_norm/";
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
                                                                                           $decimals > 10);
+die "\n  [!] Error: Maximum allowed window size for dynamic windows is 30000 nt\n\n" if ($dynwin &&
+                                                                                         $normwin > 30000);
 
 print "\n[+] Parsing configuration...";
 

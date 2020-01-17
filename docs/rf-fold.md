@@ -24,7 +24,7 @@ Shannon entropy is calculated as: <br/>
 <math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>H</mi><mi>i</mi></msub><mo>=</mo><mo>-</mo> <munderover><mo>&sum;</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>J</mi></munderover><msub><mi>p</mi><mi>i,j&#xA0;</mi></msub><msub><mi>log</mi><mn>10&#xA0;</mn></msub><msub><mi>p</mi><mi>i,j</mi></msub></math><br/>
 where *p<sub>i,j</sub>* is the probability of base *i* of being base-paired to base *j*, over all its potential J pairing partners.<br/>
 Since version 2.5, RF Fold generates vector graphical reports (SVG format) for each structure, reporting the per-base reactivity, the MEA structure, the per-base Shannon entropy, and the base-pairing probabilities:<br/><br/>
-![ShapeKnots/RNA Framework comparison](http://www.rnaframework.com/images/graphical_report.png)
+![Graphical report](http://www.rnaframework.com/images/graphical_report.png)
 <br/><br/>
 
 !!! note "Note"
@@ -44,7 +44,7 @@ __-ow__ *or* __--overwrite__ | | Overwrites the output directory if already exis
 __-ct__ *or* __--connectivity-table__ | | Writes predicted structures in CT format (Default: __Dot-bracket notation__)
 __-m__ *or* __--folding-method__ | int | Folding method (1-2, Default: __1__):<br/>__1.__ ViennaRNA <br/>__2.__ RNAstructure
 __-p__ *or* __--processors__ | int | Number of processors (threads) to use (Default: __1__)
-__-g__ *or* __--img__ | | Enables generation of graphical reports
+__-g__ *or* __--img__ | | Enables the generation of graphical reports
 __-t__ *or* __--temperature__ | float | Temperature in Celsius degrees (Default: __37.0__)
 __-sl__ *or* __--slope__ | float | Sets the slope used with structure probing data restraints (Default: __1.8__ [kcal/mol])
 __-in__ *or* __--intercept__ | float | Sets the intercept used with structure probing data restraints (Default: __-0.6__ [kcal/mol])

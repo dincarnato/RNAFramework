@@ -75,7 +75,7 @@ __-ni__ *or* __--norm-independent__ | | Each one of the reactive bases will be n
 __-dw__ *or* __--dynamic-window__ | | When enabled, the normalization window is dynamically resized to include at least that number of reactive bases (e.g. ``-rb AC -nw 50 -dw`` instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
 __-mc__ *or* __--mean-coverage__ | float | Discards any transcript with mean coverage below this threshold (&ge;0, Default: __0__)
 __-ec__ *or* __--median-coverage__ | float | Discards any transcript with median coverage below this threshold (&ge;0, Default: __0__)
-__-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
+__-nw__ *or* __--norm-window__ | int | Window size (in nt) for signal normalization (&ge;3, Default: __whole transcript__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])<br/>__Note:__ a maximum window size of 30,000 nt is allowed when ``-dw`` (or ``--dynamic-window``) is enabled
 __-wo__ *or* __--window-offset__ | int | Offset (in nt) for window sliding during normalization (Default: __none__ [Ding; Siegfried], __50__ [Rouskin; Zubradt])
 __-D__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
 __-n__ *or* __--nan__ | int | Positions of transcript with read coverage behind this threshold, will be reported as NaN in the reactivity profile (&gt;0, Default: __10__)

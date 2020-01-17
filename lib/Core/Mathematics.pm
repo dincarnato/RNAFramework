@@ -40,7 +40,7 @@ our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                                        diff product maprange intersect
                                        variance inrange haspositive hasnegative
                                        hasnan haszero absolute euclideandist
-                                       normeuclideandist) ] );
+                                       normeuclideandist mround) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -384,6 +384,23 @@ sub round {
     if ($value >= ($int + 0.5)) { return(ceil($value)); }
     else { return($int); }
     
+}
+
+sub mround {
+  
+  my $value = shift;
+  my $multiple = shift || 0.5;
+  
+  Core::Utils::throw("No value has been provided") if (!defined $value);
+  Core::Utils::throw("Value must be a real number") if (!isreal($value));
+  Core::Utils::throw("Multiple value must be a real number") if (!isreal($multiple));
+  
+  $multiple = abs($multiple);
+  
+  return($value >= 0 ? $multiple * int(($value + 0.5 * $multiple) / $multiple) :
+                       $multiple * ceil(($value - 0.5 * $multiple) / $multiple)); 
+  
+  
 }
 
 sub sum {

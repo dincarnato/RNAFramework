@@ -1,5 +1,17 @@
 The RF JackKnife takes one or more XML reactivity files, and a set of reference RNA structures in dotbracket notation, and iteratively calls ``rf-fold`` by tuning the slope and intercept folding parameters. This is useful to calibrate the folding parameters for a specific probing reagent or experiment type.<br/>
-It produces 3 CSV tables respectively containing the positive predictive value (PPV), sensitivity, and the geometric mean of the 2 values for each slope/intercept pair.<br/><br/>
+It produces 3 CSV tables respectively containing the positive predictive value (PPV), sensitivity, and the geometric mean of the 2 values for each slope/intercept pair.<br/>
+R can be used to easily generate heatmaps using these CSV tables:<br/>
+
+```r
+library(gplots)
+library(RColorBrewer)
+csv<-read.csv("geometric_mean.csv", sep = ";", check.names = FALSE)
+row.names(csv)<-csv$Mean
+csv<-csv[,-1]
+csv<-data.matrix(csv)
+heatmap.2(csv[nrow(csv):1,], col = rev(brewer.pal(11, "Spectral")), trace = "none", cellnote = round(csv[nrow(csv):1,], digits = 2), notecol = "black", Rowv = FALSE, Colv = FALSE, dendrogram = "none", xlab = "Intercept (kcal/mol)", ylab = "Slope (kcal/mol)", key = FALSE)
+```
+<br/>
 ![PPV Sensitivity table](http://www.rnaframework.com/images/PPV_Sensitivity_table.png)
 
 # Usage

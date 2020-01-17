@@ -66,7 +66,7 @@ sub row {
     my $self = shift;
     my @data = @_;
     
-    $self->{_lengths}->[$_+1] = max(length($data[$_]), $self->{_lengths}->[$_+1] || 0) for (0 .. $#data);
+    $self->{_lengths}->[$_+1] = max(length($data[$_]) || 0, $self->{_lengths}->[$_+1] || 0) for (0 .. $#data);
     
     push(@{$self->{_table}}, ["Row", @data]);
     

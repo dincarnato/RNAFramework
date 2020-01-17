@@ -57,12 +57,12 @@ sub formatlongtext {
     Core::Utils::throw("Indentation value must be a positive integer") if (!ispositive($indent) ||
                                                                            !isint($indent));
     
-    my ($columns, $row, $remove, $formatted,
+    my ($columns, $remove, $formatted, $row,
         @words);
     $columns = (termsize())[1];
     $indent = " " x $indent;
     @words = split(/\s+/, $text);
-
+    
     while (@words) {
         
         my $word = shift(@words);
@@ -70,22 +70,34 @@ sub formatlongtext {
         if (length($indent . $row . $word) > $columns ||
             $word =~ m/\.$/) {
             
-            if (length($word) > $columns) { $row .= $word; }
+            if (length($indent . $row . $word) > $columns) {
+                
+                my $part = substr($word, 0, $columns - length($indent . $row));
+                $row .= $part . "\n" . $indent;
+                $word =~ s/^$part//;
+                
+                unshift(@words, $word) if ($word);
+                
+            }
             else {
                 
-                if ($word =~ m/\.$/) { $row .= $word . "\n" . $indent; }
-                else { unshift(@words, "\n" . $indent . $word); }
+                if ($word =~ m/\.$/) { $row .= $word; }
+                else { unshift(@words, $word); }
+            
+                $row .= "\n" . $indent;
             
             }
             
             $formatted .= $row;
             undef($row);
             
+            next;
+            
         }
         else { $row .= $word . " "; }
         
     }
-
+        
     $formatted .= $row;
     
     return($formatted);

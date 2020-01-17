@@ -1,12 +1,20 @@
 The RF RCTools module enables easy visualization/manipulation of RC files. It allows indexing, merging and dumping RC files.<br />
 This tool is particularly useful when the same sample is sequenced more than one time to increase its coverage. Now, instead of merging the BAM files and re-calling the `rf-count` on the whole dataset (that is very time-consuming), each sample can be processed independently and simply merged to the RC file from the previous analysis.<br/>
 # Usage
+Available tools are: __index__, __view__, __merge__ and __stats__:
+
+Tool      |  Description
+--------: | :------------
+view | Dumps to screen the content of the provided RC file         
+merge | Combines multiple RC files
+index | Generates RCI index
+stats | Prints per-transcript and global reads mapping statistics
+
 To list the required parameters, simply type:
 
 ```bash
 $ rf-rctools [tool] -h
 ```
-Available tools are: __index__, __view__ and __merge__
 
 Parameter         | Tool | Type | Description
 ----------------: | :--: | :--: | :------------
@@ -84,4 +92,17 @@ in which each transcript is reported as a multi-row entry (with the number of ro
 - Number of RT-stops (or mutations)
 - Coverage
 
-Consecutive entries are separated by a newline.
+Consecutive entries are separated by a newline.<br/>
+If a comma (or semicolon) separated list of transcript IDs is provided, only those transcripts will be shown in the output (e.g. `rf-rctools view -i index.rci input.rc 'Transcript_2'`):<br/>
+
+```
+Transcript_2
+GAATTCATGCATGCG...AGCTAGCGGGGATAT
+0,0,0,1,0,2,5,30,17,17,15,34,46,32,409,48,509,56,480,499,68,715,677,782,74,1016,988,2035,108,158
+512,583,702,783,847,1517,1852,2084,2191,4791,10389,15321,16535,17231,17823,18254,19388,22321,22944,25503,27254,28285,36273,41905,50366,50724,71321,73144,77610,77903
+```
+Optionally, the `view` tool allows specifying one or more transcript IDs (either separated by commas or semicolons) to visualize:<br/>
+
+```bash
+$ rf-rctools view <file.rc> "Transcript_1;Transcript_2,Transcript_n"
+```

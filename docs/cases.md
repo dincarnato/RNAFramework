@@ -44,7 +44,7 @@ $ rf-map -bnr -b3 51 -bi hg38_refGene_bt2/hg38_refGene S1.fastq V1.fastq --bowti
 __4.__ Count RT-stops in both samples using ``rf-count``:
 
 ```bash
-$ rf-count -r -nm -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
+$ rf-count -r -f hg38_refGene_bt/hg38_refGene.fa rf_map/*.bam
 ```
 <br/>
 __5.__ Normalize data using ``rf-norm``:
@@ -95,7 +95,7 @@ $ rf-map -ca3 CTGTCTCTTATACACATCT -bs -bi Scerevisiae_rRNA_bt2/reference Sc_Tag_
 __4.__ Count mutations using ``rf-count``:
 
 ```bash
-$ rf-count -r -m -nm -f Scerevisiae_rRNA_bt2/reference.fa rf_map/Sc_Tag_rRNA.bam
+$ rf-count -r -m -f Scerevisiae_rRNA_bt2/reference.fa rf_map/Sc_Tag_rRNA.bam
 ```
 <br/>
 __5.__ Normalize data using ``rf-norm``:
@@ -151,7 +151,7 @@ Untreated_R1.fastq,Untreated_R1.fastq
 __6.__ Count mutations using ``rf-count``:
 
 ```bash
-$ rf-count -p 3 -nm -r -f HIV.fasta -m -na -md 200 rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
+$ rf-count -p 3 -r -f HIV.fasta -m -na -md 200 rf_map/Denatured.bam rf_map/1M7.bam rf_map/Untreated.bam
 ```
 <br/>
 __7.__ Normalize data using ``rf-norm``:
@@ -212,7 +212,7 @@ $ rf-map -ca3 GATCGGAAGAGCGGTTCAGCAG -bm 20 -bi hg19_refGene_bt/hg19_refGene Inp
 __4.__ Calculate read coverage in both samples using ``rf-count``:
 
 ```bash
-$ rf-count -nm -r -co -f hg19_refGene_bt/hg19_refGene.fa rf_map/*.bam
+$ rf-count -r -co -f hg19_refGene_bt/hg19_refGene.fa rf_map/*.bam
 ```
 <br/>
 __5.__ Call m<sup>6</sup>A peaks using ``rf-peakcall``:

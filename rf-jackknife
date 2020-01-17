@@ -379,7 +379,7 @@ $results{missingstruct} = 1 unless (sum(values %results));
 print "\n[+] Jackknifing statistics:\n" .
       "\n  [*] Used transcripts:     " . $results{used} .
       "\n  [*] Excluded transcripts: " . ($results{ioerr} + $results{diffseq} + $results{missingstruct}) . " total" .
-      "\n                            " . $results{ioerr} . " structure file parsing failed" .
+      "\n                            " . $results{ioerr} . " XML file parsing failed" .
       "\n                            " . $results{diffseq} . " mismatch between reference and XML transcript sequences" .
       "\n                            " . $results{missingstruct} . " missing XML file";
 

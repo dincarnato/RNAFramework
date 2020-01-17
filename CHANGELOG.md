@@ -1,3 +1,28 @@
+## [2.6.9] - 2019-10-30
+### Added
+- Added possibility to only combine reactivity profiles exceeding a given correlation cutoff in rf-combine. Parameters "-c" (or "--min-correlation) and "-m" (or "--min-values") respectively control the correlation threshold and the minimum number/fraction of covered bases to calculate correlation
+- Added the rf-correlate tool to calculate pairwise correlations between structure probing experiments
+- Added parameter "-la" (or "--list-annotations") to rf-index to list available UCSC data tables containing gene annotations
+- Added parameters "-H" (or "--host") and "-P" (or "--port") to rf-index to allow specifying and alternative UCSC server hostname and port
+- Added parameters "-ctn" (or "--cutadapt-trim-N") and "-cmn" (or "--cutadapt-max-N") to rf-map to respectively allow trimming Ns from read ends and discarding reads containing more than a specified number of Ns
+- Added parameter "-ds" (or "--discard-shorter") to rf-count to discard reads shorter than a given length (excluding clipped bases)
+- Added the possibility to specify one or more transcripts to visualize with rf-rctools "view"
+- Added a check to rf-norm to allow a maximum window size of 30,000 nt when dynamic windowing is enabled
+- Added the "-g" (or "--img") and "-mp" (or "--meta-plot") parameters to rf-peakcall to respectively allow generating normalized gene coverage plots or meta-gene plots of coverage/peaks distribution
+- Added the "-r" (or "--refine"), "-x" (or "--relaxed") and "-s" (or "--summit") parameters to rf-peakcall to allow refining peak boundaries and to allow generating a BED file with the coordinates of peak summits
+
+### Changed
+- Fixed rf-combine to report combined score and ratio when combining rf-modcall XML files
+- Changed rf-count to ignore N-only deletions when calculating edit distance
+- Removed the "-nm" (or "--no-mapped-count") parameter of rf-count (now total read count is automatically computed as the sum of reads covering each transcript in the dataset)
+- Changed the "-l" (or "--list") parameter of rf-index to "-lp" (or "--list-prebuilt")
+- Fixed a bug in rf-map causing mapping to fail with filenames containing dots in paired-end experiments
+- Cutadapt v2.1 or greater is now required (multithread support)
+
+### API changes
+- Added the mround() function to Core::Mathematics to allow rounding to the nearest multiple
+- Added support for an extra "structure" tag in RNA Framework's XML files, allowing storing dot-bracket structures inside XML reactivity files
+
 ## [2.6.8] - 2019-02-20
 ### Added
 - Added flag "--max-mutation-rate" to rf-norm to allow excluding bases with mutation rate > than a user-defined threshold (for MaP experiments)

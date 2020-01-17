@@ -46,7 +46,8 @@ my ($tmp, $tmpdir, $output, $trim3,
     $table, $bk, $cm, $mp,
     $mo, $logdir, $keeplogs, $cq5,
     $cq3, $cqo, $bd, $haspaired,
-    @tmp, %spacer, %files);
+    $trimN, $maxN, @tmp, %spacer,
+    %files);
 
 do {
     
@@ -94,7 +95,9 @@ do {
                 "mp|mapping-params=s"       => \$mp,
                 "mo|manual-only"            => \$mo,
                 "kl|keep-logs"              => \$keeplogs,
-                "b2|bowtie2"                => \$bowtie2 ) or help(1);
+                "b2|bowtie2"                => \$bowtie2,
+                "ctn|cutadapt-trim-N"       => \$trimN,
+                "cmn|cutadapt-max-N=s"      => \$maxN ) or help(1);
 
 };
 
@@ -132,6 +135,8 @@ $bma //= 2;
 $tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
 $bc = 2147483647 if ($bc > 2147483647);
+$maxN = round($maxN) if (isnumeric($maxN) &&
+                         $maxN > 1);
 $logdir = $output . "logs/";
 
 if (isdna(join("", split(/,/, $ca5)))) {
@@ -158,6 +163,8 @@ die "\n  [!] Error: No minimum read length provided\n\n" if (!defined $cl);
 die "\n  [!] Error: Minimum read length should be an integer >= 10\n\n" if ($cl < 10);
 die "\n  [!] Error: Minimum adapter alignment should be an integer > 0\n\n" if ($cm < 1);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Maximum number of Ns must be positive\n\n" if (defined $maxN &&
+                                                                   !ispositive($maxN));
 
 # Bowtie validation
 die "\n  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($trim5) ||
@@ -279,15 +286,14 @@ print "\n[+] Validating FastQ files:\n\n";
 
 foreach my $sample (uniq(@ARGV)) {
     
-    my ($file, @sample);
+    my ($basename, @sample);
     @sample = split(/,/, $sample);
-    $file = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
-    $file =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
-    
+    $basename = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
+    $basename =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
     
     if (uniq(@sample) != @sample) {
         
-        warn "  [!] Warning: Duplicate mate file provided for sample \"" . $file . "\".\n" .
+        warn "  [!] Warning: Duplicate mate file provided for sample \"" . $basename . "\".\n" .
              "               Falling back to single read mode.\n\n";
         
     }
@@ -303,23 +309,24 @@ foreach my $sample (uniq(@ARGV)) {
     }
     
     push(@tmp, { path   => $sample[0],
-                 file   => $file,
+                 id     => $basename,
+                 file   => (fileparse($sample[0], qr/\.[^.]*/))[0],
                  paired => @sample == 2 ? 1 : 0,
                  path2  => @sample == 2 ? $sample[1] : undef,
-                 file2  => @sample == 2 ? (fileparse($sample[1], qr/((\.[^.\s]+)+)$/))[0] : undef,
+                 file2  => @sample == 2 ? (fileparse($sample[1], qr/\.[^.]*/))[0] : undef,
                  gzip   => $sample[0] =~ m/\.gz$/ ? 1 : 0 });
     
     # Error on mixed R1/R2 gzipped/uncompressed files
-    die "  [!] Error: Mixed compressed/uncompressed files for sample \"" . $file . "\"\n\n"if ($tmp[-1]->{paired} &&
-                                                                                               (($tmp[-1]->{gzip} && $sample[1] !~ m/\.gz$/) ||
-                                                                                                (!$tmp[-1]->{gzip} && $sample[1] =~ m/\.gz$/)));
+    die "  [!] Error: Mixed compressed/uncompressed files for sample \"" . $basename . "\"\n\n"if ($tmp[-1]->{paired} &&
+                                                                                                   (($tmp[-1]->{gzip} && $sample[1] !~ m/\.gz$/) ||
+                                                                                                    (!$tmp[-1]->{gzip} && $sample[1] =~ m/\.gz$/)));
     
-    $files{$file} = $#tmp;
-    $spacer{$file} = length($file);
+    $files{$basename} = $#tmp;
+    $spacer{$basename} = length($basename);
     
-    $table->row($file,
+    $table->row($basename,
                 @sample == 2 ? "Paired-end" : "Single-read",
-                @sample == 2 ? join(",", (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0], $tmp[-1]->{file2}) : $file);
+                @sample == 2 ? join(",", ($tmp[-1]->{file}, $tmp[-1]->{file2}) ): $tmp[-1]->{file});
     
 }
 
@@ -414,14 +421,17 @@ if (!$clipped) {
     $processmanager->onstart(sub { print "\n  [-] Processing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
     
     my $qualfilter = $cq5 ? $cq5 . "," . $cq3 : $cq3;
+    $cutadapt .= " -j " . $wt;
+    $cutadapt .= " --trim-n" if ($trimN);
+    $cutadapt .= " --max-n " . $maxN if (defined $maxN);
     
     foreach my $sample (@tmp) {
         
         $processmanager->enqueue( command => $sample->{paired} ? $cutadapt . ($cqo ? undef : " -a " . $ca3 . " -A " . $ca5 . " -O " . $cm) . " -m " . $cl . " -q " . $qualfilter . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq -p " . $tmpdir . $tmp . "_" . $sample->{file2} . ".fq " . $sample->{path} . " " . $sample->{path2} :
                                                                  $cutadapt . ($cqo ? undef : " -a " . $ca3 . " -O " . $cm) . " -m " . $cl . " -q " . $qualfilter . " -o " . $tmpdir . $tmp . "_" . $sample->{file} . ".fq " . $sample->{path},
-                                  id      => $sample->{file},
-                                  stdout  => $logdir . $sample->{file} . "_cutadapt.log",
-                                  stderr  => $logdir . $sample->{file} . "_cutadapt.log" );
+                                  id      => $sample->{id},
+                                  stdout  => $logdir . $sample->{id} . "_cutadapt.log",
+                                  stderr  => $logdir . $sample->{id} . "_cutadapt.log" );
     
         $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file} . ".fq";
         $sample->{path2} = $tmpdir . $tmp . "_" . $sample->{file2} . ".fq" if ($sample->{paired});
@@ -507,7 +517,7 @@ foreach my $sample (@tmp) {
         $command .= " --no-mixed" if ($sample->{paired});
         $command .= " --dovetail" if ($sample->{paired} &&
                                       $bd);
-        $command .= " --no-unal -x " . $bi . " -S \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\""; 
+        $command .= " --no-unal -x " . $bi . " -S \"" . $tmpdir . $tmp . "_" . $sample->{id} . ".sam\""; 
         
     }
     else { # Bowtie v1
@@ -528,8 +538,8 @@ foreach my $sample (@tmp) {
     if ($sample->{gzip} &&
         $clipped) {
         
-        $file1 = $tmpdir . $tmp . "_" . $sample->{file} . "_R1.fifo";
-        $file2 = $tmpdir . $tmp . "_" . $sample->{file} . "_R2.fifo" if ($sample->{paired});
+        $file1 = $tmpdir . $tmp . "_" . $sample->{file} . ".fifo";
+        $file2 = $tmpdir . $tmp . "_" . $sample->{file2} . ".fifo" if ($sample->{paired});
         
         $pre = "(mkfifo \"" . $file1 . "\"";
         $pre .= "; mkfifo \"" . $file2 . "\"" if ($sample->{paired});
@@ -539,11 +549,11 @@ foreach my $sample (@tmp) {
     }
     
     $command .= $sample->{paired} ? " -1 \"" . $file1 . "\" -2 \"" . $file2 . "\"" : " \"" . $file1 . "\"";
-    $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{file} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
+    $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{id} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
     ;
     $processmanager->enqueue( command => $pre . $command,
-                              id      => $sample->{file},
-                              stderr  => $logdir . $sample->{file} . "_mapping.log" );
+                              id      => $sample->{id},
+                              stderr  => $logdir . $sample->{id} . "_mapping.log" );
 
 }
 
@@ -558,7 +568,7 @@ for (my $i = 0; $i < @tmp; $i++) {
     
     my ($sample, $total, @stats);
     $sample = $tmp[$i];
-    @stats = bowtie_log($logdir . $sample->{file} . "_mapping.log");
+    @stats = bowtie_log($logdir . $sample->{id} . "_mapping.log");
     $total = sum(@stats[0..2]);
     
     die "\n  [!] Bowtie log processing failed." .
@@ -566,7 +576,7 @@ for (my $i = 0; $i < @tmp; $i++) {
     
     @stats = map { sprintf("%.2f", $_ / $total * 100) . "\%" } @stats;
     
-    print "\n  [*] Sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : "; Suppressed: " . $stats[2] . "]");
+    print "\n  [*] Sample \"" . $sample->{id} . "\"" . (" " x $spacer{$sample->{id}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : "; Suppressed: " . $stats[2] . "]");
     
     if ($stats[3] == 0) {
         
@@ -575,7 +585,7 @@ for (my $i = 0; $i < @tmp; $i++) {
         
     }
     
-    $sample->{path} = $tmpdir . $tmp . "_" . $sample->{file}  . ".sam";
+    $sample->{path} = $tmpdir . $tmp . "_" . $sample->{id}  . ".sam";
     
 }
 
@@ -594,11 +604,11 @@ $processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . ($nob
 
 foreach my $sample (@tmp) {
     
-    my $path = $output . $sample->{file} . ($nobam ? ".sam" : ".bam");
+    my $path = $output . $sample->{id} . ($nobam ? ".sam" : ".bam");
     
-    $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "sam" : "bam") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{file} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
-                              id      => $sample->{file},
-                              stderr  => $logdir . $sample->{file} . "_samtools.log");
+    $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "sam" : "bam") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{id} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
+                              id      => $sample->{id},
+                              stderr  => $logdir . $sample->{id} . "_samtools.log");
     
     $sample->{path} = $path;
     
@@ -730,6 +740,9 @@ sub help {
  -cqo or --cutadapt-quality-only                Disables adapters clipping (only performs quality-based trimming)
  -cl  or --cutadapt-len            <int>        Minimum length to keep reads after clipping (>=10, Default: 25)
  -cm  or --cutadapt-min-align      <int>        Minimum alignment in nt to adapter's sequence (>0, Default: 1)
+ -ctn or --cutadapt-trim-N                      Trims Ns at the end of read
+ -cmn or --cutadapt-max-N          <float>      Discards reads with more than this number of Ns (Default: off)
+                                                Note: if a value between 0 and 1 is provided, this is interpreted as a fraction of read's length
  -cp  or --clipped                              Assumes that the provided FastQ files have been already clipped
  
  Mapping options
