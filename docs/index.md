@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[2019-02-20] RNA Framework v2.6.8 [major release]:__<br/>This version introduces a substantial change in the way rf-norm performs reactivity data normalization. Bases that are below a certain coverage or that have mutation rates > than a user-defined threshold, are now excluded from data normalization.
+    __[2020-01-16] RNA Framework v2.6.9 [major release]:__<br/>Please check the [changelog](https://github.com/dincarnato/RNAFramework/blob/master/CHANGELOG.md) for a complete list of the changes
     
 ## Introduction
 
@@ -46,8 +46,8 @@ Please see <http://www.gnu.org/licenses/> for more information.
 ## Prerequisites
 
 - Linux/Mac system
-- Bowtie v1.1.2 (<http://bowtie-bio.sourceforge.net/index.shtml>), or
-  <br/>Bowtie v2.2.7 or greater (<http://bowtie-bio.sourceforge.net/bowtie2/index.shtml>)
+- Bowtie v1.2.3 (<http://bowtie-bio.sourceforge.net/index.shtml>), or
+  <br/>Bowtie v2.3.5 or greater (<http://bowtie-bio.sourceforge.net/bowtie2/index.shtml>)
 - SAMTools v1.2 or greater (<http://www.htslib.org/>)
 - BEDTools v2.0 or greater (<https://github.com/arq5x/bedtools2/>)
 - Cutadapt v2.1 or greater (<http://cutadapt.readthedocs.io/en/stable/index.html>)
