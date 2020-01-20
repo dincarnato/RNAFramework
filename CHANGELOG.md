@@ -1,4 +1,4 @@
-## [2.6.9] - 2019-10-30
+## [2.6.9] - 2020-01-18
 ### Added
 - Added possibility to only combine reactivity profiles exceeding a given correlation cutoff in rf-combine. Parameters "-c" (or "--min-correlation) and "-m" (or "--min-values") respectively control the correlation threshold and the minimum number/fraction of covered bases to calculate correlation
 - Added the rf-correlate tool to calculate pairwise correlations between structure probing experiments
