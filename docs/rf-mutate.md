@@ -21,7 +21,8 @@ __-lo__ *or* __--longest-orf__ | | Automatically finds the longest ORF
 __-mo__ *or* __--min-orf-length__ | int | Minimum length (in aa) to select the longest ORF (requires ``-lo``, Default: __50__)
 __-als__ *or* __--alt-start__ | | Longest ORF is allowed to start with alternative start codons (requires ``-lo``)
 __-ans__ *or* __--any-start__ | | Longest ORF is allowed to start with any codon (requires ``-lo``)
-__-gc__ *or* __--genetic-code__ | int | Genetic code table for the reference organism (1-33, Default: __1__) __-ec__ *or* __--exclude-codons__ | string | A comma (or semicolon) separated list of rare codons to be avoided 
+__-gc__ *or* __--genetic-code__ | int | Genetic code table for the reference organism (1-33, Default: __1__)<br/>__Note:__ for a detailed list of the available genetic code tables, please refer to [https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi](https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi)
+__-ec__ *or* __--exclude-codons__ | string | A comma (or semicolon) separated list of rare codons to be avoided 
 __-md__ *or* __--min-distance__ | float | Minimum (fractional) base-pair distance between wild-type and mutant (0-1, Default: __0.5__)
 __-t__ *or* __--tollerance__ | float | Maximum (fractional) base-pair distance between wild-type and rescue (0-1, Default: __0.2__)
 __-mi__ *or* __--max-iterations__ | int | Maximum number of iterations (>0, Default: __1000__)
@@ -33,6 +34,39 @@ __-ne__ *or* __--no-ensemble-prob__ | | Disables evaluation of mutant/rescue Bol
 __-vrf__ *or* __--vienna-rnafold__ | string | Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
 
 <br/>
+## Genetic code tables
+Choice of the genetic code affects the identification of the longest ORF (different organisms use different alternative START and/or STOP codons). The following tables are available:
+
+Table            | Description
+----------------:|:------------
+__1__ | Standard Code
+__2__ | Vertebrate Mitochondrial Code
+__3__ | Yeast Mitochondrial Code
+__4__ | Mold, Protozoan, and Coelenterate Mitochondrial Code and Mycoplasma/Spiroplasma Code
+__5__ | Invertebrate Mitochondrial Code
+__6__ | Ciliate, Dasycladacean and Hexamita Nuclear Code
+__9__ | Echinoderm and Flatworm Mitochondrial Code
+__10__ | Euplotid Nuclear Code
+__11__ | Bacterial, Archaeal and Plant Plastid Code
+__12__ | Alternative Yeast Nuclear Code
+__13__ | Ascidian Mitochondrial Code
+__14__ | Alternative Flatworm Mitochondrial Code
+__16__ | Chlorophycean Mitochondrial Code
+__21__ | Trematode Mitochondrial Code
+__22__ | Scenedesmus obliquus Mitochondrial Code
+__23__ | Thraustochytrium Mitochondrial Code
+__24__ | Pterobranchia Mitochondrial Code
+__25__ | Candidate Division SR1 and Gracilibacteria Code
+__26__ | Pachysolen tannophilus Nuclear Code
+__27__ | Karyorelict Nuclear Code
+__28__ | Condylostoma Nuclear Code
+__29__ | Mesodinium Nuclear Code
+__30__ | Peritrich Nuclear Code
+__31__ | Blastocrithidia Nuclear Code
+__33__ | Cephalodiscidae Mitochondrial UAA-Tyr Code
+<br/>
+For a detailed description of each genetic code table, please refer to [https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi](https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi)
+<br/><br/>
 ## Motif file
 The motif file allows providing a list of target structure motifs to mutagenize.<br/>
 It is composed of one or more lines, each one reporting the transcript ID and a comma (or semicolon) separated list of either motif start coordinates (0-based), or motifs in dot-bracket notation:<br/>
@@ -77,7 +111,7 @@ Looking at the following example:<br/>
 ATGGGGATCTATCAGATTCTGGCGATCTACTCAACTGTCGCCAGTTCACTGGTGCTTTTGGTCTCCTAA
 ..(((((((((((((...((((((((..........))))))))....)))))).....)))))))...
 ```
-If the target motif starts at position 19, it will be sufficient to indicate in the ORF file the "IYSTV" portion (for example) of the amino acid sequence, to make RF Mutate identify the full underlying ORF.<br/><br/>
+it will be sufficient to indicate in the ORF file the starting "MGIYQ" portion (for example) of the amino acid sequence, to make RF Mutate identify the full underlying ORF.<br/><br/>
     
 ## Ouput XML files
 For each motif being mutagenized, RF Mutate will generate an XML file, with the following structure:
