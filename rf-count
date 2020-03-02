@@ -56,7 +56,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $rightalign,
     $discardshorter, @bam_trim5, @pool, %transcripts,
-    %spacer, %files, %masks);
+    %spacer, %files, %masks, %realid);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -277,15 +277,20 @@ while (my $entry = $seqio->read()) {
     
     $entry->unmask(); # Makes sequence uppercase
     
-    my ($rentry, $offset);
-    $rentry = RF::Data::RC->new( id       => $entry->id(),
+    my ($realid, $id, $rentry, $offset);
+    $realid = $entry->id();
+    $id = $realid;
+    $id =~ s/\//_/g;    # Fixes sequence ids that can cause errors at later stages
+    
+    $rentry = RF::Data::RC->new( id       => $id,
                                  sequence => $entry->sequence(),
                                  counts   => [(0) x $entry->length()],
                                  coverage => [(0) x $entry->length()] );
     ($offset) = $rcio->write($rentry);
     
     # Store length for later steps
-    $transcripts{$entry->id()} = $entry->length();
+    $transcripts{$id} = $entry->length();
+    $realid{$id} = $realid;
     
 }
 
@@ -317,6 +322,7 @@ foreach my $sample (@qcounter) {
         if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)$/) {
             
             my ($id, $length) = ($1, $2);
+            $id =~ s/\//_/g;
             
             if (exists $transcripts{$id}) {
             
@@ -360,7 +366,7 @@ if ($hashead != @qcounter) {
     open(my $hh, ">", $tmphead) or die "\n\n  [!] Error: Unable to write temporary SAM header (" . $! . ")\n\n";
     select((select($hh), $|=1)[0]);
     
-    $header .= "\@SQ\tSN:" . $_ . "\tLN:" . $transcripts{$_} . "\n" for (sort keys %transcripts);
+    $header .= "\@SQ\tSN:" . $realid{$_} . "\tLN:" . $transcripts{$_} . "\n" for (sort keys %transcripts);
     
     print $hh $header;
     
@@ -375,7 +381,14 @@ if ($hashead != @qcounter) {
         print "\n  [-] Re-heading sample \"" . $sample->{file} . "\"";
         
         # Unfortunately SAMTools cannot re-head SAM files, just BAM files, so we need a different approach
-        if ($sample->{type} eq "SAM") { system("sed -i '1s/^/$header/' " . $sample->{path}); }
+        if ($sample->{type} eq "SAM") {
+            
+            my $tmpbam = $tmpdir . $tmp . "_" . $sample->{file} . ".bam";    
+            system("samtools view -T '" . $multifasta . "' -O BAM -o '" . $tmpbam . "' " . $sample->{path});
+            
+            $sample->{path} = $tmpbam;
+            
+        }
         else { system("samtools reheader -i " . $tmphead . " " . $sample->{path}); }
         
     }
@@ -495,6 +508,7 @@ if (-e $mbfile) {
         next if ($line =~ m/^\s?#/);
         
         my @line = split(/[,;]/, $line);
+        $line[0] =~ s/\//_/g;
         
         next if (@line < 2);
         next if (!exists $transcripts{$line[0]});
@@ -517,7 +531,7 @@ if (-e $mbfile) {
             }
             elsif ($line[$i] =~ m/^(\d+)-(\d+)$/) {
                 
-                my ($start, $end) = ($1 - 1, $2 - 1);
+                my ($start, $end) = ($1, $2);
                 
                 next if (!ispositive($start) ||
                          $start > $end ||
@@ -598,18 +612,20 @@ sub count {
             while (!eof($fh)) {
                 
                 my ($row, $clip5, $cov, $ins,
-                    $editdist, $truelen, @row);
+                    $editdist, $truelen, $id, @row);
                 $row = <$fh>;
                 chomp($row);
                 @row = split(/\t/, $row);
                 
                 next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
                 
+                $id = $row[2];
+                $id =~ s/\//_/g;
                 ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
                 @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
                 
-                next if (!exists $transcripts{$row[2]});
+                next if (!exists $transcripts{$id});
                 next if ($mutcount &&
                          $truelen < $discardshorter);
                 next if ($mutcount &&
@@ -660,12 +676,12 @@ sub count {
                     { lock($lock);
                       my $entry = $seqio->read($row[2]);
                       $entry->unmask();
-                      $last{id} = $row[2];
+                      $last{id} = $id;
                       $last{sequence} = $entry->sequence(); }
                 
                     $readscount = 0;
-                    @counts = (0) x $transcripts{$row[2]};
-                    @coverage = (0) x $transcripts{$row[2]};
+                    @counts = (0) x $transcripts{$id};
+                    @coverage = (0) x $transcripts{$id};
                     
                 }
                 
@@ -681,7 +697,7 @@ sub count {
                         
                         my ($start, $end, @mutations, @uniqmutations);
                         $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
-                        $end = $row[3] + $cov - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 2;
+                        $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
                         @mutations = parsemd(\@row, $last{sequence});
                         @mutations = uniq(@mutations, @{$ins}) if (!$noins);
                         @mutations = collapsemutations(@mutations) if ($collapse);
@@ -697,7 +713,7 @@ sub count {
                     }
                     
                     map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
-                                           ($row[3] + $cov - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov - 2);
+                                           ($row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2);
                     
                     
                 }
@@ -709,7 +725,7 @@ sub count {
                         $counts[$row[3]]++;
                         $stats{substr($last{sequence}, $row[3], 1)}++;
                         
-                        map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$row[2]} - 1 ? $transcripts{$row[2]} - 1 : $row[3] + $cov + $clip5 - 2);
+                        map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov + $clip5 - 2);
             
                     }
                     

@@ -21,6 +21,7 @@ pages:
     - 'rf-combine': 'rf-combine.md'
     - 'rf-correlate': 'rf-correlate.md'
     - 'rf-wiggle': 'rf-wiggle.md'
+    - 'rf-mutate': 'rf-mutate.md'
     - 'Application cases': 'cases.md'
 markdown_extensions:
     - markdown.extensions.admonition

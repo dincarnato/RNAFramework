@@ -42,7 +42,8 @@ sub new {
                    description => undef,
                    type        => "DNA",
                    circular    => 0,
-                   references  => [] }, \%parameters);
+                   references  => [],
+                   _length     => undef }, \%parameters);
     
     if ($class =~ m/^Data::Sequence::\w+$/) { return($self); }
     else {
@@ -94,6 +95,8 @@ sub _fixproperties {
             $self->{orientation} = "5" unless ($self->{orientation} =~ m/^[53]$/);
             
         }
+        
+        $self->{_length} = length($self->{sequence});
         
     }
     
@@ -272,7 +275,9 @@ sub length {
     
     my $self = shift;
     
-    return(length($self->{sequence}));
+    $self->{_length} = length($self->{sequence}) unless(defined $self->{_length});
+    
+    return($self->{_length});
     
 }
 

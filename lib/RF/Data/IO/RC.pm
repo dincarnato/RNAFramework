@@ -146,9 +146,9 @@ sub _loadindex {
             
             foreach my $id (keys %{$self->{_offsets}}) {
                 
-                print $ih pack("L<", length($id) + 1) .                 # len_transcript_id (int32_t)
+                print $ih pack("L<", length($id) + 1) .                 # len_transcript_id (uint32_t)
                           $id . "\0" .                                  # transcript_id (char[len_transcript_id])
-                          pack("Q<", $self->{_offsets}->{$id});         # offset in count table (int32_t)
+                          pack("Q<", $self->{_offsets}->{$id});         # offset in count table (uint64_t)
                 
             }
          

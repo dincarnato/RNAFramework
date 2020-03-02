@@ -41,7 +41,8 @@ $|++;
 
 my ($output, $overwrite, $stdev, $help,
     $error, $threads, $decimals, $mincorr,
-    $minvalues, @pool, @xml, %xml);
+    $minvalues, $logtransform, @pool, @xml,
+    %xml);
 
 my @ids : shared;
 my %results : shared;
@@ -67,7 +68,8 @@ do {
                 "p|processors=i"      => \$threads,
                 "d|decimals=i"        => \$decimals,
                 "m|min-values=s"      => \$minvalues,
-                "c|min-correlation=s" => \$mincorr ) or help(1);
+                "c|min-correlation=s" => \$mincorr,
+                "l|log-transform"     => \$logtransform ) or help(1);
     
     @xml = uniq(@ARGV);
 
@@ -541,18 +543,30 @@ sub combineall {
         my @current = map { $values[$_]->[$i] } 0 .. $#values;
         
         if (isnumeric(@current)) {
+        
+            if ($logtransform) {
+                
+                @current = map { $_ > 0 ? log($_) : log(1e-308) } @current;
+                
+                push(@mean, sprintf("%." . $decimals . "f", exp(mean(@current))));
+                push(@stdev, sprintf("%." . $decimals . "f", exp(stdev(@current))));
+                
+            }
+            else {
             
-            push(@mean, sprintf("%." . $decimals . "f", mean(@current)));
-            push(@stdev, sprintf("%." . $decimals . "f", stdev(@current)));
+                push(@mean, sprintf("%." . $decimals . "f", mean(@current)));
+                push(@stdev, sprintf("%." . $decimals . "f", stdev(@current)));
+                    
+            }
             
         }
         else {
-            
+                
             push(@mean, "NaN");
             push(@stdev, "NaN");
-            
+                
         }
-        
+            
     }
     
     return(\@mean, \@stdev);
@@ -587,6 +601,7 @@ sub help {
  -c  or --min-correlation        <float>        Minimum correlation to report a combined profile (-1-1, Default: off)
                                                 Note: if more than two replicates are being combined, RF Combine requires this threshold
                                                 to be satisfied by all pairwise comparisons
+ -l  or --log-transform                         Log transforms values before averaging replicates
  
 HELP
     

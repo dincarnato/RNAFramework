@@ -1,10 +1,10 @@
 #!/usr/bin/env perl
 
 ##
-# RF Wiggle (v2.5)
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
+# RF Wiggle
+# RNA Framework [http://www.rnaframework.com]
+#    
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Produces WIGGLE track files from RC or XML input files
 #
 # This program is free software, and can be redistribute  and/or modified
@@ -128,7 +128,7 @@ foreach my $input (@ARGV) {
         
         if ($file =~ m/\.xml$/) {
         
-            my ($xmlref, $i, $sequence, @reactivity);
+            my ($xmlref, $i, $sequence, @data);
             
             eval { $xmlref = RF::Data::IO::XML->new(file => $file); };
             
@@ -144,15 +144,15 @@ foreach my $input (@ARGV) {
             
             $i = 0;
             $sequence = $xmlref->sequence();
-            @reactivity = $xmlref->reactivity();
+            @data = $xmlref->tool() eq "rf-norm" ? $xmlref->reactivity() : ($ratio ? $xmlref->ratio() : $xmlref->score());
             
-            next if (!sum(grep {$_ !~ m/^NaN$/i} @reactivity));
+            next if (!sum(grep {$_ !~ m/^NaN$/i} @data));
             
             print $wh "variableStep chrom=" . $xmlref->id() . "\n";
            
-            undef($reactivity[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
+            undef($data[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
             
-            for (@reactivity) {
+            for (@data) {
                 
                 $i++;
                 
@@ -253,8 +253,9 @@ sub help {
  -ow or --overwrite                          Overwrites output file (if the specified file already exists)
  -c  or --coverage                           Reports per-base coverage instead of RT-stop/mutation count
                                              Note: this option only works for RC files
- -r  or --ratio                              Reports per-base ratio between RT-stop/mutation count and coverage
-                                             Note: this option only works for RC files
+ -r  or --ratio                              Reports per-base ratio between RT-stop/mutation count and coverage for RC files,
+                                             or the ratio from rf-modcall XML files
+                                             Note: this option only works for RC files or XML files generated with rf-modcall
  -kb or --keep-bases        <string>         Bases to report in the WIGGLE file (Default: N)
  
 HELP

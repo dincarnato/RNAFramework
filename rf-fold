@@ -963,7 +963,7 @@ sub fold { # Threads
                 
             }
             
-            $ticksby = $length < 10 ? 1 : (10 ** (length($length) - 1)) / 4;
+            $ticksby = max(1, round($length / 10));
             $file = $output . "images/" . $id . ".svg";
             $image = Graphics::Container->new( height  => abs(maprange(0, 1000, -$maxheight, -$minheight, min($length, 1000))), # Min: 500 / Max: 1000px
                                                width   => 1000,
@@ -1698,7 +1698,7 @@ sub help {
           rf-fold [Options] transcript.xml                       # Single transcript
  
  Options                                     Description
- -o   or --output-dir            <string>    Output directory (Default: structurome/)
+ -o   or --output-dir            <string>    Output directory (Default: rf_fold/)
  -ow  or --overwrite                         Overwrites output directory (if the specified path already exists)
  -ct  or --connectivity-table                Writes predicted structures in CT format (Default: Dot-bracket notation)
  -m   or --folding-method        <int>       Specifies the folding method (1-2, Default: 1): [1] ViennaRNA

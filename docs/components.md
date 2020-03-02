@@ -13,6 +13,7 @@ __rf-combine__    | Combines results of multiple experiments into a single profi
 __rf-correlate__ | Calculates pairwise correlation of structure probing experiments
 __rf-wiggle__    | Produces WIGGLE track files from RC or XML input files
 __rf-rctools__   | Allows manipulating RC files
+__rf-mutate__  | Designs structure disrupting (and rescuing) mutations
 
 <br/>
 ![RNAFramework pipeline](http://www.rnaframework.com/images/overview.png)

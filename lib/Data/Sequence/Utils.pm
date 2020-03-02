@@ -17,6 +17,7 @@
 package Data::Sequence::Utils;
 
 use strict;
+use Core::Mathematics qw(:all);
 use Core::Utils;
 
 use base qw(Exporter);
@@ -26,7 +27,7 @@ our @EXPORT = qw(isdna isrna isna isaa
                  dnacomp rnacomp revcomp dnarevcomp
                  rnarevcomp dna2rna rna2dna translate
                  aa1to3 nt2iupac iupac2nt iupac2regex
-                 shuffle);
+                 nshuffle dishuffle longestorf gencode);
 
 sub isdna { return(is($_[0], $_[1] . "ACGNT")); }
 
@@ -133,16 +134,16 @@ sub rna2dna {
 
 sub translate {
     
-    my ($sequence, $table) = @_;
+    my $sequence = shift;
+    my $table = shift || 1;
     
     return if (!isna($sequence));
-    return if ($table !~ m/^\d+$/ ||
-               $table < 1 ||
-               $table > 17);
+    return if (!isnumeric($table) ||
+               !inrange($table, [1, 17]));
     
     my ($code, $peptide);
     
-    $code = _codetable($table);
+    $code = gencode($table);
     $sequence = dna2rna($sequence);
     
     while($sequence =~ m/^(\w{3})/) {
@@ -158,39 +159,43 @@ sub translate {
     
 }
 
-sub _codetable {
+sub gencode {
     
     my $table = shift || 1;
     
     return if ($table !~ m/^\d+$/ ||
                $table < 1 ||
-               $table > 17);
+               $table > 33);
     
-    my $code = { UCA => "S", UCC => "S", UCG => "S", UCU => "S",
-                 UUC => "F", UUU => "F", UUA => "L", UUG => "L",
-                 UAC => "Y", UAU => "Y", UAA => "*", UAG => "*",
-                 UGC => "C", UGU => "C", UGA => "*", UGG => "W",
-                 CUA => "L", CUC => "L", CUG => "L", CUU => "L",
-                 CCA => "P", CAU => "H", CAA => "Q", CAG => "Q",
-                 CGA => "R", CGC => "R", CGG => "R", CGU => "R",
-                 AUA => "T", AUC => "T", AUU => "T", AUG => "M",
-                 ACA => "T", ACC => "T", ACG => "T", ACU => "T",
-                 AAC => "N", AAU => "N", AAA => "K", AAG => "K",
-                 AGC => "S", AGU => "S", AGA => "R", AGG => "R",
-                 CCC => "P", CCG => "P", CCU => "P", CAC => "H",
-                 GUA => "V", GUC => "V", GUG => "V", GUU => "V",
-                 GCA => "A", GCC => "A", GCG => "A", GCU => "A",
-                 GAC => "D", GAU => "D", GAA => "E", GAG => "E",
-                 GGA => "G", GGC => "G", GGG => "G", GGU => "G" };
+    my ($code, $altstart);
+    $code = { UCA => "S", UCC => "S", UCG => "S", UCU => "S",
+              UUC => "F", UUU => "F", UUA => "L", UUG => "L",
+              UAC => "Y", UAU => "Y", UAA => "*", UAG => "*",
+              UGC => "C", UGU => "C", UGA => "*", UGG => "W",
+              CUA => "L", CUC => "L", CUG => "L", CUU => "L",
+              CCA => "P", CAU => "H", CAA => "Q", CAG => "Q",
+              CGA => "R", CGC => "R", CGG => "R", CGU => "R",
+              AUA => "T", AUC => "T", AUU => "T", AUG => "M",
+              ACA => "T", ACC => "T", ACG => "T", ACU => "T",
+              AAC => "N", AAU => "N", AAA => "K", AAG => "K",
+              AGC => "S", AGU => "S", AGA => "R", AGG => "R",
+              CCC => "P", CCG => "P", CCU => "P", CAC => "H",
+              GUA => "V", GUC => "V", GUG => "V", GUU => "V",
+              GCA => "A", GCC => "A", GCG => "A", GCU => "A",
+              GAC => "D", GAU => "D", GAA => "E", GAG => "E",
+              GGA => "G", GGC => "G", GGG => "G", GGU => "G" };
+    $altstart = [];
     
-    return($code) if ($table =~ m/^[19]$/);
     
-    if ($table == 2) {
+    if ($table == 1) { $altstart = [ qw(CUG GUG UUG) ]; }
+    elsif ($table == 2) {
         
         $code->{AGA} = "*";
         $code->{AGG} = "*";
         $code->{AUA} = "M";
         $code->{UGA} = "W";
+        
+        $altstart = [ qw(AUA AUU AUC GUG) ];
         
     }
     elsif ($table == 3) {
@@ -204,14 +209,26 @@ sub _codetable {
         $code->{CGA} = "-";
         $code->{CGC} = "-";
         
+        $altstart = [ qw(AUA GUG) ];
+        
     }
-    elsif ($table == 4) { $code->{UGA} = "W"; }
+    elsif ($table == 4) {
+      
+      $code->{UGA} = "W";
+    
+      $altstart = [ qw(AUA AUC AUU CUG
+                       GUG GUA UUA UUG) ];
+      
+    }
     elsif ($table == 5) {
         
         $code->{AGA} = "S";
         $code->{AGG} = "S";
         $code->{AUA} = "M";
         $code->{UGA} = "W";
+        
+        $altstart = [ qw(AUA AUC AUU GUG
+                         UUG) ];
         
     }
     elsif ($table == 6) {
@@ -220,25 +237,41 @@ sub _codetable {
         $code->{UAG} = "Q";
         
     }
-    elsif ($table == 7) {
+    elsif ($table == 9) {
         
         $code->{AAA} = "N";
         $code->{AGA} = "S";
         $code->{AGG} = "S";
         $code->{UGA} = "W";
         
+        $altstart = [ qw(GUG) ];
+        
     }
-    elsif ($table == 8) { $code->{UGA} = "C"; } 
-    elsif ($table == 10) { $code->{CUG} = "S"; }
+    elsif ($table == 10) { $code->{UGA} = "C"; }
     elsif ($table == 11) {
+      
+        $altstart = [ qw(AUA AUC AUU CUG
+                         GUG UUG) ];
+      
+    }
+    elsif ($table == 12) {
+      
+        $code->{CUG} = "S";
+    
+        $altstart = [ qw(CAG CUG) ];
+      
+    }
+    elsif ($table == 13) {
         
         $code->{AGA} = "G";
         $code->{AGG} = "G";
         $code->{AUA} = "M";
         $code->{UGA} = "W";
         
+        $altstart = [ qw(AUA GUG UUG) ];
+        
     }
-    elsif ($table == 12) {
+    elsif ($table == 14) {
         
         $code->{AAA} = "N";
         $code->{AGA} = "S";
@@ -247,25 +280,85 @@ sub _codetable {
         $code->{UGA} = "W";
         
     }
-    elsif ($table == 13) { $code->{UAG} = "Q"; }
-    elsif ($table == 14) { $code->{UAG} = "L"; }
-    elsif ($table == 15) {
+    elsif ($table == 16) { $code->{UAG} = "L"; }
+    elsif ($table == 21) {
         
         $code->{UGA} = "W";
         $code->{AUA} = "M";
         $code->{AGA} = "S";
         $code->{AGG} = "S";
+        $code->{AAA} = "N";
+        
+        $altstart = [ qw(GUG) ];
         
     }
-    elsif ($table == 16) {
+    elsif ($table == 22) {
         
         $code->{UCA} = "*";
         $code->{UAG} = "L";
         
     }
-    elsif ($table == 17) { $code->{UUA} = "*"; }
+    elsif ($table == 23) {
+      
+        $code->{UUA} = "*";
     
-    return $code;
+        $altstart = [ qw(AUU GUG) ];
+      
+    }
+    elsif ($table == 24) {
+      
+        $code->{AGA} = "S";
+        $code->{AGG} = "K";
+        $code->{UGA} = "W";
+        
+        $altstart = [ qw(CUG GUG UUG) ];
+      
+    }
+    elsif ($table == 25) {
+      
+        $code->{UGA} = "G";
+      
+        $altstart = [ qw(GUG UUG) ];
+      
+    }
+    elsif ($table == 26) {
+      
+        $code->{CUG} = "A";
+    
+        $altstart = [ qw(CUG GUG UUG) ];
+        
+    }
+    elsif ($table == 27) {
+      
+        $code->{UAG} = "Q";
+        $code->{UAA} = "Q";
+      
+    }
+    elsif ($table == 29) {
+      
+        $code->{UAA} = "Y";
+        $code->{UAG} = "Y";
+      
+    }
+    elsif ($table == 30) {
+      
+        $code->{UAA} = "E";
+        $code->{UAG} = "E";
+      
+    }
+    elsif ($table == 31) { $code->{UGA} = "W"; }
+    elsif ($table == 33) {
+      
+        $code->{UAA} = "Y";
+        $code->{UGA} = "W";
+        $code->{AGA} = "S";
+        $code->{AGG} = "K";
+        
+        $altstart = [ qw(CUG GUG UUG) ];
+      
+    }
+    
+    return(wantarray() ? ($code, $altstart) : $code);
     
 }
 
@@ -380,7 +473,7 @@ sub iupac2regex {
     
 }
 
-sub shuffle {
+sub nshuffle {
     
     my $sequence = shift;
     
@@ -390,6 +483,92 @@ sub shuffle {
     
     return(join("", @sequence[map splice(@letters, rand(@letters), 1), @letters]));
     
+}
+
+sub dishuffle {
+   
+   my $sequence = shift;
+   
+   return unless(isna($sequence));
+   
+   my $clone = $sequence;
+   
+   for (1 .. length($sequence) - 2) {
+
+      my ($triplet, $prepost, $i, $j,
+          @tris, @indexes);
+      $triplet = substr($clone, $_- 1, 3);
+      @tris = split //, $triplet;
+      $prepost = $tris[0] . $tris[2];
+      $i = 0;
+      $j = $_ - 1;
+      
+      while($clone =~ m/$prepost/g) {
+      
+         $i = index($clone, $prepost, $i);
+         push(@indexes, $i) if ($i - 1 != $j);
+         
+         $i++;
+      
+      }
+      
+      next unless (@indexes);
+      
+      my $n = $indexes[int(rand(scalar(@indexes)))];
+      
+      $j++ if ($j > $n);
+      
+      $clone =~ s/^(.{$n})$prepost/$1 . $triplet/e;
+      $clone =~ s/^(.{$j})$triplet/$1 . $prepost/e;
+   
+   }
+   
+   return($clone);
+   
+}
+
+# Usage:
+#
+# longestorf($sequence, { gencode     => 1-33,
+#                         altstart    => [01],
+#                         ignorestart => [01],
+#                         minlength   => min. len in aa })
+
+sub longestorf {
+   
+   my $sequence = shift;
+   my $params = checkparameters({ gencode     => 1,
+                                  altstart    => 0,
+                                  ignorestart => 0,
+                                  minlength   => 0 }, shift || {});
+   
+   
+   return if (!isna($sequence) ||
+              !isbool($params->{altstart}, $params->{ignorestart}) ||
+              !ispositive($params->{minlength}));
+   
+   my ($orf, $index, $startregex, $stopregex,
+       $altstarts);
+   $sequence = dna2rna($sequence);
+   ($params->{gencode}, $altstarts) = gencode($params->{gencode} || 1);
+   
+   return unless($params->{gencode});
+   
+   $stopregex = join("|", grep { $params->{gencode}->{$_} eq "*" } keys %{$params->{gencode}});
+   
+   if ($params->{ignorestart}) { $startregex = "(?!" . $stopregex . ")"; }
+   elsif ($params->{altstart}) { $startregex = "(?:" . join("|", @{$altstarts}) . ")"; }
+   else { $startregex = "AUG"; }
+   
+   while ($sequence =~ m/(?=($startregex(?:(?!$stopregex).{3}?)+(?:$stopregex)))/ig) { $orf = $1 if (length($1) > length($orf)); }
+
+	return if (!$orf ||
+              (length($orf) / 3) - 1 < $params->{minlength});
+
+	$index = index($sequence, $orf, 0);
+   
+   return(wantarray() ? ($orf, $index) : $orf);
+   
 }
 
 1;

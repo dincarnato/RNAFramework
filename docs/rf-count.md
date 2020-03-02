@@ -41,6 +41,14 @@ __-cc__ *or* __--collapse-consecutive__ | | Collapses consecutive mutations/inde
 __-mc__ *or* __--max-collapse-distance__ | int | Maximum distance between consecutive mutations/indels to allow collapsing (requires ``-cc``, &ge;0, Default_ __2__)
 
 <br/>
+## Coverage calculation
+It is important to note that, by default (so when counting RT-stop events), RF Count will consider the contribution of the RT drop-off event to the coverage of the base on which the drop-off has occurred.<br/>
+Take into account the following example:
+<br/><br/>
+![Coverage calculation](http://www.rnaframework.com/images/coverage.png)
+<br/><br/>
+In this case, 3 sets of reads have been aligned to the reference, resulting in 3 RT-stop sites, respectively corresponding to 2, 4 and 3 RT drop-off events. When executing RF count without specifying either parameters ``-co`` or ``-m``, these additional counts will be added to the coverage of the base corresponding to the site on which the RT dropped off (-1 with respect to the read start mapping position).
+<br/><br/>
 ## Deletions re-alignment in mutational profiling-based methods
 Mutational profiling (MaP) methods for RNA structure analysis are based on the ability of certain reverse transcriptase enzymes to read-through the sites of SHAPE/DMS modification under specific reaction conditions. Some of them (e.g. SuperScript II) can introduce deletions when encountering a SHAPE/DMS-modified residue. When performing reads mapping, the aligner often reports a single possible alignment of the deletion, although many equally-scoring alignments are possible.<br/>
 To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and re-align/discard these ambiguously aligned deletions:
@@ -94,12 +102,11 @@ __offset__ | Offset of transcript in the RC file | uint64\_t
 <br/>
 ## Mask file
 The mask file allows excluding specific transcript regions from being counted. This is particularly useful when performing targeted MaP analyses, in order to mask the primer pairing regions.<br/>
-The mask file is composed of one or more lines, each one reporting the transcript ID and one or more base ranges (1-based, inclusive) that must be masked (or the nucleotide sequence of the regions that need to be masked), either separated by commas or semicolons (also mixed):<br/>
+The mask file is composed of one or more lines, each one reporting the transcript ID and a comma (or semicolon) separated list of either base ranges (0-based, inclusive), or of nucleotide sequences of the regions that need to be masked:<br/>
 
 ```
 Transcript_1;AGCGTATTAGCGATGCGATGCGA;25-38;504-551
 Transcript_2,331-402,AUAUGGAUCGGACG,984-1008
 Transcript_3;GUUACAUUCGA,98-123;47-68
 ```
-<br/>
 Transcript regions specified in the mask file will have both 0 counts and coverage in the resulting RC file.
