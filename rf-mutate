@@ -46,7 +46,7 @@ die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
 my ($help, $output, $overwrite, $orffile,
-    $motifsfile, $mindist, $maxiter, $maxeval,
+    $motiffile, $mindist, $maxiter, $maxeval,
     $tollerance, $maxresults, $threads, $autoorf,
     $startalt, $startany, $input, $minorf,
     $error, $tmpdir, $imported, $cwd,
@@ -71,7 +71,7 @@ do {
                 "o|output-dir=s"      => \$output,
                 "ow|overwrite"        => \$overwrite,
                 "of|orf-file=s"       => \$orffile,
-                "mf|motifs-file=s"    => \$motifsfile,
+                "mf|motif-file=s"     => \$motiffile,
                 "md|min-distance=s"   => \$mindist,
                 "mi|max-iterations=i" => \$maxiter,
                 "t|tollerance=s"      => \$tollerance,
@@ -119,8 +119,8 @@ $RNA::noLonelyPairs = 1;
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Minimum distance must be comprised between >0 and 1\n\n" if (!inrange($mindist, [0, 1]));
 die "\n  [!] Error: Tollerance must be comprised between 0 and 1\n\n" if (!inrange($tollerance, [0, 1]));
-die "\n  [!] Error: No motifs file provided\n\n" if (!defined $motifsfile);
-die "\n  [!] Error: Provided motifs file does not exist\n\n" if (!-e $motifsfile);
+die "\n  [!] Error: No motif file provided\n\n" if (!defined $motiffile);
+die "\n  [!] Error: Provided motif file does not exist\n\n" if (!-e $motiffile);
 die "\n  [!] Error: Provided ORF file does not exist\n\n" if (defined $orffile &&
                                                               !-e $orffile);
 die "\n  [!] Error: No path to the ViennaRNA RNAfold executable provided\n\n" if (!$rnafold &&
@@ -206,7 +206,7 @@ $tmpdir = File::Spec->rel2abs($tmpdir) . "/";
 
 print "\n[+] Importing target motif(s)";
 
-open(my $mh, "<", $motifsfile) or die "\n\n  [!] Error: Unable to read motifs file\n\n";
+open(my $mh, "<", $motiffile) or die "\n\n  [!] Error: Unable to read motif file\n\n";
 while(my $line = <$mh>) {
         
     chomp($line);
@@ -244,7 +244,7 @@ close($mh);
 
 print " [" . $imported . " imported]";
 
-die "\n\n  [!] Error: No motif imported. Check motifs file synthax and try again.\n\n" unless($imported);
+die "\n\n  [!] Error: No motif imported. Check motif file synthax and try again.\n\n" unless($imported);
 
 print "\n[+] Importing structure files [0 imported]";
 
@@ -281,7 +281,7 @@ else { # Single structure file
 }
 
 if (my $structcount = scalar(grep { defined $input{$_}->{file} } keys %input)) { print CLRRET . "[+] Importing structure file(s) [" . $structcount . " imported]"; }
-else { die "\n\n  [!] Error: No structure file matches any of the sequence IDs in the motifs file\n\n"; }
+else { die "\n\n  [!] Error: No structure file matches any of the sequence IDs in the motif file\n\n"; }
 
 if ($orffile) { # ORFs specified
     
@@ -315,7 +315,7 @@ if ($orffile) { # ORFs specified
                                      defined $input{$_}->{orf}->{aa} } keys %input)) { print CLRRET . "[+] Importing ORF(s) [" . $orfcount . " imported]"; }
     else {
         
-        warn "\n\n  [!] Warning: No ID in ORF file matches any of the sequence IDs in the motifs file." .
+        warn "\n\n  [!] Warning: No ID in ORF file matches any of the sequence IDs in the motif file." .
                 "\n               All transcripts will be treated as non-coding RNAs.\n\n";
                 
     }
@@ -835,7 +835,7 @@ sub help {
  -p   or --processors          <int>                 Number of processors to use (Default: 1)
  -o   or --output-dir          <string>              Output directory (Default: rf_mutate/)
  -ow  or --overwrite                                 Overwrites output directory (if the specified path already exists)
- -mf  or --motifs-file         <string>              Path to a file containing the list of motifs to mutate (mandatory)
+ -mf  or --motif-file         <string>               Path to a file containing the list of motifs to mutate (mandatory)
  -of  or --orf-file            <string>              Path to a file containing transcript ORFs (optional)
  -lo  or --longest-orf                               Automatically finds the longest ORF
  -mo  or --min-orf-length      <int>                 Minimum length (in aa) to select the longest ORF (requires -lo, Default: 50)
