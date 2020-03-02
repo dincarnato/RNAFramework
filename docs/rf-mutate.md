@@ -1,5 +1,5 @@
 RF Mutate allows designing mutations aimed at disrupting target structure motifs. Not only this tool can also design compensatory mutations aimed at restoring the wild-type structure, but also it allows designing mutations within ORFs, without altering the underlying amino acid sequence.<br/>
-RF Mutate requires one or more structure files (either in dot-bracket or CT format) and a motif file, containing the list of the structure motifs to mutagenize. Optionally, an ORF file can be provided, indicating whether (and where) an ORF is present within the analyzed transcripts; in this way, if a target motif overlaps an ORF, RF Mutate can introduce mutations in such a way that the encoded protein remains unchanged.<br/>
+RF Mutate requires one or more structure files (either in dot-bracket or CT format) and a motif file, containing the list of the structure motifs to mutagenize. Optionally, an ORF file can be provided, indicating whether (and where) an ORF is present within the analyzed transcripts; in this way, if a target motif overlaps an ORF, RF Mutate can introduce mutations in such a way that the encoded protein remains unchanged. In case no ORF file is provided, RF Mutate can automatically identify the longest ORF (if needed).<br/>
 Mutagenesis results are reported in XML format, one file per motif.
 <br/><br/>
 
@@ -67,7 +67,7 @@ Transcript_3;MYGAAAHKKLDAGASS
     Currently, a single ORF per transcript is supported. RF Mutate cannot deal with multiple/overlapping ORFs.
 
 When a single value is provided (e.g. Transcript_2 in the above example), this will be treated as the start coordinate and the end coordinate will be automatically identified.<br/>
-When providing an amino acid sequence, either the full sequence or just a portion of it can be provided (provided that the provided portion overlaps, even partially, with the target motif). This way, RF Mutate will be able to identify the underlying ORF, hence allowing target motif disruption without altering the encoded protein.<br/>
+When providing an amino acid sequence, either the full sequence or just a portion of it can be provided. The sequence will then be automatically extended to the closest in-frame STOP codon (both upstream and downstream). This way, RF Mutate will be able to identify the underlying ORF, hence allowing target motif disruption without altering the encoded protein.<br/>
 Looking at the following example:<br/>
 
 ```

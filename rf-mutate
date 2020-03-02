@@ -408,7 +408,10 @@ sub mutate {
                         
                         my $stopindex = index($aa, "*", $orfindex);
                         $input->{orf}->{start} = ($orfindex * 3) + $frame;
-                        $input->{orf}->{end} = $stopindex == -1 ? $entry->length() - 1 : $input->{orf}->{start} + ($stopindex * 3) + 2;
+                        $input->{orf}->{start} -= 3 while ($input->{orf}->{start} >= 3 &&
+                                                           substr($aa, $input->{orf}->{start} - 3, 1) ne "*");
+                        
+                        $input->{orf}->{end} = $stopindex == -1 ? $entry->length() - 1 : ($stopindex * 3) + $frame + 2;
                         
                         last;
                         
