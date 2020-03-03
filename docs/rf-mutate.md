@@ -64,6 +64,7 @@ __29__ | Mesodinium Nuclear Code
 __30__ | Peritrich Nuclear Code
 __31__ | Blastocrithidia Nuclear Code
 __33__ | Cephalodiscidae Mitochondrial UAA-Tyr Code
+
 <br/>
 For a detailed description of each genetic code table, please refer to [https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi](https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi)
 <br/><br/>
