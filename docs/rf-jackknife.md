@@ -36,6 +36,7 @@ __-x__ *or* __--relaxed__ | | Uses relaxed criteria (described in Deigan *et al.
 __-kn__ *or* __--keep-noncanonical__ | | Keeps non-canonical basepairs in reference structure
 __-kp__ *or* __--keep-pseudoknots__ | | Keeps pseudoknotted basepairs in reference structure
 __-kl__ *or* __--keep-lonelypairs__ | | Keeps lonely basepairs (helices of length 1 bp) in reference structure
+__-i__ *or* __--ignore-sequence__ | | Ignores sequence differences (e.g. SNVs) between the compared structures
 __-m__ *or* __--median__ | | Reports the median PPV/sensitivity value between all reference structures<br/>__Note:__ by default, the geometric mean of PPV/sensitivity values is reported
 __-am__ *or* __--arithmetic-mean__ | | Reports the arithmetic mean of PPV/sensitivity values between all reference structures<br/>__Note:__ by default, the geometric mean of PPV/sensitivity values is reported
 __-rf__ *or* __--rf-fold__ | string | Path to ``rf-fold`` executable (Default: assumes ``rf-fold`` is in PATH)

@@ -67,23 +67,28 @@ sub formatlongtext {
         
         my $word = shift(@words);
         
-        if (length($indent . $row . $word) > $columns ||
-            $word =~ m/\.$/) {
+        if (length($indent . $row . $word) > $columns) {
             
             if (length($indent . $row . $word) > $columns) {
                 
-                my $part = substr($word, 0, $columns - length($indent . $row));
-                $row .= $part . "\n" . $indent;
-                $word =~ s/^$part//;
+                my $diff = $columns - length($indent . $row);
+                
+                if ($diff > 0) {
+                
+                    my $part = substr($word, 0, $diff);
+                    $row .= $part . "\n" . $indent;
+                    $word =~ s/^$part//;
+                    
+                }
+                else { $row .= $indent; }
                 
                 unshift(@words, $word) if ($word);
                 
             }
             else {
                 
-                if ($word =~ m/\.$/) { $row .= $word; }
-                else { unshift(@words, $word); }
-            
+                unshift(@words, $word);
+
                 $row .= "\n" . $indent;
             
             }
@@ -94,7 +99,12 @@ sub formatlongtext {
             next;
             
         }
-        else { $row .= $word . " "; }
+        else {
+            
+            $row .= $word;
+            $row .= " " if (length($indent . $row) + 1 < $columns);
+            
+        }
         
     }
         

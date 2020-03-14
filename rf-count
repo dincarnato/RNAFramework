@@ -55,8 +55,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $rightalign,
-    $discardshorter, @bam_trim5, @pool, %transcripts,
-    %spacer, %files, %masks, %realid);
+    $discardshorter, $leftdel, $rightdel, @bam_trim5,
+    @pool, %transcripts, %spacer, %files,
+    %masks, %realid);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -95,7 +96,9 @@ do {
                 "cc|collapse-consecutive"    => \$collapse,
                 "mc|max-collapse-distance=i" => \$maxmutdist,
                 "es|eval-surrounding"        => \$evalsurround,
-                "ds|discard-shorter=i"       => \$discardshorter ) or help(1);
+                "ds|discard-shorter=i"       => \$discardshorter,
+                "ld|left-deletion"           => \$leftdel,
+                "rd|right-deletion"          => \$rightdel ) or help(1);
 
 };
 
@@ -874,7 +877,10 @@ sub parsemd { # SAM MD flag parser
                 $md =~ m/^([ACGNT]+)/;
                 $del = $1;
                 
-                if (!$nodel) { # Count unambiguously mapped deletions as mutations
+                if (!$nodel &&
+                    length($del) <= $maxdel) { # Count unambiguously mapped deletions as mutations
+                
+                    my ($before, $after, @truedel);
                 
                     # Extract a window of 20 nt (+/- 10nt) centered on the deletion
                     $start = $len + $llen - 1 >= 9 ? $len + $llen - 1 - 9 : 0;
@@ -886,14 +892,30 @@ sub parsemd { # SAM MD flag parser
                     # Slide the deletion along sequence, and build hash table
                     push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
                     
-                    if (!$noambiguous &&
-                        length($del) <= $maxdel) { # Deletion unambiguously mapped, and shorter than cutoff
+                    if (@{$collapsed{$real}} > 1) { # Deletion is not unambiguously mapped
                         
-                        # Include the deletion if the bases immediately surroundinding have a quality score >= minqual
-                        my $truedel = $rightalign ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}});
-                        push(@pos, $truedel) if (($evalsurround &&
-                                                  ((exists $quals{$truedel - length($del)} && $quals{$truedel - length($del)} >= $minqual) || !exists $quals{$truedel - length($del)}) &&
-                                                  ((exists $quals{$truedel + 1} && $quals{$truedel + 1} >= $minqual) || !exists $quals{$truedel + 1})) ||
+                        if (!$noambiguous) { 
+                            
+                            my $truedel = $rightalign ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}});
+                            $before = $truedel - length($del);
+                            $after = $truedel + 1;
+                            @truedel = $rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel));
+                            push(@pos, @truedel) if (($evalsurround &&
+                                                      ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
+                                                      ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
+                                                     !$evalsurround);
+                            
+                        }
+                        
+                    }
+                    else {
+                        
+                        $before = $collapsed{$real}->[0] - length($del);
+                        $after = $collapsed{$real}->[0] + 1;
+                        @truedel = $rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]));
+                        push(@pos, @truedel) if (($evalsurround &&
+                                                  ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
+                                                  ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
                                                  !$evalsurround);
                         
                     }
@@ -1123,6 +1145,9 @@ sub help {
                                                   Note: The default behavior is to re-align them to their left-most valid position (or to their
                                                         right-most valid position if -ra has been specified)
     -ra or --right-align                          Re-aligns ambiguously mapped deletions to their right-most valid position
+                                                  Note: by default, ambiguously mapped deletion are re-aligned to their left-most valid position
+    -rd or --right-deletion                       Only the right-most base in a deletion is marked as mutated
+    -ld or --left-deletion                        Only the left-most base in a deletion is marked as mutated
     -md or --max-deletion-len        <int>        Ignores deletions longer than this number of nucleotides (Default: 10)
     -me or --max-edit-distance       <float>      Discards reads with editing distance frequency higher than this threshold (0<m<=1, Default: 0.15 [15%])
     -eq or --median-quality          <int>        Median quality score threshold for discarding low-quality reads (Phred+33, Default: 20)

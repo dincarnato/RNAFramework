@@ -34,6 +34,8 @@ __-nd__ *or* __--no-deletions__ | | Ignores deletions
 __-ni__ *or* __--no-insertions__ | | Ignores insertions
 __-na__ *or* __--no-ambiguous__ | | Ignores ambiguously mapped deletions<br/>__Note:__ the default behavior is to re-align them to their left-most valid position (or to their right-most valid position if ``-ra`` has been specified)
 __-ra__ *or* __--right-align__ | | Re-aligns ambiguously mapped deletions to their right-most valid position
+__-rd__ *or* __--right-deletion__ | | Only the right-most base in a deletion is marked as mutated
+__-ld__ *or* __--left-deletion__ | | Only the left-most base in a deletion is marked as mutated
 __-md__ *or* __--max-deletion-len__ | int | Ignores deletions longer than this number of nucleotides (Default: __10__)
 __-me__ *or* __--max-edit-distance__ | float | Discards reads with editing distance frequency higher than this threshold (0<m&le;1, Default: __0.15__ [15%])
 __-eq__ *or* __--median-quality__ | int | Median quality score threshold for discarding low-quality reads (Phred+33, Default: __20__)
@@ -66,7 +68,9 @@ Here follows a brief scheme aimed at illustrating the different behaviors of RF 
 <br/><br/>
 ## RC (RNA Count) format
 
-RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,that store transcript’s sequence, per-base RT-stop/mutation counts, per-base read coverage, and total number of mapped reads. These files can be indexed for fast random access.<br/>Each entry in a RC file is structured as follows:
+RF Count produces a RC (RNA Count) file for each analyzed sample. RC files are proprietary binary files,
+that store transcript’s sequence, per-base RT-stop/mutation counts, per-base read coverage, and total number of mapped reads. These files can be indexed for fast random access.<br/>
+Each entry in a RC file is structured as follows:
 
 Field             | Description    |  Type
 ----------------: | :------------: | :----------

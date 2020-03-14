@@ -838,7 +838,7 @@ sub help {
  -p   or --processors          <int>                 Number of processors to use (Default: 1)
  -o   or --output-dir          <string>              Output directory (Default: rf_mutate/)
  -ow  or --overwrite                                 Overwrites output directory (if the specified path already exists)
- -mf  or --motif-file         <string>               Path to a file containing the list of motifs to mutate (mandatory)
+ -mf  or --motif-file          <string>              Path to a file containing the list of motifs to mutate (mandatory)
  -of  or --orf-file            <string>              Path to a file containing transcript ORFs (optional)
  -lo  or --longest-orf                               Automatically finds the longest ORF
  -mo  or --min-orf-length      <int>                 Minimum length (in aa) to select the longest ORF (requires -lo, Default: 50)
