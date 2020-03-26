@@ -32,8 +32,8 @@ __-q__ *or* __--min-quality__ | int | Minimum quality score value to consider a 
 __-es__ *or* __--eval-surrounding__ | | When considering a mutation/indel, also evaluates the quality of surrounding bases (&#177;1 nt)<br/>__Note:__ the quality score threshold set by ``-q`` (or ``--min-quality``) also applies to these bases
 __-nd__ *or* __--no-deletions__ | | Ignores deletions
 __-ni__ *or* __--no-insertions__ | | Ignores insertions
-__-na__ *or* __--no-ambiguous__ | | Ignores ambiguously mapped deletions<br/>__Note:__ the default behavior is to re-align them to their left-most valid position (or to their right-most valid position if ``-ra`` has been specified)
-__-ra__ *or* __--right-align__ | | Re-aligns ambiguously mapped deletions to their right-most valid position
+__-na__ *or* __--no-ambiguous__ | | Ignores ambiguously mapped deletions<br/>__Note:__ the default behavior is to re-align them to their right-most valid position (or to their left-most valid position if ``-la`` has been specified)
+__-la__ *or* __--lef-align__ | | Re-aligns ambiguously mapped deletions to their left-most valid position
 __-rd__ *or* __--right-deletion__ | | Only the right-most base in a deletion is marked as mutated
 __-ld__ *or* __--left-deletion__ | | Only the left-most base in a deletion is marked as mutated
 __-md__ *or* __--max-deletion-len__ | int | Ignores deletions longer than this number of nucleotides (Default: __10__)
@@ -53,7 +53,7 @@ In this case, 3 sets of reads have been aligned to the reference, resulting in 3
 <br/><br/>
 ## Deletions re-alignment in mutational profiling-based methods
 Mutational profiling (MaP) methods for RNA structure analysis are based on the ability of certain reverse transcriptase enzymes to read-through the sites of SHAPE/DMS modification under specific reaction conditions. Some of them (e.g. SuperScript II) can introduce deletions when encountering a SHAPE/DMS-modified residue. When performing reads mapping, the aligner often reports a single possible alignment of the deletion, although many equally-scoring alignments are possible.<br/>
-To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and re-align/discard these ambiguously aligned deletions:
+To avoid counting of ambiguously aligned deletions, that can introduce noise in the measured structural signal, RF Count performs a *deletion re-alignment step* to detect and re-align/discard these ambiguously aligned deletions (see also "__Handling of mutations/indels__"):
 <br/><br/>
 ![Ambiguous deletions](http://www.rnaframework.com/images/ambiguous_deletions.png)
 <br/><br/>

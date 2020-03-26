@@ -54,7 +54,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $nodel, $pp, $po, $fromhead,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
-    $collapse, $maxmutdist, $evalsurround, $rightalign,
+    $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, @bam_trim5,
     @pool, %transcripts, %spacer, %files,
     %masks, %realid);
@@ -91,7 +91,7 @@ do {
                 "fh|from-header"             => \$fromhead,
                 "me|max-edit-distance=s"     => \$maxmut,
                 "na|no-ambiguous"            => \$noambiguous,
-                "ra|right-align"             => \$rightalign,
+                "la|left-align"              => \$leftalign,
                 "eq|median-quality=i"        => \$medianqual,
                 "cc|collapse-consecutive"    => \$collapse,
                 "mc|max-collapse-distance=i" => \$maxmutdist,
@@ -147,8 +147,8 @@ die "\n  [!] Error: Minimum quality score value must be and integer >= 0 and <= 
 die "\n  [!] Error: Median read's quality score value must be and integer >= 0 and <= 41\n\n" if (!inrange($medianqual, [0, 41]));
 die "\n  [!] Error: Maximum edit distance value must be > 0 and <= 1\n\n" if (!inrange($maxmut, [0, 1]) ||
                                                                           !$maxmut);
-die "\n  [!] Error: Parameters -na and -ra are mutually exclusive\n\n" if ($noambiguous &&
-                                                                           $rightalign);
+die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noambiguous &&
+                                                                           $leftalign);
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
@@ -896,7 +896,7 @@ sub parsemd { # SAM MD flag parser
                         
                         if (!$noambiguous) { 
                             
-                            my $truedel = $rightalign ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}});
+                            my $truedel = $leftalign ? min(@{$collapsed{$real}}) : max(@{$collapsed{$real}});
                             $before = $truedel - length($del);
                             $after = $truedel + 1;
                             @truedel = $rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel));
@@ -1142,9 +1142,9 @@ sub help {
     -nd or --no-deletions                         Ignores deletions
     -ni or --no-insertions                        Ignores insertions
     -na or --no-ambiguous                         Ignores ambiguously mapped deletions
-                                                  Note: The default behavior is to re-align them to their left-most valid position (or to their
-                                                        right-most valid position if -ra has been specified)
-    -ra or --right-align                          Re-aligns ambiguously mapped deletions to their right-most valid position
+                                                  Note: The default behavior is to re-align them to their right-most valid position (or to their
+                                                        left-most valid position if -la has been specified)
+    -la or --left-align                           Re-aligns ambiguously mapped deletions to their left-most valid position
                                                   Note: by default, ambiguously mapped deletion are re-aligned to their left-most valid position
     -rd or --right-deletion                       Only the right-most base in a deletion is marked as mutated
     -ld or --left-deletion                        Only the left-most base in a deletion is marked as mutated
