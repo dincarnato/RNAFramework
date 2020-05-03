@@ -495,9 +495,7 @@ sub mutate {
             }
             
             # Get the free energy of the original motif
-            $RNA::fold_constrained = 1;
-            @original = RNA::fold($sequence, $structure);
-            RNA::free_arrays();
+            @original = ($structure, RNA::energy_of_struct($sequence, $structure));
 
             %originalpairs = map { $_->[0] => $_->[1],
 								   $_->[1] => $_->[0] } listpairs($original[0]);
@@ -530,7 +528,7 @@ sub mutate {
                 %bptable = %originalpairs;
                 
                 @sequence = split(//, $sequence);
-                @mutable = ([map { $_, $originalpairs{$_} } grep { $_ > $originalpairs{$_} } keys %originalpairs]) x $nmutations;
+                @mutable = map { [map { $_, $originalpairs{$_} } grep { $_ > $originalpairs{$_} } keys %originalpairs] } 0 .. $nmutations - 1;
                 
             }
             
@@ -538,7 +536,7 @@ sub mutate {
             MUTATE:
             foreach my $set (List::Util::shuffle(uniq(map {[sort {$a <=> $b} @$_]} grep { scalar(uniq(map { min($_, $bptable{$_}) } @$_)) == $nmutations } permute(@mutable)))) {
                 
-                foreach my $bases (permute(map { $mutable{$sequence[$_]} } @{$set})) {
+                foreach my $bases (permute(map { clonearrayref($mutable{$sequence[$_]}) } @{$set})) {
                 
                     my ($mutated, $bpdist, $energydiff, @mutated,
                         @mfolding);
@@ -548,10 +546,10 @@ sub mutate {
                     
                     $itercount++;
 
-                    @mfolding = RNA::fold($mutated);
+                    @mfolding = RNA::fold($mutated); 
                     RNA::free_arrays();
                                     
-                    $bpdist = bpdistance($mfolding[0], $original[0]);
+                    $bpdist = bpdistance($mfolding[0], $original[0]); 
                     $energydiff = abs($mfolding[1] - $original[1]);
                     
                     push(@variants, { vseq     => $mutated,
@@ -578,7 +576,7 @@ sub mutate {
                     
                     my @set = sort {$a <=> $b} map { $bptable{$_} } @{$variant->{indices1}};
                     
-                    foreach my $pair (permute(map { $mutable{$sequence[$_]} } @set)) {
+                    foreach my $pair (permute(map { clonearrayref($mutable{$sequence[$_]}) } @set)) {
                         
                         my ($rescued, $bpdist, $energydiff, @rescued,
                             @rfolding);
@@ -809,13 +807,40 @@ sub partition {
     
 }
     
+sub _permute {
+
+    my ($a, $b) = @_;
+
+    my (@set);
+
+    for my $x (@{$a}) {
+
+        for my $y (@{$b}) {
+
+            if (ref($x) ne "ARRAY") { push(@set, [$x, $y]); }
+            else { push(@set, [ (@{$x}, $y) ]);
+            }
+        }
+    }
+
+    return(\@set);
+
+}
+
 sub permute {
     
-	# Added length check for codons with no alternative
-    my @permutations = grep { @$_ == $nmutations &&
-							 List::Util::all { length() } @$_ } map {[split(",", $_)]} glob(join(",", map { "{" . join(",", @$_) . "}" } @_));
-	
-    return(wantarray() ? @permutations : \@permutations);
+    my ($set, @permutations);
+    
+    if (@_ > 1) {
+        
+        $set = List::Util::reduce { _permute($a, $b) } @_;
+        @permutations = grep { @$_ == $nmutations &&
+                               List::Util::all { length() } @$_ } @{$set};
+        
+    }
+    else { @permutations = map { [$_] } @{$_[0]}; }
+    
+    return(@permutations);
     
 }
     
