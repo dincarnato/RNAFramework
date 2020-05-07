@@ -470,8 +470,9 @@ else {
                 
                 print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[Parsing XML]";
                 
-                eval { $xml = XML::LibXML->load_xml( string => $content,
-                                                     huge   => 1); };
+                eval { $xml = XML::LibXML->load_xml( string       => $content,
+                                                     huge         => 1,
+                                                     load_ext_dtd => 0 ); };
                 
                 if ($@) {
                     
