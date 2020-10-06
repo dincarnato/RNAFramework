@@ -186,7 +186,7 @@ sub _fixproperties {
         if (!$self->{lonelypairs}) { # Lonely basepairs not allowed
             
             my ($helices, $pkhelices, @db, @basepairs, @pkpairs);
-            ($helices, $pkhelices) = listhelices($self->{structure});
+            ($helices, $pkhelices) = listhelices($self->{structure}, $self->{lonelypairs});
             @db = split(//, $self->{structure});
             
             for (@{$helices}) {
@@ -275,14 +275,13 @@ sub energy {
 sub helices {
     
     my $self = shift;
-    my $split = shift if (@_);
     
     if (!@{$self->{_helices}}) {
         
         if (@{$self->{basepairs}}) {
-            
-            my ($helices, $pkhelices) = listhelices($self->{structure}, $split);
-            
+
+            my ($helices, $pkhelices) = listhelices($self->{structure}, $self->{lonelypairs});
+
             push(@{$self->{_helices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$helices});
             push(@{$self->{_pkhelices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$pkhelices});
             
@@ -302,9 +301,9 @@ sub pkhelices {
     if (!@{$self->{_pkhelices}}) {
         
         if (@{$self->{basepairs}}) {
-            
-            my ($helices, $pkhelices) = listhelices($self->{structure});
-            
+
+            my ($helices, $pkhelices) = listhelices($self->{structure}, $self->{lonelypairs});
+
             push(@{$self->{_helices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$helices});
             push(@{$self->{_pkhelices}}, Data::Sequence::Structure::Helix->new(%{$_})) for (@{$pkhelices});
             

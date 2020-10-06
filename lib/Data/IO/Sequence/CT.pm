@@ -49,7 +49,9 @@ sub _validate {
     $self->SUPER::_validate();
     
     $self->throw("Pseudoknots parameter must be BOOL") if (!isbool($self->{pseudoknots}));
-    
+    $self->throw("Non canonical parameter must be BOOL") if (!isbool($self->{noncanonical}));
+    $self->throw("Lonely pairs parameter must be BOOL") if (!isbool($self->{lonelypairs}));
+
 }
 
 sub read {
@@ -60,8 +62,8 @@ sub read {
     my ($fh, $stream, $header, $id,
         $sequence, $energy, $object, $offset,
         $i, $length, @pairs);
-    
-    $self->throw("Filehandle isn't in read mode") unless ($self->mode() eq "r");
+
+    $self->throw("Filehandle is not in read mode") unless ($self->{mode} eq "r");
     $self->throw("Structure ID must be an integer >= 0") if (defined $sid &&
                                                              (!isint($sid) ||
                                                               !ispositive($sid)));
@@ -112,8 +114,9 @@ sub read {
             # Index building at runtime
 
             $self->throw("Non-matching offsets (Offsets: " . $self->{_index}->{$i} . ", " . $offset . ")") if (exists $self->{_index}->{$i} &&
-                                                                                                               $self->{_index}->{$i} != $offset);
-            
+                                                                                                               $self->{_index}->{$i} != $offset &&
+                                                                                                               $self->{checkDuplicateIds});
+
             if (exists $self->{_index}->{$i}) {
     
                 my @offsets = map { $self->{_index}->{$_} } sort {$self->{_index}->{$a} <=> $self->{_index}->{$b}} keys %{$self->{_index}};
@@ -186,9 +189,9 @@ sub write {
     
     my $self = shift;
     my @sequences = @_ if (@_);
-    
-    $self->throw("Filehandle isn't in write/append mode") unless ($self->mode() =~ m/^w\+?$/);
-    
+
+    $self->throw("Filehandle isn't in write/append mode") unless ($self->{mode} =~ m/^w\+?$/);
+
     foreach my $sequence (@sequences) {
     
         if (!blessed($sequence) ||

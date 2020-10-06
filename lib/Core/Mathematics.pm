@@ -31,7 +31,8 @@ use base qw(Exporter);
 
 our @EXPORT = qw(isint isfloat isexp isinf
                  isnan isnumeric ispositive isnegative
-                 isreal isbool haspositive hasnegative);
+                 isreal isbool haspositive hasnegative
+                 iseven isodd);
 
 our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                      functions => [ qw(logarithm min max mean
@@ -40,7 +41,7 @@ our %EXPORT_TAGS = ( constants => [ qw(e pi inf pinf ninf nan) ],
                                        diff product maprange intersect
                                        variance inrange haspositive hasnegative
                                        hasnan haszero absolute euclideandist
-                                       normeuclideandist mround) ] );
+                                       normeuclideandist mround argmax argmin) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
@@ -165,6 +166,18 @@ sub isbool {
     
 }
 
+sub iseven {
+  
+    my @values = @_;
+    
+    for (@values) { return if (!isnumeric($_) || $_ % 2); }
+  
+    return(1);
+  
+}
+
+sub isodd { return(1) if (!iseven(@_)); }
+
 sub hasnegative {
     
     my @values = @_;
@@ -264,6 +277,36 @@ sub max {
 
     return(pop(@values));
     
+}
+
+sub argmax {
+  
+    my @values = @_;
+    
+    Core::Utils::throw("Values array is empty") if (!@values);
+    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+  
+    my ($max, @maxi);
+    $max = max(@values);
+    @maxi = grep { $values[$_] == $max } 0 .. $#values;
+  
+    return(wantarray() ? @maxi : $maxi[0]);
+  
+}
+
+sub argmin {
+  
+    my @values = @_;
+    
+    Core::Utils::throw("Values array is empty") if (!@values);
+    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+  
+    my ($min, @mini);
+    $min = min(@values);
+    @mini = grep { $values[$_] == $min } 0 .. $#values;
+  
+    return(wantarray() ? @mini : $mini[0]);
+  
 }
 
 sub average {
@@ -492,7 +535,7 @@ sub intersect {
 
     return() if ($start > $end);
     
-    return(1);
+    return([$start, $end]);
     
 }
 

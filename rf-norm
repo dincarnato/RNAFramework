@@ -69,11 +69,11 @@ do {
                 "sm|scoring-method=s"    => \$scoremethod,
                 "nm|norm-method=s"       => \$normmethod,
                 "nw|norm-window=s"       => \$normwin,
-                "wo|window-offset=i"     => \$winoffset,
+                "wo|window-offset=s"     => \$winoffset,
                 "dw|dynamic-window"      => \$dynwin,
                 "rb|reactive-bases=s"    => \$reactive,
                 "ni|norm-independent"    => \$independent,
-                "pc|pseudocount=s"	     => \$pseudocount,
+                "pc|pseudocount=s"	   => \$pseudocount,
                 "s|max-score=s"          => \$maxscore,
                 "mc|mean-coverage=s"     => \$meancov,
                 "ec|median-coverage=s"   => \$mediancov,
@@ -100,8 +100,8 @@ $normmethod ||= 1;
 $nan ||= 10;
 $maxumut //= 0.05;
 $maxmutrate //= 0.2;
-$normwin ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
-$winoffset ||= $scoremethod =~ m/^Ding|Siegfried|[13]$/i ? 1e9 : 50;
+$normwin ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
+$winoffset ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
 $suffix = $raw ? "_raw/" : "_norm/";
 
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
@@ -266,7 +266,7 @@ sub norm {
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
         
-        last unless($id); 
+        last unless(defined $id); 
         
         my ($tentry, $sequence, $seqmask, @seqmask,
             @tcounts, @ucounts, @dcounts, @tcov,
@@ -832,8 +832,8 @@ sub help {
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: N)
  -ni or --norm-independent                          Each reactive base will be normalized independently
- -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript (1e9) [Ding|Siegfried], 50 [Rouskin|Zubradt])
- -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried], 50 [Rouskin|Zubradt])
+ -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript (1e9) [Ding|Siegfried|Zubradt], 50 [Rouskin])
+ -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -dw or --dynamic-window                            When enabled, the normalization window is dynamically resized to include at least that number of reactive bases
                                                     (e.g. "-rb AC -nw 50 -dw" instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
  -mc or --mean-coverage       <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)

@@ -30,13 +30,15 @@ sub new {
     my %parameters = @_ if (@_);
     
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ format   => "AUTO",
-                   nrows    => 100,
-                   _offsets => [],
-                   _pack    => undef,
-                   _index   => {},
-                   _lastid  => 1 }, \%parameters);
-    
+    $self->_init({ format            => "AUTO",
+                   nrows             => 100,
+                   checkDuplicateIds => 1,
+                   maskIUPAC         => 0,
+                   _offsets          => [],
+                   _pack             => undef,
+                   _index            => {},
+                   _lastid           => 1 }, \%parameters);
+
     if ($class =~ m/^Data::IO::Sequence::\w+$/) {
     
         $self->_openfh();
@@ -78,8 +80,15 @@ sub _loadformat {
     
     $self->_fixformat();
     $self->{format} = $self->_findformat() if ($self->{format} eq "AUTO");
-    $self->loadpackage(ref($self) . "::" . $self->{format});
-    
+
+    if (!defined $self->{format}) { $self->warn("Unable to guess file format. Falling back to generic text file."); }
+    else {
+
+        my $module = ref($self) . "::" . $self->{format};
+        $self->throw("Unable to load module " . $module) unless($self->loadPackage($module));
+
+    }
+
 }
 
 sub _findformat {
@@ -95,7 +104,9 @@ sub _findformat {
     foreach my $line (<$fh>) {
         
         chomp($line);
-        
+
+        $self->throw("File contains unsupported line endings (\"\\r\")") if ($line =~ m/\r/);
+
         next unless($line);
         
         push(@rows, $line);
@@ -127,7 +138,8 @@ sub _findformat {
                 }
                 
             }
-            
+            else { $fastalike = 0; }
+
         }
         else {
             
@@ -148,7 +160,19 @@ sub _findformat {
         last if (defined $format);
         
     }
-    
+
+    # Unable to guess, falling back to guess from extension
+    if (!defined $format &&
+        defined $self->{file}) {
+
+        my ($extension) = $self->{file} =~ m/\.([^\.]+)$/;
+
+        if ($extension =~ m/^(?:fasta|fa|fna|ffn|faa|frn)$/i) { $format = "Fasta"; }
+        elsif ($extension =~ m/^db$/i) { $format = "Vienna"; }
+        elsif ($extension =~ m/^ct$/i) { $format = "CT"; }
+
+    }
+
     return($format);
     
 }
