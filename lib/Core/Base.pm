@@ -55,22 +55,22 @@ sub loadPackage {
     my $self = shift;
     my $package = shift if (@_);
 
-    $self->throw("No package has been specified") unless ($package =~ m/^[\w:]+$/);
+    $self->throw("No package specified") if (!defined $package);
 
-    my $module = $package;
+    my ($module, $eval);
+    $module = $package;
     $module .= ".pm" unless ($module =~ m/\.pm$/);
     $module =~ s/::/\//g;
 
-    return if (exists $INC{$module});
+    return(1) if (exists $INC{$module});
 
-    eval { require $module; };
+    my $eval = do { local $@;
+                    eval { require $module; };
+                    $@; };
 
-    if ($@) {
+    return() if ($eval);
 
-        chomp($@);
-        $self->throw("Unable to load package \"" . $package . "\"\nReason: " . $@);
-
-    }
+    return(1);
 
 }
 
