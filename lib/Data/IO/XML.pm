@@ -35,7 +35,7 @@ sub new {
         my ($module, $object);
         $module = ref($self) . "::" . ($self->mode() eq "r" ? "Read" : "Write");
         
-        $self->loadpackage($module);
+        $self->loadPackage($module);
         $object = $module->new(%parameters);
         
         return($object);

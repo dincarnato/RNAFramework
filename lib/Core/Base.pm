@@ -21,110 +21,110 @@ use Carp;
 use Core::Utils;
 
 sub new {
-    
+
     my $class = shift;
     my %parameters = @_ if (@_);
-    
+
     my $self = {};
-    
+
     bless($self, $class);
-    
+
     $self->_init({verbosity => undef}, \%parameters);
-    
+
     return($self);
-    
+
 }
 
 sub _init {
-    
+
     my $self = shift;
     my ($default, $provided) = @_ if (@_);
-    
+
     if (my $parameters = checkparameters($default, $provided)) {
-        
+
         $self->{$_} = $parameters->{$_} for (keys %{$parameters});
         $self->verbosity($self->{verbosity}) if (defined $self->{verbosity});
-        
+
     }
     else { $self->throw("Default parameters must be provided as an HASH reference"); }
-    
+
 }
 
-sub loadpackage {
-    
+sub loadPackage {
+
     my $self = shift;
     my $package = shift if (@_);
-    
+
     $self->throw("No package has been specified") unless ($package =~ m/^[\w:]+$/);
-    
+
     my $module = $package;
     $module .= ".pm" unless ($module =~ m/\.pm$/);
     $module =~ s/::/\//g;
-    
+
     return if (exists $INC{$module});
-    
+
     eval { require $module; };
-    
+
     if ($@) {
-        
+
         chomp($@);
         $self->throw("Unable to load package \"" . $package . "\"\nReason: " . $@);
-        
+
     }
-    
+
 }
 
 sub clone {
-    
+
     my $self = shift;
-    
+
     my $clone = clonehashref($self);
-    
+
     bless($clone, ref($self));
-    
+
     return($clone);
-    
+
 }
 
 sub verbosity {
-    
+
     my $self = shift;
     my $verbosity = shift if (@_);
-    
+
     if (defined $verbosity) {
-        
+
         if ($verbosity !~ m/^\-1|0|1$/) {
-            
+
             $self->{verbosity} = 0 if ($self->{verbosity} !~ m/^\-1|0|1$/);
             $self->warn("Verbosity level must be comprised between -1 and 1");
-            
+
         }
         else { $self->{verbosity} = $verbosity; }
-        
+
     }
-    
+
     return($self->{verbosity});
-    
+
 }
 
 sub warn {
-    
+
     my $self = shift;
     my $message = shift if (@_);
-    
+
     return if ($self->{verbosity} < 0);
-    
+
     Core::Utils::warn($message, $self->{verbosity});
-    
+
 }
 
 sub throw {
-    
+
     my $self = shift;
     my $message = shift if (@_);
-    
+
     Core::Utils::throw($message, $self->{verbosity});
-    
+
 }
 
 1;
@@ -139,18 +139,18 @@ Core::Base - Chimaera Framework Base Class
 use base qw(Core::Base);
 
 sub new {
-  
+
   my $class = shift;
   my %parameters = @_ if (@_);
-  
+
   my $self = $class->SUPER::new(%parameters);
   $self->_init({ parameter1 => undef,
                  parameter2 => undef,
                  ...
                  parametern => undef}, \%parameters);
-                 
+
   return($self);
-  
+
 }
 
 # Chimaera compliant objects universal methods
@@ -159,7 +159,7 @@ $object->loadpackage(MODULE);
 $object->verbosity(VALUE);
 $object->throw(TEXT);
 $object->warn(TEXT);
-  
+
 =head1 DESCRIPTION
 
 This module provides the base class for any Chimaera Framework's
@@ -220,7 +220,7 @@ specified, it sets the new verbosity level for the B<warn()> method:
   -1. Suppressed verbosity
    0. Low verbosity
    1. High verbosity (Stack trace-dump)
-   
+
 =back
 
 =head2 warn(TEXT)
