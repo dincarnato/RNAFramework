@@ -92,7 +92,7 @@ sub rmnoncanonical {
 
 	my ($sequence, $pairs) = @_;
 
-	Core::Utils::throw("Sequence contains invalid characters") if (!isna($sequence));
+	Core::Utils::throw("Sequence contains invalid characters") if (!isna($sequence, "-"));
 
 	my (@pairs, @canonical, @noncanonical);
 
