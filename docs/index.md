@@ -51,7 +51,7 @@ Please see <http://www.gnu.org/licenses/> for more information.
 - SAMTools v1.2 or greater (<http://www.htslib.org/>)
 - BEDTools v2.0 or greater (<https://github.com/arq5x/bedtools2/>)
 - Cutadapt v2.1 or greater (<http://cutadapt.readthedocs.io/en/stable/index.html>)
-- ViennaRNA Package v2.2.0 or greater (<http://www.tbi.univie.ac.at/RNA/>)
+- ViennaRNA Package v2.4.0 or greater (<http://www.tbi.univie.ac.at/RNA/>)
 - RNAstructure v5.6 or greater (<http://rna.urmc.rochester.edu/RNAstructure.html>)
 - Perl v5.12 (or greater), with ithreads support
 - Perl non-CORE modules (<http://search.cpan.org/>):
