@@ -3,7 +3,7 @@
 ##
 # RF Mutate
 # RNA Framework [http://www.rnaframework.com]
-#    
+#
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Designs structure mutants and rescues
 #
@@ -64,7 +64,7 @@ my %results : shared;
              motiferr => 0 );
 
 do {
-    
+
     local $SIG{__WARN__} = sub { };
 
     GetOptions( "h|help"              => \$help,
@@ -89,7 +89,7 @@ do {
                 "ne|no-ensemble-prob" => \$noensprob,
                 "vrf|vienna-rnafold"  => \$rnafold,
                 "ec|exclude-codons=s" => \$exclcodons ) or help(1);
-    
+
     $input = $ARGV[0];
 
 };
@@ -139,60 +139,60 @@ if (defined $orffile ||
     # Builds the %cmutable table, containing the alternative codons
     my ($gentable, %codons);
     $gentable = gencode($gencode);
-    
+
     die "\n  [!] Error: Invalid genetic code table \"" . $gencode . "\"\n\n" unless ($gentable);
-    
+
     push(@{$codons{$gentable->{$_}}}, $_) for (keys %{$gentable});
 
     if ($exclcodons) { # Rare codons to be avoided
-        
+
         my @exclcodons = split(/[,;]/, $exclcodons);
-        
+
         for (@exclcodons) { die "\n  [!] Error: Invalid excluded codon \"" . $_ . "\"\n\n" if (!isiupac($_) ||
                                                                                                length($_) != 3); }
-        
+
         $exclcodons = join("|", map { iupac2regex($_) } @exclcodons);
-        
+
     }
-    
+
     foreach my $aa (keys %codons) {
-    
+
         my @altcodons = @{$codons{$aa}};
-    
+
         for(my $i = 0; $i < @altcodons; $i++) {
-    
+
             my (@codons);
             @codons = @altcodons[0 .. $i - 1] if ($i);
             @codons = (@codons, @altcodons[$i + 1 .. $#altcodons]) if ($i < $#altcodons);
             $cmutable{$altcodons[$i]} = [ grep { $_ !~ m/^$exclcodons$/ } @codons ];
-    
+
         }
-    
+
     }
 
 }
 else {
-    
+
     print "\n  [!] Warning: No ORFs file has been provided and --longest-orf is disabled.".
           "\n               All transcripts will be treated as non-coding RNAs.\n";
-    
+
 }
-                
+
 # Output directory tree
 print "\n[+] Making output directory tree...";
 
 if (-e $output) {
 
     if ($overwrite) {
-        
+
         my $error = rmtree($output);
-        
-        die "\n\n  [!] Error: " . $error . "\n\n" if ($error); 
-        
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
                "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
-    
+
 }
 
 mkpath($tmpdir, { mode  => 0755,
@@ -208,37 +208,37 @@ print "\n[+] Importing target motif(s)";
 
 open(my $mh, "<", $motiffile) or die "\n\n  [!] Error: Unable to read motif file\n\n";
 while(my $line = <$mh>) {
-        
+
     chomp($line);
-    
+
     next if ($line =~ m/^\s?#/);
-    
+
     my @line = split(/[,;]/, $line);
-    
+
     next if (@line < 2);
-    
+
     foreach my $i (1 .. $#line) {
-        
+
         $line[$i] =~ s/\s//g;
-        
+
         if ((isdotbracket($line[$i]) &&
              isdbbalanced($line[$i])) ||
             (isint($line[$i]) &&
              ispositive($line[$i]))) {
-            
+
             $input{$line[0]} //= shared_clone({ file   => undef,
                                                 motifs => shared_clone([]),
                                                 orf    => shared_clone({ start => undef,
                                                                          end   => undef,
                                                                          aa    => undef })});
             push(@{$input{$line[0]}->{motifs}}, $line[$i]);
-            
+
             $imported++;
-            
+
         }
-        
+
     }
-    
+
 }
 close($mh);
 
@@ -249,77 +249,77 @@ die "\n\n  [!] Error: No motif imported. Check motif file synthax and try again.
 print "\n[+] Importing structure files [0 imported]";
 
 if (-d $input) {
-    
+
     opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read structure files from directory\n\n";
     while(my $file = readdir($dh)) {
-        
+
         if ($file =~ m/^(.+?)\.(?:fa(?:sta)?|db|ct)$/) {
-        
+
             my $id = $1;
-        
+
             next if (!exists $input{$id});
-        
+
             $input{$id}->{file} = File::Spec->rel2abs($input . "/" . $file);
-        
+
         }
-        
+
     }
     closedir($dh);
-    
+
 }
 else { # Single structure file
 
     if ($input =~ m/([^\/]+?)\.(?:fa(?:sta)?|db|ct)$/) {
-        
+
         my $id = $1;
-        
+
         $input{$id}->{file} = File::Spec->rel2abs($input) if (exists $input{$id});
-        
+
     }
     else { die "\n\n  [!] Error: Provided file does not have a valid extension\n\n"; }
-    
+
 }
 
 if (my $structcount = scalar(grep { defined $input{$_}->{file} } keys %input)) { print CLRRET . "[+] Importing structure file(s) [" . $structcount . " imported]"; }
 else { die "\n\n  [!] Error: No structure file matches any of the sequence IDs in the motif file\n\n"; }
 
 if ($orffile) { # ORFs specified
-    
+
     print "\n[+] Importing ORF(s) [0 imported]";
-    
+
     open(my $oh, "<", $orffile) or die "\n\n  [!] Error: Unable to read ORF file\n\n";
     while(my $line = <$oh>) {
-            
+
         chomp($line);
-        
+
         next if ($line =~ m/^\s?#/);
-        
+
         my @line = split(/[,;]/, $line);
-        
+
         next if (@line < 2);
-        
+
         if (exists $input{$line[0]}) {
-            
+
             if (@line > 2) { warn "\n\n  [!] Warning: Multiple ORFs in file for transcript \"" . $line[0] . "\"." .
                                   "\n               Only the first ORF will be considered\n\n"; }
-            
+
               if (isaa($line[1])) { $input{$line[0]}->{orf}->{aa} = $line[1]; }
               elsif ($line[1] =~ m/^\d+(\-\d+)?$/) { ($input{$line[0]}->{orf}->{start}, $input{$line[0]}->{orf}->{end}) = split("-", $line[1]); }
-             
+
         }
-        
+
     }
     close($oh);
-    
+
     if (my $orfcount = scalar(grep { defined $input{$_}->{orf}->{start} ||
                                      defined $input{$_}->{orf}->{aa} } keys %input)) { print CLRRET . "[+] Importing ORF(s) [" . $orfcount . " imported]"; }
     else {
-        
+
         warn "\n\n  [!] Warning: No ID in ORF file matches any of the sequence IDs in the motif file." .
                 "\n               All transcripts will be treated as non-coding RNAs.\n\n";
-                
+
     }
-        
+
 }
 chdir($tmpdir);  # Change the working directory before starting threads
 
@@ -344,256 +344,256 @@ rmtree($output) unless($results{success});
 print "\n\n[+] All done.\n\n";
 
 sub mutate {
-    
+
     while(1) {
-       
+
         my ($input, $id, $entry, %helices);
-        
+
         { lock(%input);
           $id = (sort keys %input)[0];
-          
+
           if ($id) {
-            
+
               $input = $input{$id};
               delete($input{$id});
-            
+
           } }
-        
-        last unless($id);       
-       
+
+        last unless($id);
+
         eval { $entry = Data::IO::Sequence->new(file => $input->{file})->read(); };
-        
+
         if ($@ ||
             (!$entry->can("structure"))) {
 
             lock(%results);
             $results{parseerr}++;
-            
+
             undef($@);
-            
+
             next;
-            
+
         }
-        
+
         # Table of motif start => end
         %helices = map { $_->h5start() => $_->h3start() } $entry->helices();
-        
+
         if (defined $input->{orf}->{start} ||
             defined $input->{orf}->{aa}) {
-            
+
             if (defined $input->{orf}->{start}) {
-                
+
                 if (!$input->{orf}->{end}) { # Only start of ORF has been defined
-                    
+
                     my ($aa, $stopindex);
                     $aa = translate(substr($entry->sequence(), $input->{orf}->{start}), $gencode);
                     $stopindex = index($aa, "*", 0);
-                    
+
                     if ($stopindex == -1) { $input->{orf}->{end} = $entry->length() - 1; } # no stop codon found in frame
                     elsif ($stopindex > 0) { $input->{orf}->{end} = $input->{orf}->{start} + ($stopindex * 3) + 2; } # convert stop position in aa seq in nt coordinates
                                                                                                                      # nb. stop cannot be the first codon
-                    
+
                 }
-                
+
             }
             else { #aa sequence provided
-                
+
                 foreach my $frame (0 .. 2) {
-                    
+
                     my ($aa, $orfindex);
                     $aa = translate(substr($entry->sequence(), $frame), $gencode);
                     $orfindex = index($aa, $input->{orf}->{aa}, 0);
-                    
+
                     if ($orfindex != -1) {
-                        
+
                         my $stopindex = index($aa, "*", $orfindex);
                         $input->{orf}->{start} = ($orfindex * 3) + $frame;
                         $input->{orf}->{start} -= 3 while ($input->{orf}->{start} >= 3 &&
                                                            substr($aa, $input->{orf}->{start} - 3, 1) ne "*");
-                        
+
                         $input->{orf}->{end} = $stopindex == -1 ? $entry->length() - 1 : ($stopindex * 3) + $frame + 2;
-                        
+
                         last;
-                        
+
                     }
-                    
+
                 }
-                
+
             }
-                
+
             if (!$input->{orf}->{end} ||
                 ($input->{orf}->{end} - $input->{orf}->{start} + 1) % 3) {
-                    
+
                     lock(%results);
                     $results{orferr}++;
-                    
+
                     next;
-                    
+
             }
-                
+
         }
         elsif ($autoorf) {
-            
+
             my @orf = longestorf($entry->sequence(), { gencode     => $gencode,
                                                        altstart    => $startalt,
                                                        ignorestart => $startany,
                                                        minlength   => $minorf });
-            
+
             if (@orf) {
-                
+
                 $input->{orf}->{start} = $orf[1];
                 $input->{orf}->{end} = $orf[1] + length($orf[0]) - 1;
-                
+
             }
-            
+
         }
-        
+
         foreach my $motif (uniq(@{$input->{motifs}})) {
-            
+
             my ($sequence, $structure, $incoding, $itercount,
                 @original, @mutable, @sequence, @variants,
                 @results, @motif, %originalpairs, %bptable,
                 %mutable);
             $itercount = 0;
             $motif = index($entry->structure(), $motif, 0) if (isdotbracket($motif)); # In case the dot-bracket of the motif was provided, first find the corresponding coordinate
-            
+
             if (!exists $helices{$motif}) {
-                    
+
                 lock(%results);
                 $results{motiferr}++;
-                    
+
                 next;
-                    
+
             }
-            
+
             # The motif is (partially or completely) inside the ORF
             $incoding = 1 if (defined $input->{orf}->{start} &&
                               intersect([$motif, $helices{$motif}], [$input->{orf}->{start}, $input->{orf}->{end}]));
-            
+
             if ($incoding) {
-                
+
                 # The motif might not be "in frame", so we will extract the region comprised between the
                 # two codons in which the motif is included
                 # % 3 -> 1: Ist base of codon; 2: IInd base of codon; 0: IIIrd base of codon
                 my ($aah5start, $aah3start);
                 $aah5start = (($motif - $input->{orf}->{start} + 1) % 3) ? ((($motif - $input->{orf}->{start} + 1) % 3) == 1 ? $motif : $motif - 1) : $motif - 2;
                 $aah3start = (($helices{$motif} - $input->{orf}->{start} + 1) % 3) ? ((($helices{$motif} - $input->{orf}->{start} + 1) % 3) == 1 ? $helices{$motif} + 2 : $helices{$motif} + 1) : $helices{$motif};
-                
+
                 $sequence = substr($entry->sequence(), $aah5start, $aah3start - $aah5start + 1);
                 $structure = fixdotbracket(substr($entry->structure(), $aah5start, $aah3start - $aah5start + 1));
                 @motif = ($aah5start, $aah3start);
                 %mutable = %cmutable;
-                
+
             }
             else {
-                
+
                 $sequence = substr($entry->sequence(), $motif, $helices{$motif} - $motif + 1);
                 $structure = substr($entry->structure(), $motif, $helices{$motif} - $motif + 1);
                 @motif = ($motif, $helices{$motif});
                 %mutable = %ncmutable;
-                
+
             }
-            
+
             # Get the free energy of the original motif
             @original = ($structure, RNA::energy_of_struct($sequence, $structure));
 
             %originalpairs = map { $_->[0] => $_->[1],
 								   $_->[1] => $_->[0] } listpairs($original[0]);
-            
+
             # %bptable contains the index of the complementary base to each base in an helix (for non-codings)
             # or the index of the complementary codon with the maximum number of base pairs to each codon in an helix
             # @mutable will contain the indices of all the mutable bases (non-coding) or codons (coding)
             if ($incoding) {
-                
+
                 my (@structure);
-                
+
                 for (keys %originalpairs) {
-			
+
                     $bptable{floor($_ / 3)}->{floor($originalpairs{$_} / 3)}++;
                     $bptable{floor($originalpairs{$_} / 3)}->{floor($_ / 3)}++;
-                    
+
                 }
-        
+
                 %bptable = map { $_ => (sort {$bptable{$_}->{$b} <=> $bptable{$_}->{$a}} keys %{$bptable{$_}})[0] } keys %bptable;
-                
+
                 @sequence = ($sequence =~ m/.../g);
                 @structure = ($structure =~ m/.../g);
                 @mutable = ([grep { ($structure[$_] =~ tr/././) < 2 &&
                                     @{$cmutable{$sequence[$_]}} } 0 .. $#structure]) x $nmutations;  # Selects the index of codons in which at least 2 bases are basepaired
                                                                                                      # and the codon has at least one synonymous codon available
-                        
+
             }
             else {
-                
+
                 %bptable = %originalpairs;
-                
+
                 @sequence = split(//, $sequence);
                 @mutable = map { [map { $_, $originalpairs{$_} } grep { $_ > $originalpairs{$_} } keys %originalpairs] } 0 .. $nmutations - 1;
-                
+
             }
-            
+
             # Creates random combinations of indexes of bases/codons to mutate
             MUTATE:
             foreach my $set (List::Util::shuffle(uniq(map {[sort {$a <=> $b} @$_]} grep { scalar(uniq(map { min($_, $bptable{$_}) } @$_)) == $nmutations } permute(@mutable)))) {
-                
+
                 foreach my $bases (permute(map { clonearrayref($mutable{$sequence[$_]}) } @{$set})) {
-                
+
                     my ($mutated, $bpdist, $energydiff, @mutated,
                         @mfolding);
                     @mutated = @sequence;
                     $mutated[$set->[$_]] = $bases->[$_] for (0 .. $#{$set});
                     $mutated = join("", @mutated);
-                    
+
                     $itercount++;
 
-                    @mfolding = RNA::fold($mutated); 
+                    @mfolding = RNA::fold($mutated);
                     RNA::free_arrays();
-                                    
-                    $bpdist = bpdistance($mfolding[0], $original[0]); 
+
+                    $bpdist = bpdistance($mfolding[0], $original[0]);
                     $energydiff = abs($mfolding[1] - $original[1]);
-                    
+
                     push(@variants, { vseq     => $mutated,
                                       vstruct  => $mfolding[0],
                                       venergy  => $mfolding[1],
                                       bpdist1  => $bpdist,
                                       ediff1   => $energydiff,
                                       indices1 => [@$set] }) if ($bpdist >= int(length($sequence) * $mindist));
-                    
+
                     last MUTATE if ($itercount == $maxiter ||
                                     @variants == $maxeval);
-                
+
                 }
-                
+
             }
-            
+
             if (!$norescue) {
-                
+
                 $itercount = 0;
-                
+
                 RESCUE:
                 foreach my $variant (sort {$b->{bpdist1} <=> $a->{bpdist1} ||
                                            $b->{ediff1} <=> $a->{ediff1}} @variants) {
-                    
+
                     my @set = sort {$a <=> $b} map { $bptable{$_} } @{$variant->{indices1}};
-                    
+
                     foreach my $pair (permute(map { clonearrayref($mutable{$sequence[$_]}) } @set)) {
-                        
+
                         my ($rescued, $bpdist, $energydiff, @rescued,
                             @rfolding);
                         @rescued = $incoding ? ($variant->{vseq} =~ m/.../g) : split(//, $variant->{vseq});
                         $rescued[$set[$_]] = $pair->[$_] for (0 .. $#set);
                         $rescued = join("", @rescued);
-                        
+
                         $itercount++;
-                        
+
                         @rfolding = RNA::fold($rescued);
                         RNA::free_arrays();
-                        
+
                         $bpdist = bpdistance($rfolding[0], $original[0]);
                         $energydiff = abs($rfolding[1] - $original[1]);
-                        
+
                         if ($bpdist <= int(length($sequence) * $tollerance)) {
-                                                 
+
                             push(@results, { vseq     => $variant->{vseq},
                                              vstruct  => $variant->{vstruct},
                                              venergy  => $variant->{venergy},
@@ -606,83 +606,83 @@ sub mutate {
                                              ediff2   => $energydiff,
                                              indices1 => $variant->{indices1},
                                              indices2 => \@set });
-                
+
                             last RESCUE if ($itercount == $maxiter ||
                                             @results == $maxeval);
-                        
+
                         }
-                        
+
                     }
-                            
+
                 }
-                
+
             }
             else { @results = @variants;}
-           
+
             if (@results) {
-                
+
                 my ($xmlio, $xml, $n, $motifattribs);
-                
+
                 if (!$noensprob) {
-                    
+
                     foreach my $result (@results) {
-                    
+
                         my ($id, @p1, @p2, %vpairs, %rpairs);
                         $id = $entry->id() . "_" . $motif;
                         %vpairs = partition($id, $result->{vseq});
                         @p1 = map { $vpairs{$_}->{$originalpairs{$_}} || 0 } grep { $_ < $originalpairs{$_} } keys %originalpairs;
                         $result->{meanprob1} = mean(@p1);
-                        
+
                         if (!$norescue) {
-                            
+
                             %rpairs = partition($id, $result->{rseq});
                             @p2 = map { $rpairs{$_}->{$originalpairs{$_}} || 0 } grep { $_ < $originalpairs{$_} } keys %originalpairs;
                             $result->{meanprob2} = mean(@p2);
-                            
+
                         }
-                        
+
                     }
-                
+
                 }
-                 
+
                 # Sort results
                 if (!$noensprob &&
                     !$norescue) {
-                    
+
                     @results = sort { (1 - $b->{meanprob1} + $b->{meanprob2}) <=> (1 - $a->{meanprob1} + $a->{meanprob2}) ||
                                       $a->{bpdist2} <=> $b->{bpdist2} ||
                                       $b->{bpdist1} <=> $a->{bpdist1} ||
                                       $a->{ediff2} <=> $b->{ediff2} ||
                                       $b->{ediff1} <=> $a->{ediff1}} @results;
-                    
+
                 }
                 elsif (!$noensprob) {
-                    
+
                     @results = sort { $a->{meanprob1} <=> $b->{meanprob1} ||
                                       $b->{bpdist1} <=> $a->{bpdist1} ||
                                       $b->{ediff1} <=> $a->{ediff1}} @results;
-                    
+
                 }
                 elsif (!$norescue) {
-                    
+
                     @results = sort { $a->{bpdist2} <=> $b->{bpdist2} ||
                                       $b->{bpdist1} <=> $a->{bpdist1} ||
                                       $a->{ediff2} <=> $b->{ediff2} ||
                                       $b->{ediff1} <=> $a->{ediff1}} @results;
-                    
+
                 }
                 else {
-                    
+
                     @results = sort { $b->{bpdist1} <=> $a->{bpdist1} ||
                                       $b->{ediff1} <=> $a->{ediff1}} @results;
-                    
+
                 }
-                
+
                 # Report results
                 mkpath($output . $entry->id(), { mode  => 0755,
                                                  error => \$error }) if (!-d $output . $entry->id());
-                
-                $xmlio = Data::IO->new( file      => $output . $entry->id() . "/motif_" . join("-", $motif, $helices{$motif}) . ".xml",  
+
+                $xmlio = Data::IO->new( file      => $output . $entry->id() . "/motif_" . join("-", $motif, $helices{$motif}) . ".xml",
                                         mode      => "w",
                                         binmode   => ":encoding(utf-8)",
                                         verbosity => -1 );
@@ -694,11 +694,11 @@ sub mutate {
                                   position => join("-", $motif, $helices{$motif}),
                                   energy   => sprintf("%.2f", $original[1]) };
                 $motifattribs->{frame} = join("-", @motif) if ($incoding);
-                
+
                 $xml->opentag("motif", $motifattribs);
-                
+
                 foreach my $result (@results[0 .. min(scalar(@results), $maxresults || scalar(@results)) - 1]) {
-                
+
                     $xml->opentag("result", { n => $n });
                     $xml->opentag("mutant", { probability => $noensprob ? "NaN" : sprintf("%.2f", $result->{meanprob1}),
                                               distance    => $result->{bpdist1},
@@ -708,9 +708,9 @@ sub mutate {
                     $xml->tagline("sequence", $result->{vseq});
                     $xml->tagline("structure", $result->{vstruct});
                     $xml->closelasttag();
-                    
+
                     if (!$norescue) {
-                        
+
                         $xml->opentag("rescue", { probability => $noensprob ? "NaN" : sprintf("%.2f", $result->{meanprob2}),
                                                   distance    => $result->{bpdist2},
                                                   ddG         => sprintf("%.2f", $result->{ediff2}),
@@ -719,97 +719,104 @@ sub mutate {
                         $xml->tagline("sequence", $result->{rseq});
                         $xml->tagline("structure", $result->{rstruct});
                         $xml->closelasttag();
-                        
+
                     }
-                    
+
                     $xml->closelasttag();
-                    
+
                     $n++;
-                    
+
                 }
-                
-                $xmlio->write($xml->xml());       
-        
+
+                $xmlio->write($xml->xml());
+
                 { lock(%results);
                   $results{success}++;
-                  
+
                   print CLRRET . "[+] Generating structure mutants" . ($norescue ? " " : " and rescues ") . "[Last: " . $entry->id() . " (motif: " . $motif . ")]" }
-            
+
             }
             else {
-                
+
                 lock(%results);
                 $results{fail}++;
-                    
+
                 next;
-                
+
             }
-            
+
         }
-            
+
     }
-    
+
     threads->exit();
-        
+
 }
 
 sub checkvienna {
-    
+
     my $ret = `$rnafold --version`;
-    
+
     if ($ret =~ m/RNAfold (\d+)\.(\d+)/) {
-        
+
         my ($v1, $v2) = ($1, $2);
-        
+
         die "\n\n  [!] Error: RF Fold requires ViennaRNA package v2.2.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 ||
                                                                                                                                   $v2 < 2);
-        
+
     }
     else { die "\n\n  [!] Error: Unable to detect ViennaRNA package version\n\n"; }
-    
+
 }
 
 # Returns base-pairing probabilities
 sub partition {
-    
+
     my ($id, $sequence) = @_;
-	
+
     my ($cmd, $ret, %pairs);
-    
+
     open(my $wh, ">", $id . ".fasta") or return();
 	print $wh ">" . $id . "\n" . $sequence;
 	close($wh);
-    
+
 	$cmd = $rnafold . " --noPS -p --infile='" . $id . ".fasta' --noLP";
 	$ret = `$cmd 2>/dev/null`;
-	
+
 	open(my $fh, "<", $id . "_dp.ps") or return();
 	while(<$fh>) {
-		
+
 		if ($_ =~ m/^(\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
-			
+
 			my ($i, $j, $p) = ($1, $2, $3);
-			
+
 			$i -= 1;         # Base numbering is 1-based
-			$j -= 1;         
+			$j -= 1;
 			$p = $p ** 2;    # ViennaRNA returns sqrt(p(i,j))
-			
+
 			$pairs{$i}->{$j} = $p;
-			
+
 		}
-		
+
 	}
 	close($fh);
-	
+
 	unlink(glob($id . "*"));
-	
+
 	return(%pairs);
-    
+
 }
-    
+
 sub _permute {
 
     my ($a, $b) = @_;
+
+    if (@{$a} > $maxeval) {
+
+        @{$a} = List::Util::shuffle(@{$a});
+        @{$a} = @{$a}[0 .. $maxeval - 1];
+
+    }
 
     my (@set);
 
@@ -828,37 +835,44 @@ sub _permute {
 }
 
 sub permute {
-    
+
     my ($set, @permutations);
-    
+
     if (@_ > 1) {
-        
+
         $set = List::Util::reduce { _permute($a, $b) } @_;
         @permutations = grep { @$_ == $nmutations &&
                                List::Util::all { length() } @$_ } @{$set};
-        
+
     }
     else { @permutations = map { [$_] } @{$_[0]}; }
-    
+
+    if (@permutations > $maxeval) {
+
+        @permutations = List::Util::shuffle(@permutations);
+        @permutations = @permutations[0 .. $maxeval - 1];
+
+    }
+
     return(@permutations);
-    
+
 }
-    
+
 sub help {
-    
+
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    
+
     die <<HELP;
 
  RF Mutate (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
-    
+
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Designs structure mutants and rescues
- 
+
  Usage:   rf-mutate [Options] structures_folder/                 # Whole transcriptome
           rf-mutate [Options] transcript.(fa|fasta|db|ct)        # Single transcript
- 
+
  Options                                             Description
  -p   or --processors          <int>                 Number of processors to use (Default: 1)
  -o   or --output-dir          <string>              Output directory (Default: rf_mutate/)
@@ -870,7 +884,7 @@ sub help {
  -als or --alt-start                                 Longest ORF is allowed to start with alternative start codon (requires -lo)
  -ans or --any-start                                 Longest ORF is allowed to start with any codon (requires -lo)
  -gc  or --genetic-code        <int>                 Genetic code table for the reference organism (1-33, Default: 1)
- -ec  or --exclude-codons      <string>              A comma (or semicolon) separated list of rare codons to be avoided 
+ -ec  or --exclude-codons      <string>              A comma (or semicolon) separated list of rare codons to be avoided
  -md  or --min-distance        <float>               Minimum (fractional) base-pair distance between wild-type and mutant (0-1, Default: 0.5)
  -t   or --tollerance          <float>               Maximum (fractional) base-pair distance between wild-type and rescue (0-1, Default: 0.2)
  -mi  or --max-iterations      <int>                 Maximum number of iterations (>0, Default: 1000)
@@ -880,8 +894,7 @@ sub help {
  -nr  or --no-rescue                                 Disables design of rescue mutations
  -ne  or --no-ensemble-prob                          Disables evaluation of mutant/rescue Boltzmann ensemble
  -vrf or --vienna-rnafold      <string>              Path to ViennaRNA RNAfold executable (Default: assumes RNAfold is in PATH)
- 
-HELP
-    
-}
 
+HELP
+
+}
