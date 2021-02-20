@@ -57,7 +57,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    @bam_trim5, @pool, %transcripts, %spacer,
+    $primaryonly, @bam_trim5, @pool, %transcripts, %spacer,
     %files, %masks, %realid);
 
 my $lock : shared;
@@ -101,7 +101,8 @@ do {
                 "mm|mutation-map"            => \$mutmap,
                 "ld|left-deletion"           => \$leftdel,
                 "rd|right-deletion"          => \$rightdel,
-                "dc|discard-consecutive=i"   => \$rmconsecutive ) or help(1);
+                "dc|discard-consecutive=i"   => \$rmconsecutive,
+		"pn|primary-only"	     => \$primaryonly ) or help(1);
 
 };
 
@@ -658,6 +659,7 @@ sub count {
                          !$mutcount &&
                          !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
                 next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
+		next if ($primaryonly && $row[1] & 256);
 
                 if ($row[2] ne $last{id}) {
 
@@ -1157,6 +1159,7 @@ sub help {
  -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
                                              Note: Transcripts in this file must match transcripts in SAM/BAM file headers
  -mf or --mask-file           <string>       Path to a mask file
+ -pn or --primary-only			     Consider only primary alignments
  -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
                                              both mates are mapped will be considered
  -pp or --properly-paired                    When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
