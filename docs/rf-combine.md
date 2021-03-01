@@ -25,6 +25,7 @@ __-s__ *or* __--stdev__ | | When combining multiple replicates, an optional "-er
 __-d__ *or* __--decimals__ | int | Number of decimals for reporting reactivities (1-10, Default: __3__)
 __-m__ *or* __--min-values__ | float | Minimum number of values to calculate correlation (Default: __off__)<br/>__Note:__ if a value between 0 and 1 is provided, this is interpreted as a fraction of the transcript's length 
 __-c__ *or* __--min-correlation__ | float | Minimum correlation to report a combined profile (-1&lt;r&lt;1, Default: __off__)<br/>__Note:__ if more than two replicates are being combined, RF Combine requires this threshold to be satisfied all pairwise comparisons
+__-S__ *or* __--spearman__ | | Uses Spearman instead of Pearson to calculate correlation
 __-l__ *or* __--log-transform__ | | Log transforms reactivity values before averaging
 
 !!! note "Note"

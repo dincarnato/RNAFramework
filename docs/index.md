@@ -3,7 +3,7 @@
 <br />  
 
 !!! warning "Important"
-    __[2020-01-16] RNA Framework v2.6.9 [major release]:__<br/>Please check the [changelog](https://github.com/dincarnato/RNAFramework/blob/master/CHANGELOG.md) for a complete list of the changes
+    __[2021-02-27] RNA Framework v2.7.0 [major release]:__<br/>Introduced support for DRACO (Deconvolution of alternative RNA conformations). Please check the [changelog](https://github.com/dincarnato/RNAFramework/blob/master/CHANGELOG.md) for a complete list of the changes
     
 ## Introduction
 
@@ -25,8 +25,7 @@ For support requests, please post your questions to: <https://github.com/dincarn
 ## Author
 
 Danny Incarnato (dincarnato[at]rnaframework.com)<br/>
-Assistant Professor @ University of Groningen<br/>
-Department of Molecular Genetics  
+University of Groningen<br/>
 
 
 ## Reference

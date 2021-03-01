@@ -3,7 +3,7 @@
 ##
 # RF Jackknife
 # RNA Framework [http://www.rnaframework.com]
-#    
+#
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Iteratively optimize slope and intercept parameters to maximize
 #          PPV and sensitivity using a set of reference structures
@@ -42,7 +42,7 @@ $|++;
 
 my ($input, $output, $overwrite, $reference,
     $refio, $help, $tmpdir, $madetmp,
-    $tmp, $error, $rffold, $processmanager, 
+    $tmp, $error, $rffold, $processmanager,
     $threads, $slope, $intercept, $sstep,
     $istep, $rfparams, $relaxed, $kn,
     $kp, $kl, $m, $am,
@@ -56,10 +56,10 @@ my @tested : shared;
 my @results : shared;
 
 do {
-    
+
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"               => \$help,      
+    GetOptions( "h|help"               => \$help,
                 "r|reference=s"        => \$reference,
                 "p|processors=i"       => \$threads,
                 "o|output-dir=s"       => \$output,
@@ -80,7 +80,7 @@ do {
                 "i|ignore-sequence"    => \$ignoreseq ) or help(1);
 
     $input = $ARGV[0];
-                
+
 };
 
 help() if ($help);
@@ -119,10 +119,10 @@ die "\n  [!] Error: Slope range upper and lower limits must be different\n\n" if
 die "\n  [!] Error: Intercept range upper and lower limits must be different\n\n" if ($intercept[0] == $intercept[1]);
 
 for (0 .. 1) {
-    
+
     die "\n  [!] Error: Invalid slope range " . ($_ ? "upper" : "lower") . " limit value\n\n" unless(isreal($slope[$_]));
-    die "\n  [!] Error: Invalid intercept range " . ($_ ? "upper" : "lower") . " limit value\n\n" unless(isreal($intercept[$_]));    
-    
+    die "\n  [!] Error: Invalid intercept range " . ($_ ? "upper" : "lower") . " limit value\n\n" unless(isreal($intercept[$_]));
+
 }
 
 die "\n  [!] Error: Parameters -m and -am are mutually exclusive\n\n" if ($m &&
@@ -147,29 +147,29 @@ print "\n[+] Making output directory...";
 if (-e $output) {
 
     if ($overwrite) {
-        
+
         my $error = rmtree($output);
-        
+
         die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
-        
+
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
                "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
-    
+
 }
 
 mkpath($output, { mode  => 0755,
-                  error => \$error }); 
+                  error => \$error });
 
 if (!-e $tmpdir) {
-    
+
     mkpath($tmpdir, { mode  => 0755,
                       error => \$error });
-    
+
     die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-    
+
     $madetmp = 1;
-    
+
 }
 else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
 
@@ -185,65 +185,65 @@ $refio = Data::IO::Sequence->new( file         => $reference,
                                   lonelypairs  => $kl );
 
 while(my $ref = $refio->read()) {
-    
+
     my ($file, $queryio);
-    
+
     if (-d $input) {
-        
-        if (!-e $input . $ref->id() . ".xml") { 
-        
+
+        if (!-e $input . $ref->id() . ".xml") {
+
             $results{missingstruct}++;
-            
+
             next;
-            
+
         }
-        
+
         $file = $input . $ref->id() . ".xml";
-        
+
     }
     else {
-        
+
         my ($fileid, undef, $format) = fileparse($input, qr/\.[^.]*/);
         $file = $input;
-        
+
         next if ($fileid ne $ref->id() ||
                  $format ne ".xml");
-        
+
     }
-    
+
     eval { $queryio = RF::Data::IO::XML->new(file => $file); };
-    
+
     if ($@) {
-        
+
         $results{ioerr}++;
-        
+
         next;
-        
+
     }
-    
-    if (dna2rna($queryio->sequence()) ne dna2rna($ref->sequence()) &&
-        !$ignoreseq) {
-        
+
+    if ((!$ignoreseq && dna2rna($queryio->sequence()) ne dna2rna($ref->sequence())) ||
+        ($ignoreseq && $queryio->length() != $ref->length())) {
+
         $results{diffseq}++;
-        
+
         next;
-        
+
     }
-    
+
     $files{$ref->id()} = $file;
     $reference{$ref->id()} = $ref->structure();
-    
+
     print CLRRET . "[+] Checking input reference structures and probing data [" . keys(%files) . " imported]";
-    
+
 }
 
 if (keys %files) {
-    
+
     my ($table, @table);
     $results{used} = keys(%files);
-    
+
     print "\n[+] Checking RF Fold parameters...\n";
-    
+
     # Remove potentially conflicting or useless RF Fold parameters
     $rfparams =~ s/(?:^|\s)(?:--ignore-reactivity|--dotplot|--shannon-entropy|--help|--img|-dp|-s|-g|-sh|-i|-h)(?=\s|$)/ /g;
     $rfparams =~ s/(?:^|\s)(?:--slope|-sl)(?:\s+|=)(?:-?\d+(?:\.\d+)+?)?(?=\s|$)/ /g;
@@ -251,128 +251,128 @@ if (keys %files) {
     $rfparams =~ s/(?:^|\s)(?:--processors|-p)(?:\s+|=)(?:\d+)?(?=\s|$)/ /g;
     $rfparams =~ s/(?:^|\s)(?:--output-dir|-o)(?:\s+|=)(?:\S+)?(?=\s|$)/ /g;
     $rfparams =~ s/\s+/ /g;
-    
+
     if ($rfparams) { # Evaluate rf-fold params
-    
+
         my $ret = `$rffold $rfparams 2>&1`;
-        
+
         die "\n  [!] Error: Invalid RF Fold parameters (\"" . $rfparams . "\")." .
             "\n             Please check  documentation for detailed parameters description\n\n" if ($ret =~ m/Error: Invalid option. Please check the help/ ||
                                                                                                      $ret =~ m/RNA Framework \[http:\/\/www.rnaframework.com\]/);
-    
+
     }
-    
+
     $processmanager = Core::Process::Queue->new( processors => $threads,
                                                  stderr     => "/dev/null",
                                                  verbosity  => -1 );
-    
+
     $processmanager->onstart(sub { print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $_[0] . "]"; });
-    
+
     foreach my $id (sort keys %files) {
-    
+
         my (@pool);
-    
+
         print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "]";
-    
+
         for(my $sl = $slope[0]; $sl <= $slope[1]; $sl += $sstep) {
-            
+
             for(my $in = $intercept[0]; $in <= $intercept[1]; $in += $istep) {
-                
+
                 push(@tested, shared_clone([$id, $sl, $in]));
-                
+
                 $processmanager->enqueue( command => join(" ", $rffold, $rfparams, "-sl", $sl, "-in", $in, "-o", $tmpdir . join("_", @{$tested[-1]}), $files{$id}),
                                           id      => $id . "; Slope: " . $sl . "; Intercept: " . $in,
                                           stdout  => "/dev/null" );
-                
+
             }
-            
+
         }
-        
+
         $processmanager->start();
         $processmanager->waitall();
-        
+
         while (my $test = $processmanager->dequeue()) { die "\n\n  [!] Error: Folding failed for transcript \"" . $id . "\"." .
                                                               "\n             Please check input parameters and files and try again.\n\n" if ($test->exitcode()); }
-        
+
         print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "; PPV/Sensitivity calculation]";
-        
+
         @pool = map{ threads->create(\&calc) } 1 .. $threads;
         $_->join() for(@pool);
-        
+
         for (@results) {
-            
+
             push(@{$table{$_->[0]}->{$_->[1]}->{ppv}}, $_->[2]);
             push(@{$table{$_->[0]}->{$_->[1]}->{sensitivity}}, $_->[3]);
-            
+
         }
-        
+
     }
-    
+
     print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [DONE]";
     print "\n[+] Reporting output tables...";
-    
+
     open(my $ph, ">", $output . "ppv.csv") or die "\n\n  [!] Error: Unable to write ouput PPV table (" . $! . ")\n\n";
     open(my $sh, ">", $output . "sensitivity.csv") or die "\n\n  [!] Error: Unable to write ouput sensitivity table (" . $! . ")\n\n";
     open(my $gh, ">", $output . "geometric_mean.csv") or die "\n\n  [!] Error: Unable to write ouput geometric mean table (" . $! . ")\n\n";
     select((select($ph), $|=1)[0]);
     select((select($sh), $|=1)[0]);
     select((select($gh), $|=1)[0]);
-    
+
     print $ph join(";", "PPV", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
     print $sh join(";", "Sensitivity", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
     print $gh join(";", "Mean", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
-    
+
     foreach my $sl (sort {$a <=> $b} keys %table) {
-        
+
         my (@prow, @srow, @grow);
         @prow = ($sl);
         @srow = @prow;
         @grow = @prow;
-        
+
         foreach my $in (sort {$a <=> $b} keys %{$table{$sl}}) {
-        
+
             my ($ppv, $sensitivity, $geomean);
-            
+
             if (isnumeric(@{$table{$sl}->{$in}->{ppv}}) &&
                 isnumeric(@{$table{$sl}->{$in}->{sensitivity}})) {
-            
+
                 if ($m) { ($ppv, $sensitivity) = (sprintf("%.3f", median(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", median(@{$table{$sl}->{$in}->{sensitivity}}))); }
                 elsif ($am) { ($ppv, $sensitivity) = (sprintf("%.3f", mean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", mean(@{$table{$sl}->{$in}->{sensitivity}}))); }
                 else { ($ppv, $sensitivity) = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{sensitivity}}))); }
-                
+
                 $geomean = $ppv && $sensitivity ? sprintf("%.3f", geomean($ppv, $sensitivity)) : "NaN";
-            
+
             }
             else { ($ppv, $sensitivity, $geomean) = ("NaN", "NaN", "NaN");}
-            
+
             push(@prow, $ppv);
             push(@srow, $sensitivity);
             push(@grow, $geomean);
             push(@table, [$sl, $in, $sensitivity, $ppv, $geomean]) if (!isnan($geomean));
-        
+
         }
-        
+
         print $ph join(";", @prow) . "\n";
         print $sh join(";", @srow) . "\n";
         print $gh join(";", @grow) . "\n";
-        
+
     }
-    
+
     close($ph);
     close($sh);
     close($gh);
-    
+
     @table = sort { $b->[4] <=> $a->[4] } @table;
-    
+
     $table = Term::Table->new(indent => 2);
     $table->head("Slope", "Intercept", "Sensitivity", "PPV", "Geometric mean");
-    
+
     for (0 .. ($#table < 9 ? $#table : 9)) { $table->row(@{$table[$_]}); }
-    
+
     print "\n[+] Top slope/intercept value pairs:\n\n";
     $table->print();
     print "\n";
-    
+
 }
 else { warn "\n\n [!] Error: No reference structure passed checks\n"; }
 
@@ -390,69 +390,69 @@ print "\n\n[+] All done.\n\n";
 cleanup();
 
 sub calc {
-    
+
     while (1) {
-        
+
         my ($test, $testio, $entry, $p,
             $s, $id);
-        
+
         { lock(@tested);
           $test = shift(@tested) if (@tested); }
-        
+
         last unless($test);
-        
+
         $id = shift(@{$test});
-        
+
         eval { $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db"); };
-        
+
         if ($@) {
 
             $p = "NaN";
             $s = "NaN";
-                
+
         }
         else {
-        
+
             $entry = $testio->read();
             $p = ppv($reference{$id}, $entry->structure(), $relaxed);
             $s = sensitivity($reference{$id}, $entry->structure(), $relaxed);
-        
+
         }
-        
+
         { lock(@results);
           push(@results, shared_clone([@{$test}, $p, $s]));
-        
+
           rmtree($tmpdir . join("_", $id, @{$test})); }
 
     }
-    
+
 }
 
 sub cleanup {
-    
+
     unlink(glob($tmpdir . $tmp . "*"));
-    
+
     rmtree($tmpdir) if ($madetmp &&
                         isdirempty($tmpdir));
-    
+
 }
 
 sub help {
-    
+
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    
+
     die <<HELP;
- 
+
  RF JackKnife (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
-    
+
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Iteratively optimize slope and intercept parameters to maximize
           PPV and sensitivity using a set of reference structures
- 
+
  Usage:   rf-jackknife [Options] XML_folder/                # Multiple transcripts
           rf-jackknife [Options] file.xml                   # Single transcript
- 
+
  Options                                      Description
  -r  or --reference        <string>           A file containing reference structures in Vienna format (dotbracket notation)
  -p  or --processors       <int>              Number of processors to use (Default: 1)
@@ -474,7 +474,7 @@ sub help {
                                               Note: by default, the geometric mean of PPV/sensitivity values is reported
  -rf or --rf-fold          <string>           Path to rf-fold executable (Default: assumes rf-fold is in PATH)
  -rp or --rf-fold-params   <string>           Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
- 
+
 HELP
-    
+
 }

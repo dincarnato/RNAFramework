@@ -24,7 +24,7 @@ For news, and walkthrough examples, please visit our blog:
 ## Author
 
 Danny Incarnato (dincarnato[at]rnaframework.com)  
-Epigenetics Unit @ HuGeF [Human Genetics Foundation]
+University of Groningen
 
 
 ## License

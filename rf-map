@@ -114,7 +114,7 @@ $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
 $cutadapt //= which("cutadapt");
 $samtools //= which("samtools");
 $ca5 ||= "GTTCAGAGTTCTACAGTCCGACGATC";
-$ca3 ||= "TGGAATTCTCGGGTGCCAAGG";
+$ca3 ||= "AGATCGGAAGAGCACACGTCT";
 $cl //= 25;
 $cm //= 1;
 $cq3 //= 20;
@@ -718,7 +718,7 @@ sub help {
  -ca5 or --cutadapt-5adapter       <string>     Sequence of 5' adapter to clip (Default: GTTCAGAGTTCTACAGTCCGACGATC)
                                                 Note #1: Sequence of 5' adapter will be automatically reverse-complemented.
                                                 Note #2: Multiple adapter sequences can be provided as a comma-separated list.
- -ca3 or --cutadapt-3adapter       <string>     Sequence of 3' adapter to clip (Default: TGGAATTCTCGGGTGCCAAGG)
+ -ca3 or --cutadapt-3adapter       <string>     Sequence of 3' adapter to clip (Default: AGATCGGAAGAGCACACGTCT)
                                                 Note: Multiple adapter sequences can be provided as a comma-separated list.
  -cq5 or --cutadapt-5quality       <int>        Quality threshold for trimming bases from read 5'-ends (Phred+33, Default: 0 [no trimming])
                                                 Note: 5'-end quality trimming must be avoided when analyzing data from RT-stop-based methods

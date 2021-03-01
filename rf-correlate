@@ -3,7 +3,7 @@
 ##
 # RF Correlate
 # RNA Framework [http://www.rnaframework.com]
-#    
+#
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Calculates correlation between datasets
 #
@@ -38,8 +38,9 @@ die "\n  [!] Error: This program requires ithreads." .
 $|++;
 
 my ($output, $overwrite, $help, $minvalues,
-    $threads, $table, $skipoverall, @pool,
-    @xml, @overall, %xml);
+    $threads, $table, $skipoverall, $spearman,
+    $ignoreseq, $singlefile, @pool, @xml,
+    @overall, %xml);
 
 my @ids : shared;
 my @allreactivities1 : shared;
@@ -52,16 +53,18 @@ my %results : shared;
              correlated  => 0 );
 
 do {
-    
+
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"         => \$help,
-                "o|output=s"     => \$output,
-                "ow|overwrite"   => \$overwrite,
-                "m|min-values=s" => \$minvalues,
-                "p|processors=i" => \$threads,
-                "s|skip-overall" => \$skipoverall ) or help(1);
-    
+    GetOptions( "h|help"            => \$help,
+                "o|output=s"        => \$output,
+                "ow|overwrite"      => \$overwrite,
+                "m|min-values=s"    => \$minvalues,
+                "p|processors=i"    => \$threads,
+                "s|skip-overall"    => \$skipoverall,
+                "S|spearman"        => \$spearman,
+                "i|ignore-sequence" => \$ignoreseq ) or help(1);
+
     @xml = uniq(@ARGV);
 
 };
@@ -87,45 +90,51 @@ die "\n  [!] Error: Miminum number of values must be greater than 0\n\n" if (def
                                                                              (!isnumeric($minvalues) ||
                                                                               $minvalues == 0));
 
+$singlefile = 1 if (!-d $xml[0] && !-d $xml[1]);
+
 print "\n[+] Importing input XML directories\/files...";
 
 for (@xml) {
-    
+
     die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $_);
-    
+
     if (-d $_) {
-        
+
         $_ =~ s/\/?$/\//;
-        
+
         opendir(my $dh, $_) or die "\n\n  [!] Error: Unable to read from input directory \"" . $_ . "\" (" . $! . ")\n\n";
         while(my $file = readdir($dh)) {
-        
+
             next if ($file !~ m/\.xml$/);
-            
+
             $file =~ s/\.xml//;
             $xml{$file}++;
-            
+
         }
         close($dh);
-        
+
     }
     else { $xml{(fileparse($_, ".xml"))[0]}++; }
-    
+
 }
 
 # Delete all transcripts that are not common to all XML directories
-for (keys %xml) { delete($xml{$_}) if ($xml{$_} != @xml); }
+if (!$singlefile) {
 
-print " " . (keys %xml) . " common transcripts.";
+    for (keys %xml) { delete($xml{$_}) if ($xml{$_} != @xml); }
 
-die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %xml);
+    print " " . (keys %xml) . " common transcripts.";
+
+    die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %xml);
+
+}
 
 if (-e $output) {
 
     if ($overwrite) { unlink($output) or die  "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n"; }
     else { die "\n\n  [!] Error: Output file already exists." .
                "\n      Please use -ow (or --overwrite) to overwrite output file\n\n"; }
-    
+
 }
 
 open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
@@ -133,26 +142,36 @@ select((select($wh), $|=1)[0]);
 
 print "\n[+] Calculating correlations [Last: none]";
 
-@ids = keys %xml;
+@ids = $singlefile ? (keys %xml)[0] : keys %xml;
 @pool = map{ threads->create(\&correlate) } 1 .. $threads;
 $_->join() for(@pool);
 
 close($wh);
 
-if (!$skipoverall) {
-    
-    @overall = pearson(\@allreactivities1, \@allreactivities2);
-    
+if (!$skipoverall && !$singlefile) {
+
+    @overall = $spearman ? spearman(\@allreactivities1, \@allreactivities2) : pearson(\@allreactivities1, \@allreactivities2);
+
     print "\n[+] Overall correlation: " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
 
 }
 
-print "\n[+] Top 10 correlated transcripts:\n\n";
+if ($singlefile) {
 
-$table = Term::Table->new(indent => 2);
-$table->head("Transcript", "Correlation", "p-value");
-$table->row($_, sprintf("%.3f", $correlations{$_}->[0]), sprintf("%.2e", $correlations{$_}->[1])) for ((sort {$correlations{$b}->[0] <=> $correlations{$a}->[0] } keys %correlations)[0 .. min(scalar(keys(%correlations)) - 1, 9)]);
-$table->print();
+    if (my $id = (keys %correlations)[0]) { print "\n[+] Correlation: " . sprintf("%.3f", $correlations{$id}->[0]) . " (p-value: " .  sprintf("%.2e", $correlations{$id}->[1]) . ")"; }
+    else { print "\n\n  [!] Error: Correlation calculation failed"; }
+
+}
+else {
+
+    print "\n[+] Top 10 correlated transcripts:\n\n";
+
+    $table = Term::Table->new(indent => 2);
+    $table->head("Transcript", "Correlation", "p-value");
+    $table->row($_, sprintf("%.3f", $correlations{$_}->[0]), sprintf("%.2e", $correlations{$_}->[1])) for ((sort {$correlations{$b}->[0] <=> $correlations{$a}->[0] } keys %correlations)[0 .. min(scalar(keys(%correlations)) - 1, 9)]);
+    $table->print();
+
+}
 
 print "\n\n[+] Combination statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{correlated} .
@@ -164,128 +183,130 @@ print "\n\n[+] Combination statistics:\n" .
 print "\n\n[+] All done.\n\n";
 
 sub correlate {
-    
+
     while (1) {
-        
+
         my ($id, $xmlref1, $xmlref2, $nbases,
             $sequence, $reactive, @reactivity1, @reactivity2,
             @commonidx, @pearson);
-        
+
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
-        
+
         last unless($id);
-        
+
         eval {
-            
+
             no warnings;
-            
+
             $xmlref1 = RF::Data::IO::XML->new(file => -d $xml[0] ? $xml[0] . $id . ".xml" : $xml[0]);
             $xmlref2 = RF::Data::IO::XML->new(file => -d $xml[1] ? $xml[1] . $id . ".xml" : $xml[1]);
-            
+
         };
-        
+
         if ($@) { # Exception from eval
-            
+
             lock(%results);
             $results{failed}++;
-            
+
             undef($@);
-            
+
             next;
-                
+
         }
-        
-        if ($xmlref1->sequence() ne $xmlref2->sequence()) {
-            
+
+        if ((!$ignoreseq && $xmlref1->sequence() ne $xmlref2->sequence()) ||
+            ($ignoreseq && $xmlref1->length() != $xmlref2->length())) {
+
             lock(%results);
             $results{diffseq}++;
             $results{failed}++;
-            
+
             undef($@);
-            
+
             next;
-            
+
         }
-        
+
         $reactive = $xmlref1->reactive() || "ACGT";
         $sequence = $xmlref1->sequence();
         ($nbases) = $sequence =~ s/([$reactive])/$1/g;
-        
+
         @reactivity1 = $xmlref1->reactivity();
         @reactivity2 = $xmlref2->reactivity();
-        
+
         @commonidx = grep { isnumeric($reactivity1[$_]) &&
                             isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
-        
-        if (defined $minvalues) {
-            
-            if (($minvalues < 1 &&
-                 @commonidx / $nbases < $minvalues) ||
-                ($minvalues >= 1 &&
-                 @commonidx < $minvalues)) {
-                    
+
+        if (defined $minvalues || @commonidx < 2) {
+
+            if (($minvalues < 1 && @commonidx / $nbases < $minvalues) ||
+                ($minvalues >= 1 && @commonidx < $minvalues) ||
+                @commonidx < 2) {
+
                 lock(%results);
                 $results{nominvalues}++;
                 $results{failed}++;
-                
+
                 undef($@);
-                
+
                 next;
-                
+
             }
-            
+
         }
-        
+
         @reactivity1 = @reactivity1[@commonidx];
         @reactivity2 = @reactivity2[@commonidx];
-        @pearson = pearson(\@reactivity1, \@reactivity2);
-        
+        @pearson = $spearman ? spearman(\@reactivity1, \@reactivity2) : pearson(\@reactivity1, \@reactivity2);
+
         { lock(%results);
           $results{correlated}++;
           $correlations{$id} = shared_clone(\@pearson);
-          
+
           if (!$skipoverall) {
-            
+
               push(@allreactivities1, @reactivity1);
               push(@allreactivities2, @reactivity2);
-            
+
           }
-          
+
           print $wh join(";", $id, @pearson) . "\n"; }
-        
+
         print CLRRET . "[+] Calculating correlations [Last: $id]";
-        
+
     }
-    
+
     threads->exit();
-    
+
 }
 
 sub help {
-    
+
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    
+
     die <<HELP;
- 
+
  RF Correlate (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
-    
+
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Calculates pairwise correlations of structure probing experiments
- 
+
  Usage:   rf-correlate [Options] XML_folder_rep1/ XML_folder_rep2/           # Whole transcriptome
           rf-correlate [Options] file_rep1.xml file_rep2.xml                 # Single transcript
- 
+
  Options                               Description
  -p  or --processors    <int>          Number of processors to use (Default: 1)
  -o  or --output        <string>       Output CSV file (Default: rf_correlate.csv)
  -ow or --overwrite                    Overwrites output file (if the specified file already exists)
  -m  or --min-values    <float>        Minimum number of values to calculate correlation (Default: off)
-                                       Note: if a value between 0 and 1 is provided, this is interpreted as a fraction of the
-                                             transcript's length
- -s  or --skip-overall                 Skips overall experiment correlation calculation (faster)        
- 
+                                       Note: if a value between 0 and 1 is provided, this is interpreted as a
+                                             fraction of the transcript's length
+ -s  or --skip-overall                 Skips overall experiment correlation calculation (faster)
+ -S  or --spearman                     Uses Spearman instead of Pearson to calculate correlation
+ -i  or --ignore-sequences             Ignores sequence differences (e.g. SNVs) between the compared transcripts
+
 HELP
-    
+
 }

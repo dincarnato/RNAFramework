@@ -57,8 +57,8 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $primaryonly, @bam_trim5, @pool, %transcripts, %spacer,
-    %files, %masks, %realid);
+    $maxcov, $primaryonly, @bam_trim5, @pool,
+    %transcripts, %spacer, %files, %masks, %realid);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -102,7 +102,8 @@ do {
                 "ld|left-deletion"           => \$leftdel,
                 "rd|right-deletion"          => \$rightdel,
                 "dc|discard-consecutive=i"   => \$rmconsecutive,
-		"pn|primary-only"	     => \$primaryonly ) or help(1);
+                "mv|max-coverage=i"          => \$maxcov,
+                "pn|primary-only"            => \$primaryonly ) or help(1);
 
 };
 
@@ -123,7 +124,7 @@ $mapqual //= 10;
 $maxdel //= 10;
 $maxmutdist //= 2;
 $maxmut ||= 0.15;
-$discardshorter //= 0;
+$discardshorter //= 1;
 $rmconsecutive //= 0;
 $samtools ||= which("samtools");
 
@@ -156,6 +157,11 @@ die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noam
                                                                            $leftalign);
 die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($collapse &&
                                                                            $rmconsecutive);
+die "\n  [!] Error: Max coverage must be >= 1000\n\n" if (defined $maxcov && $maxcov < 1000);
+die "\n  [!] Error: Parameter -mv requires parameter -m\n\n" if ($maxcov && !$mutcount);
+die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter &&
+                                                                              ((isint($discardshorter) && $discardshorter < 1) &&
+                                                                               $discardshorter !~ m/^median$/i));
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
@@ -232,12 +238,12 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
 
-    push(@qcounter, shared_clone({ path    => $sample,
-                                   file    => $file,
-                                   type    => guess_type($sample),
-                                   head    => undef,
-                                   trim5   => 0,
-                                   hashead => 0 }));
+    push(@qcounter, shared_clone({ path           => $sample,
+                                   file           => $file,
+                                   type           => guess_type($sample),
+                                   head           => undef,
+                                   trim5          => 0,
+                                   hashead        => 0 }));
 
     $files{$file} = $#qcounter;
     $spacer{$file} = length($file);
@@ -408,6 +414,44 @@ if ($hashead != @qcounter) {
 }
 
 ##
+# Estimate read length (if maxcov is specified)
+##
+
+if (($maxcov || $discardshorter =~ m/^median$/i) && $mutcount) {
+
+    print "\n[+] Estimating median read lengths:\n\n";
+
+    foreach my $sample (@qcounter) {
+
+        my @lengths;
+
+        open(my $fh, $samtools . " view " . $sample->{path} . " 2>&1 |") or die "  [!] Error: Unable to read SAM/BAM file for sample \"" . $sample->{file} . "\" (" . $! . ")\n\n";
+        while (my $row = <$fh>) {
+
+            chomp($row);
+            my @row = split(/\t/, $row);
+
+            push(@lengths, (parsecigar($row[5]))[2]); # The true length (so the number of bases of target covered)
+
+            last if (@lengths == 10000);
+
+        }
+        close($fh);
+
+        $sample->{medianReadLen} = round(median(@lengths));
+
+    }
+
+    my $table = Term::Table->new(indent => 2);
+    $table->head("Sample", "Median");
+    $table->row($_->{file}, $_->{medianReadLen} . " nt") for (@qcounter);
+    $table->print();
+
+    print "\n";
+
+}
+
+##
 # Guessing 5'-end trimming for RT-stop count mode
 ##
 
@@ -469,40 +513,6 @@ else {
     print "\n";
 
 }
-
-# Removed, now total reads is just the sum of all reads processed
-## Count mapped reads
-#
-#if ($mapcount) {
-#
-#    print "\n[+] Getting total mapped reads count...\n";
-#
-#    $processmanager->onstart(sub { print "\n  [-] Counting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-#
-#    foreach my $sample (@qcounter) {
-#
-#        my $path = $sample->{path};
-#
-#        $processmanager->enqueue( command => sub { my $n = `samtools view -F 0x40 "$path" | cut -f1 | LC_ALL=C sort -T "$tmpdir" | uniq | wc -l`; chomp($n); return($n); },
-#                                  id      => $sample->{file} );
-#
-#    }
-#
-#    $processmanager->start();
-#    $processmanager->waitall();
-#
-#    while (my $sample = $processmanager->dequeue()) {
-#
-#        die "\n\n  [!] Error: Unable to count total mapped reads for sample \"" . $sample->id() . "\"\n\n" if (!ispositive($sample->exitcode()));
-#
-#        $qcounter[$files{$sample->id()}]->{nreads} = $sample->exitcode();
-#
-#    }
-#
-#    print "\n";
-#
-#}
-#else { print "\n[+] Skipping total mapped reads counting..."; }
 
 if (-e $mbfile) {
 
@@ -590,8 +600,8 @@ sub count {
         last unless($sample);
 
         my ($covered, $rcio, $stats, $readscount,
-            $mmio, @counts, @coverage, %last,
-            %stats);
+            $mmio, $readsToMaxCov, @lastPos, @counts,
+            @coverage, %last, %stats);
         $covered = 0;
         %last = ( id       => undef,
                   sequence => undef );
@@ -641,7 +651,7 @@ sub count {
 
                 next if (!exists $transcripts{$id});
                 next if ($mutcount &&
-                         $truelen < $discardshorter);
+                         $truelen < ($discardshorter =~ m/^median$/i ? $sample->{medianReadLen} : $discardshorter));
                 next if ($mutcount &&
                          $editdist / $cov > $maxmut);
                 next if ($mutcount &&
@@ -659,7 +669,7 @@ sub count {
                          !$mutcount &&
                          !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
                 next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
-		next if ($primaryonly && $row[1] & 256);
+                next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
 
                 if ($row[2] ne $last{id}) {
 
@@ -695,6 +705,8 @@ sub count {
                       $last{sequence} = $entry->sequence(); }
 
                     $readscount = 0;
+                    $readsToMaxCov = $transcripts{$id} < $sample->{medianReadLen} ? $maxcov : round(($transcripts{$id} * $maxcov / $sample->{medianReadLen}) / ($transcripts{$id} - $sample->{medianReadLen} + 1)) if ($maxcov);
+                    @lastPos = (0, 0); # position, count
                     @counts = (0) x $transcripts{$id};
                     @coverage = (0) x $transcripts{$id};
 
@@ -702,18 +714,29 @@ sub count {
 
                 }
 
-                $readscount++;
-                $stats{total}++;
-
                 if ($mutcount ||
                     $covonly) {  # Mutations count / Coverage only modes
+
+                    my $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+
+                    if ($maxcov) {
+
+                        next if ($transcripts{$id} >= $sample->{medianReadLen} &&
+                                 $start > $transcripts{$id} - $sample->{medianReadLen});
+
+                        if ($lastPos[0] == $start && $lastPos[1] == $readsToMaxCov) { next; }
+                        elsif ($lastPos[0] < $start) { @lastPos = ($start, 0); }
+
+                    }
+
+                    $readscount++ unless ($row[1] & 256);
+                    $stats{total}++;
 
                     # Parse the MD flag only when edit distance != 0
                     if ($mutcount &&
                         $row !~ m/NM:i:0/) {
 
-                        my ($start, $end, @mutations, @uniqmutations);
-                        $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+                        my ($end, @mutations, @uniqmutations);
                         $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
                         @mutations = parsemd(\@row, $last{sequence});
                         @mutations = uniq(@mutations, @{$ins}) if (!$noins);
@@ -732,6 +755,7 @@ sub count {
 
                     }
 
+                    $lastPos[1]++;
                     map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
                                            ($row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2);
 
@@ -746,6 +770,9 @@ sub count {
                         $stats{substr($last{sequence}, $row[3], 1)}++;
 
                         map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov + $clip5 - 2);
+
+                        $readscount++ unless ($row[1] & 256);
+                        $stats{total}++;
 
                     }
 
@@ -787,8 +814,8 @@ sub count {
 
                 my $total = sum(map { $stats{$_} } qw(A C G T));
                 $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
-                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total} * 100) . "\%) mutated reads" if ($mutcount &&
-                                                                                                                                                                  $stats{total});
+                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total} * 100) . "\%) mutated alignments" if ($mutcount &&
+                                                                                                                                                                       $stats{total});
 
             }
 
@@ -1159,7 +1186,7 @@ sub help {
  -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
                                              Note: Transcripts in this file must match transcripts in SAM/BAM file headers
  -mf or --mask-file           <string>       Path to a mask file
- -pn or --primary-only			     Consider only primary alignments
+ -pn or --primary-only                       Considers only primary alignments (SAM bitwise flag != 256)
  -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
                                              both mates are mapped will be considered
  -pp or --properly-paired                    When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
@@ -1175,7 +1202,8 @@ sub help {
 
  |
  +- Mutation count mode options
-    -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: disabled)
+    -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
+                                                  Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
     -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
     -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
                                                   Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
@@ -1194,7 +1222,8 @@ sub help {
     -dc or --discard-consecutive     <int>        Discards consecutive mutations within this distance from eachothers
     -cc or --collapse-consecutive                 Collapses consecutive mutations/indels toward the 3'-most one
     -mc or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
-    -mm or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution by DRACO
+    -mv or --max-coverage            <int>        Downsamples reads to achieve this maximum mean per-base coverage (>=1000, Default: off)
+    -mm or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution with DRACO
 
 
 HELP
