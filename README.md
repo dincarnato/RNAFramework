@@ -16,9 +16,14 @@ Its main features are:
 - Accurate RNA folding prediction by incorporating structural probing data
 
 For updates, please visit: <http://www.rnaframework.com>  
+
 For support requests, please post your questions/issues to: <https://github.com/dincarnato/RNAFramework/issues>  
+
 For news, and walkthrough examples, please visit our blog:
-<http://www.rnaframework.com/blog> 
+<http://www.rnaframework.com/blog>
+
+For a complete documentation, please refer to:
+<https://rnaframework-docs.readthedocs.io/en/latest/>
 
 
 ## Author
