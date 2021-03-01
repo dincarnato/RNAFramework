@@ -22,9 +22,6 @@ For support requests, please post your questions/issues to: <https://github.com/
 For news, and walkthrough examples, please visit our blog:
 <http://www.rnaframework.com/blog>
 
-For a complete documentation, please refer to:
-<https://rnaframework-docs.readthedocs.io/en/latest/>
-
 
 ## Author
 
@@ -41,4 +38,4 @@ Please see <http://www.gnu.org/licenses/> for more information.
 
 ## Documentation
 
-For any information, please refer to the documentation: <http://rnaframework.readthedocs.io/>
+For any information, please refer to the documentation: <http://rnaframework-docs.readthedocs.io/>
