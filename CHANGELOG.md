@@ -10,6 +10,7 @@
 - Added rf-combine and rf-correlate parameter "-S" (or "--spearman) to use Spearman rather than Pearson to evaluate correlation
 - Added rf-correlate "-i" parameter (or "--ignore-sequence") to ignore sequence differences (e.g. due to SNVs) between compared transcripts
 - Added support for direct comparison of XML files with different file names to rf-correlate
+- Added rf-peackcall "-l" (or "--whitelist") parameter to restrict the analysis to certain transcripts only
 
 ### Changed
 - Fixed rf-count to handle sequence IDs containing slashes ("/"), causing errors at later stages

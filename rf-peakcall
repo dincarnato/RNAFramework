@@ -47,7 +47,8 @@ my ($help, $output, $overwrite, $win,
     $threads, $iprc, $ctrlrc, $decimals,
     $mergedist, $img, $error, $metaplot,
     $refine, $summit, $relaxed, $offset,
-    $metaonlyenriched, @index, @pool, @imeans);
+    $metaonlyenriched, $whitelist, @index, @pool,
+    @imeans);
 
 my $ctrlnreads : shared;
 my $ipnreads : shared;
@@ -75,6 +76,7 @@ do {
                 "mp|meta-plot"          => \$metaplot,
                 "eo|plot-enriched-only" => \$metaonlyenriched,
                 "w|window=i"            => \$win,
+                "l|whitelist=s"         => \$whitelist,
                 "mc|mean-coverage=s"    => \$meancov,
                 "ec|median-coverage=s"  => \$mediancov,
                 "c|control=s"           => \$control,
@@ -131,6 +133,7 @@ die "\n  [!] Error: Parameter -x requires peaks refinement (-r) to be active\n\n
                                                                                       !$refine);
 die "\n  [!] Error: Parameter -eo requires meta-plot generation (-mp) to be active\n\n" if ($metaonlyenriched &&
                                                                                             !$metaplot);
+die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
 warn "\n  [!] Warning: No control sample RC file provided. Background will be estimated on IP sample only.\n" if (!defined $control);
 
@@ -183,8 +186,27 @@ print "\n[+] Loading transcript IDs... ";
 
 @qcaller = $iprc->ids();
 
-print scalar(@qcaller) . " transcripts loaded." .
-      "\n[+] Calling peaks [Last: none]";
+if ($whitelist) {
+
+    my %whitelist;
+
+    open(my $fh, "<", $whitelist) or die "\n\n  [!] Error: Unable to read from whitelist file\n\n";
+    while(<$fh>) {
+
+        chomp();
+        $whitelist{$_} = 1;
+
+    }
+    close($fh);
+
+    @qcaller = grep { exists $whitelist{$_} } @qcaller;
+
+    if (!@qcaller) { die "\n\n  [!] Error: No transcript matched provided whitelist\n\n"; }
+
+}
+
+print scalar(@qcaller) . " transcripts loaded.";
+print "\n[+] Calling peaks [Last: none]";
 
 @pool = map{ threads->create(\&call) } 1 .. $threads;
 $_->join() for(@pool);
@@ -739,6 +761,7 @@ sub help {
                                                 it will be used for all samples.
                                                 If no RCI index is provided, it will be created at runtime, and stored in
                                                 the same folder of the control, and IP samples.
+ -l  or --whitelist        <string>             A whitelist containing transcript IDs (one per each row) to restrict the analysis to
  -p  or --processors       <int>                Number of processors to use (Default: 1)
  -o  or --output           <string>             Output folder (Default: <IP>_vs_<Control> if a control RC file is provided, or
                                                                         <IP> if only the IP RC file is provided)
