@@ -348,11 +348,11 @@ sub combine {
 
         }
 
-        if (defined $minvalues || @commonidx < 2) {
+        if (defined $minvalues || @commonidx1 < 2) {
 
             if (($minvalues < 1 && @commonidx1 / $nbases < $minvalues) ||
                 ($minvalues >= 1 && @commonidx1 < $minvalues) ||
-                @commonidx < 2 ||
+                @commonidx1 < 2 ||
                 ($tool eq "rf-modcall" &&
                  (($minvalues < 1 &&
                     @commonidx2 / $nbases < $minvalues) ||
