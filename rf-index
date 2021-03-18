@@ -40,8 +40,8 @@ my ($dbh, $sth, $assembly, $annotation,
     $overwrite, $error, $bowtie2, $name,
     $list, $prebuilt, $codonly, $nconly,
     $sed, $listanno, $host, $port,
-    $threads, $unspliced, @columns, %columns,
-    %chromosomes, %ids);
+    $threads, $unspliced, $nchromosomes, @columns,
+    %columns, %chromosomes, %ids);
 
 @columns = qw(name chrom strand txStart
               txEnd cdsStart cdsEnd exonCount
@@ -415,11 +415,11 @@ else {
 
         }
 
+        $nchromosomes = scalar(keys %chromosomes);
+
         if (!defined $reference) {
 
-            my ($longer, $nchromosomes);
-            $longer = length(shift(@{[sort {length($b) <=> length($a)} keys %chromosomes]}));    # Takes the length of the longer chromosome name
-            $nchromosomes = scalar(keys %chromosomes);
+            my $longer = length(shift(@{[sort {length($b) <=> length($a)} keys %chromosomes]}));    # Takes the length of the longer chromosome name
 
             print "\n\n  [!] Warning: No reference FASTA file has been provided." .
                   "\n               RF Index will now try to download the reference genome sequence" .
