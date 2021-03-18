@@ -247,10 +247,10 @@ else {
 
             my $error = rmtree($output);
 
-            die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+            die "\n  [!] Error: " . $error . "\n\n" if ($error);
 
         }
-        else { die "\n\n  [!] Error: Output directory already exists." .
+        else { die "\n  [!] Error: Output directory already exists." .
                    "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
 
     }
@@ -509,7 +509,7 @@ else {
             die "\n\n  [!] Error: Download failed for all chromosomes\n\n";
 
         }
-        else { print "\n[+] " . scalar(keys %chromosomes) . "/" . $nchromosomes . "(" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . ") chromosomes successfully downloaded"; }
+        else { print "\n[+] " . scalar(keys %chromosomes) . "/" . $nchromosomes . " (" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . "\%) chromosomes successfully downloaded"; }
 
         print "\n[+] Extracting transcript sequences...";
 
