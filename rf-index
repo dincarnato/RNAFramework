@@ -417,7 +417,9 @@ else {
 
         if (!defined $reference) {
 
-            my $longer = length(shift(@{[sort {length($b) <=> length($a)} keys %chromosomes]}));    # Takes the length of the longer chromosome name
+            my ($longer, $nchromosomes);
+            $longer = length(shift(@{[sort {length($b) <=> length($a)} keys %chromosomes]}));    # Takes the length of the longer chromosome name
+            $nchromosomes = scalar(keys %chromosomes);
 
             print "\n\n  [!] Warning: No reference FASTA file has been provided." .
                   "\n               RF Index will now try to download the reference genome sequence" .
@@ -497,6 +499,17 @@ else {
             $reference = $output . $assembly . ".fa";
 
         }
+
+        if (!keys %chromosomes) {
+
+            unlink(glob($output . "*"));
+
+            rmtree($output);
+
+            die "\n\n  [!] Error: Download failed for all chromosomes\n\n";
+
+        }
+        else { print "\n[+] " . scalar(keys %chromosomes) . "/" . $nchromosomes . "(" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . ") chromosomes successfully downloaded"; }
 
         print "\n[+] Extracting transcript sequences...";
 
