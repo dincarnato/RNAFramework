@@ -509,7 +509,7 @@ else {
             die "\n\n  [!] Error: Download failed for all chromosomes\n\n";
 
         }
-        else { print "\n[+] " . scalar(keys %chromosomes) . "/" . $nchromosomes . " (" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . "\%) chromosomes successfully downloaded"; }
+        else { print "\n[+] Successfully downloaded " . scalar(keys %chromosomes) . "/" . $nchromosomes . " (" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . "\%) chromosomes."; }
 
         print "\n[+] Extracting transcript sequences...";
 
