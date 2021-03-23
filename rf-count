@@ -57,8 +57,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $maxcov, $primaryonly, @bam_trim5, @pool,
-    %transcripts, %spacer, %files, %masks, %realid);
+    $maxcov, $primaryonly, $whitelist, @bam_trim5,
+    @pool, %transcripts, %spacer, %files,
+    %masks, %realid);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -103,7 +104,8 @@ do {
                 "rd|right-deletion"          => \$rightdel,
                 "dc|discard-consecutive=i"   => \$rmconsecutive,
                 "mv|max-coverage=i"          => \$maxcov,
-                "pn|primary-only"            => \$primaryonly ) or help(1);
+                "pn|primary-only"            => \$primaryonly,
+                "wl|whitelist=i"             => \$whitelist ) or help(1);
 
 };
 
@@ -160,6 +162,7 @@ die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($coll
 die "\n  [!] Error: Max coverage must be >= 1000\n\n" if (defined $maxcov && $maxcov < 1000);
 die "\n  [!] Error: Parameter -mv requires parameter -m\n\n" if ($maxcov && !$mutcount);
 die "\n  [!] Error: Parameter -mm requires parameter -m\n\n" if ($mutmap && !$mutcount);
+die "\n  [!] Error: Whitelist must be an integer > 0\n\n" if ($whitelist < 1);
 die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter &&
                                                                               ((isint($discardshorter) && $discardshorter < 1) &&
                                                                                $discardshorter !~ m/^median$/i));
@@ -205,6 +208,9 @@ mkpath($output, { mode  => 0755,
                   error => \$error });
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+mkpath($output . "whitelists/", { mode  => 0755,
+                                  error => \$error }) if ($whitelist);
 
 if (!-e $tmpdir) {
 
@@ -601,7 +607,7 @@ sub count {
         last unless($sample);
 
         my ($covered, $rcio, $stats, $readscount,
-            $mmio, $readsToMaxCov, @lastPos, @counts,
+            $mmio, $readsToMaxCov, $wh, @lastPos, @counts,
             @coverage, %last, %stats);
         $covered = 0;
         %last = ( id       => undef,
@@ -633,6 +639,13 @@ sub count {
                                        mode  => "w" ) if ($mutmap);
 
         if (open(my $fh, $samtools . " view " . $sample->{path} . " |")) {
+
+            if ($whitelist) {
+
+                open($wh, ">", $output . "whitelists/" . $sample->{file} . ".txt");
+                select((select($wh), $|=1)[0]);
+
+            }
 
             while (!eof($fh)) {
 
@@ -692,6 +705,7 @@ sub count {
                         $rcio->write($rentry);
 
                         $covered++;
+                        print $wh $last{id} . "\n" if (median(@coverage) >= $whitelist);
 
                     }
 
@@ -800,9 +814,11 @@ sub count {
                 $rcio->write($rentry);
 
                 $covered++;
+                print $wh $last{id} . "\n" if (median(@coverage) >= $whitelist);
 
             }
 
+            close($wh) if ($whitelist);
             close($fh);
 
             $rcio->mappedreads($stats{total});
@@ -1225,7 +1241,8 @@ sub help {
     -mc or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
     -mv or --max-coverage            <int>        Downsamples reads to achieve this maximum mean per-base coverage (>=1000, Default: off)
     -mm or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution with DRACO
-
+    -wl or --whitelist               <int>        Generates a DRACO-compatible whitelist file, containing the IDs of transcripts with median
+                                                  coverage >= to the specified value
 
 HELP
 
