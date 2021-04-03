@@ -201,8 +201,8 @@ while(@discovered < $nmotifs) {
     my ($match, $matchData, $consensus, $regex,
         $consLen, $pvalue, $toErase, $fullMotif,
         $coreMotif, $extCoreMotif, $upMotif, $downMotif,
-        $iter, @significant, @aligned, @erasedRealPeaks,
-        @erasedNegPeaks, %aligned, %matches, %totseqs, %surround);
+        $iter, @significant, @aligned, %aligned,
+        %matches, %totseqs, %surround);
 
     $iter = scalar(@discovered) + 1;
 
@@ -423,37 +423,37 @@ while(@discovered < $nmotifs) {
     }
 
     # Uncomment his part to have erased p-value calculation only for shuffling mode
-    #if ($doShuffle) {
+    if ($doShuffle) {
 
-    #my (@erasedRealPeaks, @erasedNegPeaks);
-    @erasedRealPeaks = @realPeaks;
+        my (@erasedRealPeaks, @erasedNegPeaks);
+        @erasedRealPeaks = @realPeaks;
 
-    for (@erasedRealPeaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
+        for (@erasedRealPeaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
 
-    print CLRRET . "[+] Calculating erased p-value [Iteration #" . $iter . "]";
+        print CLRRET . "[+] Calculating erased p-value [Iteration #" . $iter . "]";
 
-    @erasedNegPeaks = shufflePeaks(@erasedRealPeaks);
+        @erasedNegPeaks = shufflePeaks(@erasedRealPeaks);
 
-    foreach my $sequence (@erasedNegPeaks) {
+        foreach my $sequence (@erasedNegPeaks) {
 
-        my $matches = () = $sequence =~ m/(?:$regex)/g;
-        $matchData->{negErased} += $matches;
-        $matchData->{negErasedPeaks} += min(1, $matches || 0);
+            my $matches = () = $sequence =~ m/(?:$regex)/g;
+            $matchData->{negErased} += $matches;
+            $matchData->{negErasedPeaks} += min(1, $matches || 0);
+
+        }
+
+        $pvalue = $oneperseq ? fisher($matchData->{posPeaks}, $matchData->{negErasedPeaks}, $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negErasedPeaks}) :
+                               fisher($matchData->{pos}, $matchData->{negErased}, $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{negErased});
 
     }
+    else {
 
-    $pvalue = $oneperseq ? fisher($matchData->{posPeaks}, $matchData->{negErasedPeaks}, $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negErasedPeaks}) :
-                           fisher($matchData->{pos}, $matchData->{negErased}, $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{negErased});
+        $pvalue = $oneperseq ? fisher($matchData->{posPeaks} || 0, $matchData->{negPeaks} || 0,
+                                      $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negPeaks}) :
+                               fisher($matchData->{pos} || 0, $matchData->{neg} || 0,
+                                      $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{neg});
 
-    # }
-    # else {
-    #
-    #     $pvalue = $oneperseq ? fisher($matchData->{posPeaks} || 0, $matchData->{negPeaks} || 0,
-    #                                   $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negPeaks}) :
-    #                            fisher($matchData->{pos} || 0, $matchData->{neg} || 0,
-    #                                   $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{neg});
-    #
-    # }
+    }
 
     last if ($pvalue >= $pcutoff);
 
@@ -517,7 +517,7 @@ else {
     $table->head("Core motif", "Extended motif", "\% positive", "\% negative", "\% neg. erased", "p-value");
     $table->row($_->[0], $_->[1], sprintf("%.2f", $_->[3]->{posPeaks} / $_->[3]->{totalPosPeaks} * 100),
                 sprintf("%.2f", $_->[3]->{negPeaks} / $_->[3]->{totalNegPeaks} * 100),
-                sprintf("%.2f", $_->[3]->{negErasedPeaks} / $_->[3]->{totalNegPeaks} * 100), $_->[2]) for (sort {$a->[2] <=> $b->[2]} @discovered);
+                $doShuffle ? sprintf("%.2f", $_->[3]->{negErasedPeaks} / $_->[3]->{totalNegPeaks} * 100) : "-", $_->[2]) for (sort {$a->[2] <=> $b->[2]} @discovered);
 
     $table->print();
 
