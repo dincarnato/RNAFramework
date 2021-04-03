@@ -1,0 +1,808 @@
+#!/usr/bin/env perl
+
+##
+# RF JSON2RC
+# RNA Framework [http://www.rnaframework.com]
+#
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Extract information for deconvoluted structure profiles from DRACO JSON output,
+#          producing RC files suitable for structure prediction
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Path qw(mkpath);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Core::Utils;
+use Data::IO::Sequence;
+use Data::Sequence::Utils;
+use RF::Data::IO::RC;
+use RF::Data::RC;
+use Term::Constants qw(:screen);
+use Term::Table;
+
+BEGIN {
+
+    my ($class);
+
+    for (qw(Cpanel/JSON/XS.pm JSON/XS.pm JSON/PP.pm)) {
+
+        $class = $_ if (eval { require $_; 1; });
+
+        last if ($class);
+
+    }
+
+    if ($class) {
+
+        $class =~ s/\//::/g;
+        $class =~ s/\.pm$//;
+        $class->import("decode_json");
+
+        warn "\n  [!] Note: for better performances, it is recommended to install JSON::XS\n" if ($class eq "JSON::PP");
+
+    }
+    else { die "\n  [!] Error: No JSON IO module available\n\n"; }
+
+}
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my ($help, $output, $overwrite, $rcin,
+    $jsonin, $medianPreCov, $medianCov, $error,
+    $data, $minConf, $maxConf, $extend,
+    $surroundToRC, $ignoreTerm, $minOverlapReps,
+    $rcindex, $spearman, $minCorrMatch, $acOnly,
+    $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
+    $skipZeroClusterWins, @rcin, @jsonin, @jsonData, @rcindex,
+    @rcout, %allWins, %commonWins);
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                     => \$help,
+                "o|output=s"                 => \$output,
+                "ow|overwrite"               => \$overwrite,
+                "r|rc=s"                     => \$rcin,
+                "rci|rc-index=s"             => \$rcindex,
+                "j|json=s"                   => \$jsonin,
+                "nm|no-merge-overlapping"    => \$noMergeOverlapping,
+                "mom|min-overlap-merge=s"    => \$minOverlapMerge,
+                "mcm|min-corr-merge=s"       => \$minCorrMerge,
+                "ep|median-pre-cov=s"        => \$medianPreCov,
+                "ec|median-cov=s"            => \$medianCov,
+                "nc|min-confs=i"             => \$minConf,
+                "xc|max-confs=i"             => \$maxConf,
+                "e|extend=i"                 => \$extend,
+                "sr|surround-to-rc"          => \$surroundToRC,
+                "i|ignore-terminal=s"        => \$ignoreTerm,
+                "mcr|min-corr-reps=s"        => \$minCorrMatch,
+                "s|spearman"                 => \$spearman,
+                "sz|skip-zero-cluster-wins"  => \$skipZeroClusterWins,
+                "mor|min-overlap-reps=s"     => \$minOverlapReps ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default
+$output ||= "rf_json2rc/";
+$minConf //= 2;
+$maxConf ||= 1e9;
+$ignoreTerm //= 0.05;
+$medianPreCov //= 1000;
+$medianCov //= 5000;
+$minOverlapReps ||= 0.75;
+$minCorrMatch //= 0.7;
+$minOverlapMerge ||= 0.75;
+$minCorrMerge //= 0.7;
+$extend //= 0;
+$success = 0;
+$output =~ s/\/?$/\//;
+@rcin = split(/,/, $rcin);
+@jsonin = split(/,/, $jsonin);
+@rcindex = split(/,/, $rcindex);
+
+die "\n  [!] Error: No input JSON file provided\n\n" if (!@jsonin);
+for (@jsonin) { die "\n  [!] Error: Provided JSON file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
+die "\n  [!] Error: No input RC file provided\n\n" if (!@rcin);
+for (@rcin) { die "\n  [!] Error: Provided RC file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
+die "\n  [!] Error: Unexpected number of RCI index files\n\n" if (defined $rcindex && @rcindex != 1 && @rcindex != @rcin);
+die "\n  [!] Error: Different number of JSON and RC files provided\n\n" if (@jsonin != @rcin);
+die "\n  [!] Error: Median cumulative coverage must be a positive int\n\n" if (!ispositive($medianCov) || !isint($medianCov));
+die "\n  [!] Error: Median preCoverage must be a positive int\n\n" if (!ispositive($medianPreCov) || !isint($medianPreCov));
+die "\n  [!] Error: Bases to ignore must be comprised between 0 and 0.2\n\n" if (!isnumeric($ignoreTerm) || !inrange($ignoreTerm, [0, 0.2]));
+die "\n  [!] Error: Minimum overlap between matching windows must be comprised between 0 and 1\n\n" if (!isnumeric($minOverlapReps) || !inrange($minOverlapReps, [0, 1]));
+die "\n  [!] Error: Minimum overlap between consecutive windows must be comprised between 0 and 1\n\n" if (!isnumeric($minOverlapMerge) || !inrange($minOverlapMerge, [0, 1]));
+die "\n  [!] Error: Minimum correlation must be comprised between 0 and 1\n\n" if (!isnumeric($minCorrMatch) || !inrange($minCorrMatch, [0, 1]) || !isnumeric($minCorrMerge) || !inrange($minCorrMerge, [0, 1]));
+die "\n  [!] Error: Minimum number of conformations is higher than maximum\n\n" if ($minConf > $maxConf);
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error });
+
+die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+print "\n[+] Opening RC file(s)...";
+
+# Replaces the RC file with an IO object pointing to that file
+$rcin[$_] = RF::Data::IO::RC->new( file  => $rcin[$_],
+                                   index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
+
+print "\n[+] Importing JSON file(s) [0 imported]";
+
+for (0 .. $#jsonin) {
+
+    my ($data, $file, $fixed, $lastid);
+    $file = $jsonin[$_];
+    ($data, $fixed) = fixJson($file);
+    $data = decode_json($data);
+    push(@jsonData, {}); # Initializing storage of JSON data
+
+    foreach my $transcript (@{$data->{transcripts}}) {
+
+        my ($id, $sequence, $nReads, @windows);
+        $id = $transcript->{id};
+        $sequence = $transcript->{sequence};
+        $nReads = $transcript->{nReads};
+
+        if (!$rcin[$_]->read($id)) {
+
+            print CLRRET . "[!] Warning: transcript \"" . $id . "\" is missing in RC file, and it will be skipped...";
+
+            next;
+
+        }
+
+        # Storing parsed JSON for later
+        $jsonData[-1]->{$id} = { sequence => $sequence,
+                                 nReads   => $nReads,
+                                 windows  => {} };
+
+        foreach my $window (@{$transcript->{windows}}) {
+
+            next if (median(@{$window->{preCoverage}}) < $medianPreCov);
+
+            my ($start, $end, @stoichiometries, @cumCov);
+            $start = $window->{start};
+            $end = $window->{end};
+
+            if (exists $window->{stoichiometries} && @{$window->{stoichiometries}}) { @stoichiometries = map { [$_] } @{$window->{stoichiometries}}; }
+            else {
+
+                next if ($skipZeroClusterWins);
+
+                @stoichiometries = ([1]);
+
+            }
+
+            next if (@stoichiometries < $minConf || @stoichiometries > $maxConf);
+
+            # This handles the special cases in which DRACO fails to re-assign reads to the sortConformations
+            # so the counts and coverage arrays are not reported
+            next if (@stoichiometries > 1 && (!exists $window->{counts} || !exists $window->{coverage}));
+
+            foreach my $cov (@{$window->{coverage}}) { @cumCov = map { $cumCov[$_] + $cov->[$_] } 0 .. $#{$cov}; }
+
+            next if (median(@cumCov) < $medianCov);
+
+            # Storing parsed JSON for later
+            $jsonData[-1]->{$id}->{windows}->{$start} = { end             => $end,
+                                                          stoichiometries => \@stoichiometries,
+                                                          counts          => @stoichiometries > 1 ? $window->{counts} : [],
+                                                          coverage        => @stoichiometries > 1 ? $window->{coverage} : [] };
+
+            $allWins{$file}->{$id} = [] if (!exists $allWins{$file}->{$id});
+            push(@{$allWins{$file}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
+
+            $lastid = $id;
+
+        }
+
+    }
+
+    print CLRRET . "[+] Importing JSON file(s) [" . scalar(keys %allWins) . " imported]";
+
+    # The last JSON has been fixed, so we will ignore the last window (for safety)
+    pop(@{$allWins{$file}->{$lastid}}) if ($fixed);
+
+}
+
+if (!$noMergeOverlapping) {
+
+    print "\n[+] Merging concordant overlapping windows...\n";
+
+    foreach my $fileIdx (0 .. $#jsonin) {
+
+        my ($from, $to, $file);
+        ($from, $to) = (0, 0);
+        $file = $jsonin[$fileIdx];
+
+        foreach my $id (keys %{$allWins{$file}}) {
+
+            my @wins = @{$allWins{$file}->{$id}};
+            $from += @wins;
+
+            for (my $i=0; $i < @wins; $i++) {
+
+                my ($last, $firstj, $nWins, @newSet, %nconfs);
+                $last = $wins[$i];
+
+                for (my $j=0; $j < @wins; $j++) {
+
+                    my ($win, $int, $sizeInt);
+                    $win = $wins[$j];
+
+                    next if ($win->[0] < $last->[0] || $win->[1] < $last->[0]);
+                    last if ($win->[0] > $last->[1]);
+
+                    $int = intersect([@{$last}[0..1]], [@{$win}[0..1]]);
+
+                    next if (!$int);
+
+                    $sizeInt = abs(diff(@{$int})) / min(abs(diff(@{$last}[0..1])),abs(diff(@{$win}[0..1])));
+
+                    next if ($sizeInt < $minOverlapMerge);
+
+                    $firstj = $j if (!defined $firstj);
+                    $nWins++;
+                    $nconfs{$win->[2]} = [] if (!exists $nconfs{$win->[2]});
+                    push(@{$nconfs{$win->[2]}}, $win->[0]);
+
+                }
+
+                foreach my $n (sort {$a <=> $b} keys %nconfs) {
+
+                    if ($n == 1) { # Windows forming 1 conformation
+
+                        my ($start, $end);
+                        $start = min(@{$nconfs{$n}});
+                        $end = max(map { $jsonData[$fileIdx]->{$id}->{windows}->{$_}->{end} } @{$nconfs{$n}});
+                        push(@newSet, [$start, $end, $n]);
+                        $jsonData[$fileIdx]->{$id}->{windows}->{$start}->{end} = $end;
+
+                    }
+                    else { # Windows forming > 1 conformation
+
+                        # Windows to merge
+                        if (@{$nconfs{$n}} > 1) {
+
+                            my ($lastStart, @tmpSet);
+                            $lastStart = shift(@{$nconfs{$n}});
+
+                            while (my $start = shift(@{$nconfs{$n}})) {
+
+                                my ($lastWin, $win, $int, @sortedConfs,
+                                    @lastCounts, @lastCoverage, @winCounts, @winCoverage);
+                                $lastWin = $jsonData[$fileIdx]->{$id}->{windows}->{$lastStart};
+                                $win = $jsonData[$fileIdx]->{$id}->{windows}->{$start};
+                                $int = intersect([$lastStart, $lastWin->{end} - 1], [$start, $win->{end} - 1]);
+                                @lastCounts = map { [ @{$_}[$int->[0] - $lastStart .. $int->[1] - $lastStart] ] } @{$lastWin->{counts}};
+                                @lastCoverage = map { [ @{$_}[$int->[0] - $lastStart .. $int->[1] - $lastStart] ] } @{$lastWin->{coverage}};
+                                @winCounts = map { [ @{$_}[$int->[0] - $start .. $int->[1] - $start] ] } @{$win->{counts}};
+                                @winCoverage = map { [ @{$_}[$int->[0] - $start .. $int->[1] - $start] ] } @{$win->{coverage}};
+                                @sortedConfs = sortConformations(substr($jsonData[$fileIdx]->{$id}->{sequence}, $int->[0], abs(diff(@{$int})) + 1),
+                                                                 \@lastCounts, \@lastCoverage, \@winCounts, \@winCoverage, $minCorrMerge);
+
+                                if (@sortedConfs) { # Exceeded correlation threshold
+
+                                    my (@mergedCounts, @mergedCoverage, @mergedStoichiometries);
+                                    @mergedCounts = mergeOverlappingArrays($lastWin->{counts}, [ @{$win->{counts}}[@sortedConfs] ], abs(diff(@{$int})) + 1);
+                                    @mergedCoverage = mergeOverlappingArrays($lastWin->{coverage}, [ @{$win->{coverage}}[@sortedConfs] ], abs(diff(@{$int})) + 1);
+                                    @mergedStoichiometries = mergeStoichiometries($lastWin->{stoichiometries}, [@{$win->{stoichiometries}}[@sortedConfs] ]);
+
+                                    # Updates window's data in jsonData
+                                    $lastWin->{end} = $win->{end};
+                                    $lastWin->{counts} = \@mergedCounts;
+                                    $lastWin->{coverage} = \@mergedCoverage;
+                                    $lastWin->{stoichiometries} = \@mergedStoichiometries;
+
+                                }
+                                # If the last window does not exceed the correlation threshold, we skip it and go to the next one
+                                else { push(@tmpSet, [$start, $win->{end}, $n]); }
+
+                            }
+
+                            push(@newSet, [$lastStart, $jsonData[$fileIdx]->{$id}->{windows}->{$lastStart}->{end}, $n]);
+                            push(@newSet, @tmpSet) if (@tmpSet);
+
+                        }
+                        else { push(@newSet, [$nconfs{$n}->[0], $jsonData[$fileIdx]->{$id}->{windows}->{$nconfs{$n}->[0]}->{end}, $n]); }
+
+                    }
+
+                }
+
+                if (@newSet < $nWins) {
+
+                    @newSet = sort { $a->[0] <=> $b->[0] } @newSet;
+                    splice(@wins, $firstj, $nWins, @newSet);
+                    $i--;
+
+                }
+
+            }
+
+            $allWins{$file}->{$id} = \@wins;
+            $to += @wins;
+
+        }
+
+        print "\n  [-] " . (fileparse($file, ".json"))[0] . ": " . $from . " windows merged into " . $to . " windows";
+
+    }
+
+    print "\n";
+
+}
+
+# Initialize common windows with one of the files
+foreach my $id (keys %{$allWins{$jsonin[0]}}) { $commonWins{$id} = [ map { [@$_, { $jsonin[0] => [ @$_[0..1] ] }] } @{$allWins{$jsonin[0]}->{$id}} ]; }
+delete($allWins{$jsonin[0]});
+
+if (@jsonin > 1) {
+
+    print "\n[+] Identifying common windows...";
+
+    foreach my $file (sort keys %allWins) {
+
+        foreach my $id (keys %commonWins) {
+
+            next if (!exists $allWins{$file}->{$id});
+
+            my (@commonSet);
+
+            for (my $i = 0; $i < @{$commonWins{$id}}; $i++) {
+
+                my ($start1, $end1, $n1, $map, @last);
+                ($start1, $end1, $n1, $map) = @{$commonWins{$id}->[$i]};
+
+                for (my $j = 0; $j < @{$allWins{$file}->{$id}}; $j++) {
+
+                    my ($start2, $end2, $n2, $int);
+                    ($start2, $end2, $n2) = @{$allWins{$file}->{$id}->[$j]};
+
+                    next if ($end2 < $start1);
+                    last if ($start2 > $end1); # Start 2nd win is > end 1st win
+                    next if ($n1 != $n2); # Different n of conformations
+
+                    $int = intersect([$start1, $end1], [$start2, $end2]);
+
+                    if ($int) {
+
+                        my ($sizeInt, $meanOverlap, @sizes);
+                        $sizeInt = abs(diff(@{$int}));
+                        @sizes = ($sizeInt / abs(diff($start1, $end1)), $sizeInt / abs(diff($start2, $end2)));
+
+                        next if (max(@sizes) < $minOverlapReps);
+
+                        $meanOverlap = mean(@sizes);
+                        @last = (@{$int}, $j, $meanOverlap) if (!@last || $meanOverlap > $last[3]);
+
+                    }
+
+                }
+
+                if (@last) {
+
+                    push(@commonSet, [@last[0..1], $n1, { %{$map}, $file => [ @{$allWins{$file}->{$id}->[$last[2]]}[0..1] ] }]);
+                    splice(@{$allWins{$file}->{$id}}, $last[2], 1);
+
+                }
+
+            }
+
+            delete($commonWins{$id});
+            $commonWins{$id} = \@commonSet if (@commonSet);
+
+        }
+
+    }
+
+    print " " . sum(map { scalar(@{$commonWins{$_}}) } keys %commonWins) . " identified.";
+
+}
+
+print "\n[+] Filtering windows...";
+
+# Create RC IO objects for output
+push(@rcout, RF::Data::IO::RC->new( file => $output . (fileparse($_, ".json"))[0] . ".rc",
+                                    mode => "w" )) for (@jsonin);
+open(my $sh, ">", $output . "stoichiometries.txt") or die "\n\n  [!] Error: Unable to write stoichiometry summary (" . $! . ")\n\n";
+select((select($sh), $|=1)[0]);
+
+print $sh join("\t", qw(Transcript Start End extStart extEnd), map { (fileparse($_, ".json"))[0] } @jsonin) . "\n";
+
+foreach my $id (sort keys %commonWins) {
+
+    foreach my $win (@{$commonWins{$id}}) {
+
+        my ($start, $end, $nConfs, $winSeq, $upSeq,
+            $downSeq, @refCounts, @refCoverage, @rcCache,
+            @stoichiometryCache, %coords);
+        ($start, $end, $nConfs) = @{$win}[0..2];
+
+        $winSeq = substr($jsonData[0]->{$id}->{sequence}, $start, $end - $start);
+        %coords = %{$win->[3]};
+        @rcCache = map { [] } 0 .. $#jsonin; # For storing RC data, before writing it
+        @stoichiometryCache = map { [] } 0 .. $#jsonin; # For storing stoichiometries
+
+        # In case we have to enlarge the window upstream and downstream
+        # upExtend and downExtend will contain the extension sequence, counts, and coverage
+        if ($extend) {
+
+            my ($newStart, $newEnd);
+            $newStart = max(0, $start - $extend);
+            $newEnd = min(length($jsonData[0]->{$id}->{sequence}) - 1, $end + $extend);
+            $upSeq = substr($jsonData[0]->{$id}->{sequence}, $newStart, $start - $newStart);
+            $downSeq = substr($jsonData[0]->{$id}->{sequence}, $end, $newEnd - $end);
+
+        }
+
+        for my $i (0 .. $#jsonin) {
+
+            my ($realStart, $realEnd, $realWin);
+            ($realStart, $realEnd) = @{$coords{$jsonin[$i]}};
+            $realWin = $jsonData[$i]->{$id}->{windows}->{$realStart};
+
+            if ($nConfs > 1) {
+
+                my ($adjStart, $adjEnd, $c, @sortedConfs,
+                    @counts, @coverage);
+                $c = 0;
+                $adjStart = $start - $realStart;
+                $adjEnd = $end - $realStart - 1;
+                @counts = map { [ @{$realWin->{counts}->[$_]}[$adjStart .. $adjEnd] ] } 0 .. $nConfs - 1;
+                @coverage = map { [ @{$realWin->{coverage}->[$_]}[$adjStart .. $adjEnd] ] } 0 .. $nConfs - 1;
+
+                # Let's mask bases on which correlation should not be calculated
+                if ($ignoreTerm) {
+
+                    my $basesToIgnore = round($ignoreTerm * ($end - $start));
+
+                    for (0 .. $#counts) {
+
+                        @{$counts[$_]}[0 .. $basesToIgnore - 1] = (0) x $basesToIgnore;
+                        @{$coverage[$_]}[0 .. $basesToIgnore - 1] = (0) x $basesToIgnore;
+                        @{$counts[$_]}[$#{$counts[$_]} - $basesToIgnore + 1 .. $#{$counts[$_]}] = (0) x $basesToIgnore;
+                        @{$coverage[$_]}[$#{$coverage[$_]} - $basesToIgnore + 1 .. $#{$coverage[$_]}] = (0) x $basesToIgnore;
+
+                    }
+
+                }
+
+                # Initializes the reference to which everything will be compared
+                if (!@refCounts) {
+
+                    @refCounts = @counts;
+                    @refCoverage = @coverage;
+                    @sortedConfs = (0 .. $#refCounts);
+
+                }
+                else { @sortedConfs = sortConformations($winSeq, \@refCounts, \@refCoverage, \@counts, \@coverage, $minCorrMatch); }
+
+                if (@sortedConfs) {
+
+                    my (@upCounts, @upCoverage, @downCounts, @downCoverage);
+
+                    if ($extend) {
+
+                        if ($surroundToRC) {
+
+                            my ($entry, @totCounts, @totCoverage);
+                            $entry = $rcin[$i]->read($id);
+                            @totCounts = $entry->counts();
+                            @totCoverage = $entry->coverage();
+                            @upCounts = @totCounts[$start - length($upSeq) .. $start - 1];
+                            @downCounts = @totCounts[$end .. $end + length($downSeq) - 1];
+                            @upCoverage = @totCoverage[$start - length($upSeq) .. $start - 1];
+                            @downCoverage = @totCoverage[$end .. $end + length($downSeq) - 1];
+
+                        }
+                        else {
+
+                            @upCounts = (0) x length($upSeq);
+                            @downCounts = (0) x length($downSeq);
+                            @upCoverage = @upCounts;
+                            @downCoverage = @downCounts;
+
+                        }
+
+                    }
+
+                    for (@sortedConfs) {
+
+                        my $rc = RF::Data::RC->new( id         => $id . "_" . $start . "-" . ($end - 1) . "_c" . $c,
+                                                    sequence   => $upSeq . $winSeq . $downSeq,
+                                                    counts     => [ @upCounts, @{$counts[$_]}, @downCounts ],
+                                                    coverage   => [ @upCoverage, @{$coverage[$_]}, @downCoverage ],
+                                                    readscount => $jsonData[$i]->{$id}->{nReads} );
+
+                        push(@{$rcCache[$i]}, $rc);
+                        push(@{$stoichiometryCache[$i]}, $realWin->{stoichiometries}->[$_]);
+                        $c++;
+
+                    }
+
+                }
+
+            }
+            else { # If 1 conformation, extract it from the original RC file
+
+                my ($entry, @totCounts, @totCoverage, @counts);
+                $entry = $rcin[$i]->read($id);
+                @totCounts = $entry->counts();
+                @totCoverage = $entry->coverage();
+                my $rc = RF::Data::RC->new( id         => $id . "_" . $start . "-" . ($end - 1) . "_c0",
+                                            sequence   => $upSeq . $winSeq . $downSeq,
+                                            counts     => [ @totCounts[$start - length($upSeq) .. $end - 1 + length($downSeq)] ],
+                                            coverage   => [ @totCoverage[$start - length($upSeq) .. $end - 1 + length($downSeq)] ],
+                                            readscount => $jsonData[$i]->{$id}->{nReads} );
+
+                push(@{$rcCache[$i]}, $rc);
+                push(@{$stoichiometryCache[$i]}, 1);
+
+            }
+
+        }
+
+        if (uniq(map { scalar(@$_) } @rcCache) == 1) {
+
+            $rcout[$_]->write(@{$rcCache[$_]}) for (0 .. $#rcCache);
+            print $sh join("\t", $id, $start, ($end - 1), ($start - length($upSeq)), ($end + length($downSeq) - 1), map { join(";", map { sprintf("%.3f", mean(@$_)) } @$_) } @stoichiometryCache) . "\n";
+
+            $success++;
+
+        }
+
+    }
+
+}
+
+close($sh);
+
+print " " . $success . " windows left.";
+
+if (!$success) {
+
+    warn "\n\n  [!] Warning: no window passed the correlation filter\n";
+
+    rmtree($output);
+
+}
+
+print "\n[+] All done.\n\n";
+
+sub sortConformations {
+
+    my ($winSeq, $refCounts, $refCoverage, $counts, $coverage, $corrCutoff) = @_;
+
+    my ($bestSet, $bestCorr, @refProfiles, @profiles,
+        @combinations);
+
+    if (!defined $acOnly) { # Guessing if data is DMS or not
+
+        my $guCount = 0;
+
+        for my $i (0 .. $#{$refCounts}) { $guCount += sum(map { substr($winSeq, $_, 1) !~ m/^[AC]$/ ? $refCounts->[$i]->[$_] : 0 } 0 .. $#{$refCounts->[$i]}); }
+
+        $acOnly = $guCount ? 0 : 1;
+
+    }
+
+    for my $i (0 .. $#{$refCounts}) {
+
+        # To each profile (mut / cov) the index of the specific profile is appended (will be stripped for correlation calculation
+        push(@refProfiles, [ (map { $refCoverage->[$i]->[$_] ? $refCounts->[$i]->[$_] / $refCoverage->[$i]->[$_] : 0 } 0 .. $#{$refCounts->[$i]}), $i ]);
+        push(@profiles, [ (map { $coverage->[$i]->[$_] ? $counts->[$i]->[$_] / $coverage->[$i]->[$_] : 0 } 0 .. $#{$counts->[$i]}), $i ]);
+
+    }
+
+    @combinations = calcCombinations(\@refProfiles, \@profiles);
+
+    # For each combination, we calculate the correlation and we replace the arrays with the correlation coefficient + index of the conformations
+    foreach my $comb (@combinations) {
+
+        my @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]} - 1;
+        $comb = [(_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]]))[0], $comb->[0]->[-1], $comb->[1]->[-1]];
+
+    }
+
+    foreach my $set (calcCombinations(map { \@combinations } 0 .. $#{$refCounts})) {
+
+        # Uncomment this line to check all conformations against the cutoff, otherwise, only the average is checked
+        #next if (sum(map { $set->[$_]->[0] >= $corrCutoff ? 1 : 0 } 0 .. $#{$refCounts}) < @{$refCounts});
+        next if (uniq(map { $set->[$_]->[1] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
+        next if (uniq(map { $set->[$_]->[2] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
+
+        my $avgCorr = mean(map { $set->[$_]->[0] } 0 .. $#{$refCounts});
+
+        next if ($avgCorr < $corrCutoff);
+
+        if (!defined $bestCorr || $avgCorr > $bestCorr) {
+
+            $bestSet = $set;
+            $bestCorr = $avgCorr;
+
+        }
+
+    }
+
+    return() if (!$bestSet);
+
+    # Returns the indices of the windows with respect to the reference set
+    return(map { $_->[2] } @{$bestSet});
+
+}
+
+sub _correlate { return($spearman ? spearman(@_) : pearson(@_)); }
+
+sub calcCombinations {
+
+    my @list = @_;
+
+    my @sets = ([]);
+
+    foreach my $array (@list) {
+
+        @sets = map { my @prev = @$_; map clonearrayref([ @prev, clonearrayref($_) ]), @$array } @sets;
+
+    }
+
+    return(@sets);
+
+}
+
+sub mergeOverlappingArrays {
+
+    my ($set1, $set2, $lenOverlap) = @_;
+
+    my (@set1, @set2, @merge);
+    @set1 = map { [@$_, ((0) x (scalar(@{$set2->[0]}) - $lenOverlap))] } @{$set1};
+    @set2 = map { [((0) x (scalar(@{$set1->[0]}) - $lenOverlap)), @$_] } @{$set2};
+
+    for my $i (0 .. $#set1) {
+
+        my @conf = map { $set1[$i]->[$_] + $set2[$i]->[$_] } 0 .. $#{$set1[$i]};
+        push(@merge, \@conf);
+
+    }
+
+    return(@merge);
+
+}
+
+sub mergeStoichiometries {
+
+    my ($set1, $set2) = @_;
+
+    return(map { [ @{$set1->[$_]}, @{$set2->[$_]} ] } 0 .. $#{$set1});
+
+}
+
+sub fixJson {
+
+    my $file = shift;
+
+    my ($json, $fixed, @json, @trail);
+
+    open(my $fh, "<", $file) or die "\n\n  [!] Error: Unable to read from JSON file (" . $! . ")\n\n";
+    @json = <$fh>;
+    close($fh);
+
+    $json = join("", @json);
+    $json =~ s/(?:\n|\r)//g;
+    $json .= "\"NaN\"" if (substr($json, -1) eq ",");
+
+    while($json =~ m/([\{\}\[\]])/g) {
+
+        my $last = $1;
+
+        if ($last =~ m/^[\[\{]$/) { push(@trail, $last); }
+        else { pop(@trail); }
+
+    }
+
+    while (@trail) {
+
+        my $last = pop(@trail);
+
+        if ($last eq "[") { $json .= "]"; }
+        elsif ($last eq "{") { $json .= "}"; }
+
+        if (!$fixed) {
+
+            print CLRRET . "[!] Warning: Truncated JSON for file \"" . $file . "\". Attempting repair, and ignoring last window...";
+            $fixed = 1;
+
+        }
+
+    }
+
+    return($json, $fixed);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF JSON2RC (v$Core::Utils::VERSION)
+ RNA Framework [http://www.rnaframework.com]
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Extract information for deconvoluted structure profiles from DRACO JSON output,
+          producing RC files suitable for structure prediction
+
+ Usage:   rf-json2rc [Options] -j Replicate1.json,Replicate2.json,...,Replicaten.json
+
+ Options                                          Description
+ -o   or --output                 <string>        Output folder (Default: rf_json2rc/)
+ -ow  or --overwrite                              Overwrites output folder (if the specified folder already exists)
+ -j   or --json                   <string>        A comma-separated list of DRACO JSON files from replicate experiments
+ -r   or --rc                     <string>        A comma-separated list of RC files from replicate experiments
+                                                  Note: the RC files must follow the same order of the JSON files
+ -rci or --rc-index               <string>        A comma-separated list of RCI index files
+                                                  Note: the RCI indexes must follow the same order of the RC files. If a single
+                                                        RCI index is provided, it will be used for all the RC files.
+ -ep  or --median-pre-cov         <int>           Windows with median preCoverage below this threshold, will be discarded (Default: 1000)
+ -ec  or --median-cov             <int>           Windows with a mediam cumulative coverage (the sum of the coverage across all the
+                                                  conformations for that window) below this threshold, will be discarded (Default: 5000)
+ -sz  or --skip-zero-cluster-wins                 Skips windows for which DRACO failed to identify the number of conformations
+ -nc  or --min-confs              <int>           Windows forming less than this number of conformations will be discarded (Default: 2)
+ -xc  or --max-confs              <int>           Windows forming more than this number of conformations will be discarded (Default: no limit)
+ -nm  or --no-merge-overlapping                   Disables merging of intra-replicate concordant overlapping windows
+ -mom or --min-overlap-merge      <float>         Minimum fractional overlap between two concordant overlapping windows to be merged (0-1, Default: 0.5)
+ -mcm or --min-corr-merge         <float>         Minimum average correlation between corresponding conformations for concordant overlapping
+                                                  windows to be merged (0-1, Default: 0.7)
+ -e   or --extend                 <int>           Windows are extended by these many bases upstream and downstream (Default: off)
+                                                  Note: these bases will be assigned a coverage and mutation count of 0
+ -sr  or --surround-to-rc                         Instead of getting coverage and mutation count of 0, bases in up/downstream extensions
+                                                  will be assigned the same coverage and mutation count they have in the input RC files (requires -e)
+ -i   or --ignore-terminal        <float>         Coverage and mutation counts for this fraction of bases at window termini will be set
+                                                  to 0 (0-0.2, Default: 0.05)
+ -mor or --min-overlap-reps       <float>         Minimum fractional overlap between windows across replicates to be merged (0-1, Default: 0.5)
+ -mcr or --min-corr-reps          <float>         Minimum correlation between corresponding conformations for matched windows across
+                                                  replicates, to be reported (0-1, Default: 0.7)
+ -s   or --spearman                               Spearman will be used instead of Pearson for correlation analyses
+
+HELP
+
+}

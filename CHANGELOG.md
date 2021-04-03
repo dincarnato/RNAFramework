@@ -1,3 +1,14 @@
+## [2.7.1] - 2021-04-03
+### Added
+- Added parameter "-mcp" (or "--meta-coding-plot") to rf-peakcall to generate protein-coding-only meta-gene plots, by aligning the TSS, start codon, stop codon, and TES
+- Added the rf-motifdiscovery module to perform motif discovery from RIP peaks
+- Added the rf-json2rc module to post-process DRACO JSON output files into RC format
+- Every RNA Framework module will now notify the user if a new version is available
+
+### API Changes
+- The Graphics::Object::Ruler can now take user-defined labels
+- Fixed the nt2iupac function of Data::Sequence::Utils
+
 ## [2.7.0] - 2021-02-27
 ### Added
 - Added parameter "-l" (or "--log-transform") to rf-combine (reactivity profiles will be averaged after having been log-transformed)

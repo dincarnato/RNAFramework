@@ -30,11 +30,17 @@ use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
 use Data::IO;
+use Data::Sequence::Utils;
 use Graphics::Container;
 use Graphics::Object::Path;
 use Graphics::Object::Ruler;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
+
+use constant SIZE5UTR => 75;
+use constant SIZECDS  => 650;
+use constant SIZE3UTR => 275;
+use constant SIZERNA  => 1000;
 
 $|++;
 
@@ -47,8 +53,9 @@ my ($help, $output, $overwrite, $win,
     $threads, $iprc, $ctrlrc, $decimals,
     $mergedist, $img, $error, $metaplot,
     $refine, $summit, $relaxed, $offset,
-    $metaonlyenriched, $whitelist, @index, @pool,
-    @imeans);
+    $metaonlyenriched, $whitelist, $metacoding,
+    $minorflen, $altstart, $anystart, $gencode,
+    $codsize, @index, @pool, @imeans);
 
 my $ctrlnreads : shared;
 my $ipnreads : shared;
@@ -57,13 +64,17 @@ my @qresults : shared;
 my @metaip : shared;
 my @metactrl : shared;
 my @metapeaks : shared;
+my @metaipcod : shared;
+my @metactrlcod : shared;
+my @metapeakscod : shared;
 my %results : shared;
 %results = ( cov      => 0,
              incov    => 0,
              diffcseq => 0,
              nocid    => 0,
              pass     => 0,
-             peaks    => 0 );
+             peaks    => 0,
+             codpeaks => 0 );
 
 do {
 
@@ -91,13 +102,19 @@ do {
                 "x|relaxed"             => \$relaxed,
                 "s|summit"              => \$summit,
                 "pc|pseudocount=s"      => \$pseudocount,
-                "md|merge-distance=i"   => \$mergedist ) or help(1);
+                "md|merge-distance=i"   => \$mergedist,
+                "mcp|meta-coding-plot"  => \$metacoding,
+                "mo|min-orf-len=i"      => \$minorflen,
+                "als|alt-start"         => \$altstart,
+                "ans|any-start"         => \$anystart,
+                "gc|genetic-code"       => \$gencode ) or help(1);
 
 };
 
 help() if ($help);
 
 # Default
+$codsize = SIZE5UTR + SIZECDS + SIZE3UTR;
 $threads ||= 1;
 $win ||= 150;
 $offset ||= round($win / 2);
@@ -108,6 +125,8 @@ $pseudocount ||= 1;
 $decimals ||= 3;
 $meancov //= 0;
 $mediancov //= 0;
+$gencode ||= 1;
+$minorflen ||= 50;
 
 die "\n  [!] Error: No IP sample RC file provided\n\n" if (!defined $ip);
 die "\n  [!] Error: Provided IP sample RC file doesn't exist\n\n" if (!-e $ip);
@@ -132,7 +151,7 @@ die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($med
 die "\n  [!] Error: Parameter -x requires peaks refinement (-r) to be active\n\n" if ($relaxed &&
                                                                                       !$refine);
 die "\n  [!] Error: Parameter -eo requires meta-plot generation (-mp) to be active\n\n" if ($metaonlyenriched &&
-                                                                                            !$metaplot);
+                                                                                            (!$metaplot && !$metacoding));
 die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
 warn "\n  [!] Warning: No control sample RC file provided. Background will be estimated on IP sample only.\n" if (!defined $control);
@@ -238,8 +257,7 @@ if ($results{peaks}) {
 }
 
 if ($metaplot &&
-    (($metaonlyenriched &&
-      @qresults) ||
+    (($metaonlyenriched && @qresults) ||
      !$metaonlyenriched)) {
 
     my (@icov, @ccov, @pcov);
@@ -248,6 +266,19 @@ if ($metaplot &&
     @pcov = map { $_ / @qresults * 100 } @metapeaks if (@qresults);
 
     plotcoverage($output . "plots/meta-gene.svg", \@icov, \@ccov, \@pcov);
+
+}
+
+if ($metacoding &&
+    (($metaonlyenriched && @qresults) ||
+     !$metaonlyenriched)) {
+
+    my (@icov, @ccov, @pcov);
+    @icov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ipnreads : $iprc->mappedreads()) * (10 ** 6) } @metaipcod;
+    @ccov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ctrlnreads : $ctrlrc->mappedreads()) * (10 ** 6) } @metactrlcod if ($control);
+    @pcov = map { $_ / $results{codpeaks} * 100 } @metapeakscod if ($results{codpeaks});
+
+    plotcoverage($output . "plots/meta-coding-gene.svg", \@icov, \@ccov, \@pcov);
 
 }
 
@@ -265,7 +296,8 @@ print "\n\n[+] All done.\n\n";
 sub call {
 
     my ($crc, $irc, $attributes, $scale,
-        @cmeta, @imeta, @pmeta);
+        @cmeta, @imeta, @cmetacod, @imetacod,
+        @pmeta, @pmetacod);
 
     $crc = RF::Data::IO::RC->new( file  => $control,
                                   index => @index ? $index[0] : $control . ".rci" ) if (defined $control);
@@ -295,8 +327,9 @@ sub call {
 
         my ($ientry, $sequence, $imedian, $cmedian,
             $last, $length, $ssummit, $esummit,
-            $cnreads, @icov, @ccov,
-            @pvalues, @wins, @enrich);
+            $cnreads, $orfStart, $orfEnd, @icov,
+            @ccov, @pvalues, @wins, @enrich,
+            @peaks);
         $ientry = $irc->read($id);
         $imedian = $ientry->mediancoverage();
         $sequence = $ientry->sequence();
@@ -343,26 +376,81 @@ sub call {
 
         }
 
+        if ($metacoding) {
+
+            my ($orf);
+            ($orf, $orfStart) = longestorf($sequence, { gencode     => $gencode,
+                                                        altstart    => $altstart,
+                                                        ignorestart => $anystart,
+                                                        minlength   => $minorflen });
+
+            $orfEnd = $orfStart + length($orf) - 1 if (defined $orf);
+
+        }
+
         # Calculates per-base enrichment
         @enrich = $control ? map { logarithm((($icov[$_] + $pseudocount) / ($imedian + $pseudocount)) / (($ccov[$_] + $pseudocount) / ($cmedian + $pseudocount)), 2) } 0 .. $length - 1 :
                              map { logarithm((($icov[$_] + $pseudocount) / ($imedian + $pseudocount)), 2) } 0 .. $length - 1;
 
-        if ($metaplot &&
-            !$metaonlyenriched) {
+        if (!$metaonlyenriched) {
 
-            my (@metacoverage);
+            if ($metaplot) {
 
-            if ($control) {
+                my (@metacoverage);
 
-                @metacoverage = metacoverage(@ccov);
-                @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. 999;
+                if ($control) {
 
-                undef(@metacoverage);
+                    @metacoverage = metacoverage(\@ccov, SIZERNA);
+                    @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. SIZERNA - 1;
+
+                    undef(@metacoverage);
+
+                }
+
+                @metacoverage = metacoverage(\@icov, SIZERNA);
+                @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. SIZERNA - 1;
 
             }
 
-            @metacoverage = metacoverage(@icov);
-            @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. 999;
+            if ($metacoding && $orfEnd) {
+
+                my (@cmeta5, @cmeta3, @cmetac, @imeta5,
+                    @imeta3, @imetac, @metacod);
+                @cmeta5 = (0) x SIZE5UTR;
+                @cmeta3 = (0) x SIZE3UTR;
+                @imeta5 = @cmeta5;
+                @imeta3 = @cmeta3;
+
+                if ($orfStart > 0) {
+
+                    @cmeta5 = metacoverage([@ccov[0 .. $orfStart - 1]], SIZE5UTR) if ($control);
+                    @imeta5 = metacoverage([@icov[0 .. $orfStart - 1]], SIZE5UTR);
+
+                }
+
+                @cmetac = metacoverage([@ccov[$orfStart .. $orfEnd]], SIZECDS) if ($control);
+                @imetac = metacoverage([@icov[$orfStart .. $orfEnd]], SIZECDS);
+
+                if ($orfEnd < $length - 1) {
+
+                    @cmeta3 = metacoverage([@ccov[$orfEnd + 1 .. $length - 1]], SIZE3UTR) if ($control);
+                    @imeta3 = metacoverage([@icov[$orfEnd + 1 .. $length - 1]], SIZE3UTR);
+
+                }
+
+                if ($control) {
+
+                    @metacod = (@cmeta5, @cmetac, @cmeta3);
+                    $cmetacod[$_] += ($metacod[$_] ) for (0 .. $#metacod);
+
+                    undef(@metacod);
+
+                }
+
+                @metacod = (@imeta5, @imetac, @imeta3);
+                $imetacod[$_] += ($metacod[$_]) for (0 .. $#metacod);
+
+            }
 
         }
 
@@ -436,6 +524,18 @@ sub call {
 
         next if (!@wins);
 
+        if ($refine) {
+
+            $_ = refinepeak( peak       => $_,
+                             imedian    => $imedian,
+                             cmedian    => $cmedian,
+                             length     => $length,
+                             icov       => \@icov,
+                             ccov       => \@ccov,
+                             enrichment => \@enrich ) for (@wins);
+
+        }
+
         $last = shift(@wins);
 
         while(my $current = shift(@wins)) {
@@ -449,69 +549,123 @@ sub call {
             }
             else {
 
-                $last = refinepeak( peak       => $last,
-                                    imedian    => $imedian,
-                                    cmedian    => $cmedian,
-                                    length     => $length,
-                                    icov       => \@icov,
-                                    ccov       => \@ccov,
-                                    enrichment => \@enrich ) if ($refine);
-
-                { lock(%results);
-                  $results{peaks}++; }
-
-                { lock(@qresults);
-                  push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S")), summit($last->{coords}->[0], $last->{coords}->[1], \@icov)]));
-
-                  my @metapeak = metacoverage((0) x $last->{coords}->[0], (1) x ($last->{coords}->[1] - $last->{coords}->[0] + 1), (0) x ($length - 1 - $last->{coords}->[1]));
-                  @pmeta = map { $pmeta[$_] + $metapeak[$_] } 0 .. 999; }
-
+                push(@peaks, $last);
                 $last = $current;
 
             }
 
         }
 
-        $last = refinepeak( peak       => $last,
-                            imedian    => $imedian,
-                            cmedian    => $cmedian,
-                            length     => $length,
-                            icov       => \@icov,
-                            ccov       => \@ccov,
-                            enrichment => \@enrich ) if ($refine);
+        push(@peaks, $last);
 
-        { lock(@qresults);
-          push(@qresults, shared_clone([$id, $last->{coords}->[0], $last->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$last->{score}})), sprintf("%." . $decimals . "e", pcombine($last->{pvalue}, "S")), summit($last->{coords}->[0], $last->{coords}->[1], \@icov)]));
+        foreach my $peak (@peaks) {
 
-          my @metapeak = metacoverage((0) x $last->{coords}->[0], (1) x ($last->{coords}->[1] - $last->{coords}->[0] + 1), (0) x ($length - 1 - $last->{coords}->[1]));
-          @pmeta = map { $pmeta[$_] + $metapeak[$_] } 0 .. 999;
+            { lock(@qresults);
+              push(@qresults, shared_clone([$id, $peak->{coords}->[0], $peak->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$peak->{score}})), sprintf("%." . $decimals . "e", pcombine($peak->{pvalue}, "S")), summit($peak->{coords}->[0], $peak->{coords}->[1], \@icov)])); }
 
-          lock(%results);
+            if ($metaplot) {
+
+                my @metapeak = metacoverage([(0) x $peak->{coords}->[0], (1) x ($peak->{coords}->[1] - $peak->{coords}->[0] + 1), (0) x ($length - 1 - $peak->{coords}->[1])], SIZERNA);
+                @pmeta = map { $pmeta[$_] + $metapeak[$_] } 0 .. SIZERNA - 1;
+
+            }
+
+            if ($metacoding) {
+
+                my (@peakcov, @cov5utr, @cov3utr, @covcds);
+                @peakcov = (0) x $length;
+                $peakcov[$_] = 1 for ($peak->{coords}->[0] .. $peak->{coords}->[1]);
+                @cov5utr = (0) x SIZE5UTR;
+                @cov3utr = (0) x SIZE3UTR;
+
+                @cov5utr = metacoverage([@peakcov[0 .. $orfStart - 1]], SIZE5UTR) if ($orfStart > 0);
+                @covcds = metacoverage([@peakcov[$orfStart .. $orfEnd]], SIZECDS);
+                @cov3utr = metacoverage([@peakcov[$orfEnd + 1 .. $length - 1]], SIZE3UTR) if ($orfEnd < $length - 1);
+
+                undef(@peakcov);
+                @peakcov = (@cov5utr, @covcds, @cov3utr);
+                @pmetacod = map { $pmetacod[$_] + $peakcov[$_] } 0 .. $#peakcov;
+
+                { lock(%results);
+                  $results{codpeaks}++; }
+
+            }
+
+        }
+
+        { lock(%results);
           $results{pass}++;
-          $results{peaks}++; }
+          $results{peaks} += @peaks; }
 
-        if ($metaplot &&
-            $metaonlyenriched) {
-
-            my (@metacoverage);
+        if ($metaonlyenriched) {
 
             if ($control) {
 
-                { lock($ctrlnreads);
-                  $ctrlnreads += $cnreads; }
-
-                @metacoverage = metacoverage(@ccov);
-                @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. 999;
-
-                undef(@metacoverage);
+                lock($ctrlnreads);
+                $ctrlnreads += $cnreads;
 
             }
 
             { lock($ipnreads);
               $ipnreads += $ientry->readscount(); }
 
-            @metacoverage = metacoverage(@icov);
-            @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. 999;
+            if ($metaplot) {
+
+                my (@metacoverage);
+
+                if ($control) {
+
+                    @metacoverage = metacoverage(\@ccov, SIZERNA);
+                    @cmeta = map { $cmeta[$_] + $metacoverage[$_] } 0 .. SIZERNA - 1;
+
+                    undef(@metacoverage);
+
+                }
+
+                @metacoverage = metacoverage(\@icov, SIZERNA);
+                @imeta = map { $imeta[$_] + $metacoverage[$_] } 0 .. SIZERNA - 1;
+
+            }
+
+            if ($metacoding && $orfEnd) {
+
+                my (@cmeta5, @cmeta3, @cmetac, @imeta5,
+                    @imeta3, @imetac, @metacod);
+                @cmeta5 = (0) x SIZE5UTR;
+                @cmeta3 = (0) x SIZE3UTR;
+                @imeta5 = @cmeta5;
+                @imeta3 = @cmeta3;
+
+                if ($orfStart > 0) {
+
+                    @cmeta5 = metacoverage([@ccov[0 .. $orfStart - 1]], SIZE5UTR) if ($control);
+                    @imeta5 = metacoverage([@icov[0 .. $orfStart - 1]], SIZE5UTR);
+
+                }
+
+                @cmetac = metacoverage([@ccov[$orfStart .. $orfEnd]], SIZECDS) if ($control);
+                @imetac = metacoverage([@icov[$orfStart .. $orfEnd]], SIZECDS);
+
+                if ($orfEnd < $length - 1) {
+
+                    @cmeta3 = metacoverage([@ccov[$orfEnd + 1 .. $length - 1]], SIZE3UTR) if ($control);
+                    @imeta3 = metacoverage([@icov[$orfEnd + 1 .. $length - 1]], SIZE3UTR);
+
+                }
+
+                if ($control) {
+
+                    @metacod = (@cmeta5, @cmetac, @cmeta3);
+                    $cmetacod[$_] += ($metacod[$_] ) for (0 .. $#metacod);
+
+                    undef(@metacod);
+
+                }
+
+                @metacod = (@imeta5, @imetac, @imeta3);
+                $imetacod[$_] += ($metacod[$_] ) for (0 .. $#metacod);
+
+            }
 
         }
 
@@ -522,15 +676,32 @@ sub call {
         if ($control) {
 
             lock(@metactrl);
-            @metactrl = map { $metactrl[$_] + $cmeta[$_] } 0 .. 999;
+            @metactrl = map { $metactrl[$_] + $cmeta[$_] } 0 .. SIZERNA - 1;
 
         }
 
         { lock(@metaip);
-          @metaip = map { $metaip[$_] + $imeta[$_] } 0 .. 999; }
+          @metaip = map { $metaip[$_] + $imeta[$_] } 0 .. SIZERNA - 1; }
 
         { lock(@metapeaks);
-          @metapeaks = map { $metapeaks[$_] + $pmeta[$_] } 0 .. 999; }
+          @metapeaks = map { $metapeaks[$_] + $pmeta[$_] } 0 .. SIZERNA - 1; }
+
+    }
+
+    if ($metacoding) {
+
+        if ($control) {
+
+            lock(@metactrlcod);
+            @metactrlcod = map { $metactrlcod[$_] + $cmetacod[$_] } 0 .. $codsize - 1;
+
+        }
+
+        { lock(@metaipcod);
+          @metaipcod = map { $metaipcod[$_] + $imetacod[$_] } 0 .. $codsize - 1; }
+
+        { lock(@metapeakscod);
+          @metapeakscod = map { $metapeakscod[$_] + $pmetacod[$_] } 0 .. $codsize - 1; }
 
     }
 
@@ -661,9 +832,10 @@ sub summit {
 
 sub metacoverage {
 
-    my @coverage = @_;
+    my ($coverage, $size) = @_;
 
-    my @metacoverage = map { $coverage[round($_ / 999 * $#coverage)] } 0 .. 999;
+    $size--;
+    my @metacoverage = map { $coverage->[round($_ / $size * $#{$coverage})] } 0 .. $size;
 
     return(@metacoverage);
 
@@ -674,14 +846,16 @@ sub plotcoverage {
     my ($file, $ip, $ctrl, $peak) = @_;
 
     my ($maxy, $image, $io, $icov,
-        $ccov, $pcov, $ruler, $metaprofile);
+        $ccov, $pcov, $ruler, $metaprofile,
+        $metacodprofile);
     $metaprofile = $file =~ m/meta-gene/ ? 1 : 0;
+    $metacodprofile = $file =~ m/meta-coding/ ? 1 : 0;
     $maxy = $control ? max(@{$ip}, @{$ctrl}) : max(@{$ip});
 
     if ($maxy) {
 
-        $image = Graphics::Container->new( height  => $control ? 450 : 250,
-                                           width   => 1000,
+        $image = Graphics::Container->new( height  => $control ? ($metaprofile || $metacodprofile ? 650 : 450) : 250,
+                                           width   => 500,
                                            spacing => 0.05 );
         $io = Data::IO->new( file    => $file,
                              mode    => "w",
@@ -709,15 +883,19 @@ sub plotcoverage {
 
         $ruler = Graphics::Object::Ruler->new( fontsize => 15,
                                                height   => 1,
-                                               range    => $metaprofile ? [0, 100] : [0, scalar(@{$ip})],
+                                               labelMap => $metacodprofile ? { "0" => "TSS",
+                                                                               "7.5" => "Start",
+                                                                               "72.5" => "Stop",
+                                                                               "100"  => "TES" } : {},
+                                               range    => $metaprofile || $metacodprofile ? [0, 100] : [0, scalar(@{$ip})],
                                                ticksby  => $metaprofile ? 10 : max(1, round(scalar(@{$ip}) / 10)),
-                                               name     => $metaprofile ? "Relative position (\%)" : "Position (nt)",
+                                               name     => $metaprofile ? "Relative position (\%)" : ($metacodprofile ? undef : "Position (nt)"),
                                                toend    => 1 );
 
         $image->addobjects($ccov) if ($control);
         $image->addobject($icov);
 
-        if ($metaprofile &&
+        if (($metaprofile || $metacodprofile) &&
             @{$peak}) {
 
             $pcov = Graphics::Object::Path->new( fontsize    => 15,
@@ -748,39 +926,50 @@ sub help {
  RNA Framework [http://www.rnaframework.com]
 
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
- Summary: Performs peak calling of RNA immunoprecipitation (IP) experiments
+ Summary: Performs peak calling of RNA immunoprecipitation (RIP) experiments
 
  Usage:   rf-peakcall [Options]
 
- Options                                        Description
- -c  or --control          <string>             Control sample RC file
- -I  or --IP               <string>             Immunoprecipitated (IP) sample RC file
- -i  or --index            <string>[,<string>]  A comma separated (no spaces) list of RCI index files for the provided RC files.
-                                                Note: RCI files must be provided in the order: 1. Control, 2. IP.
-                                                If a single RCI file is specified along with both control and IP sample,
-                                                it will be used for all samples.
-                                                If no RCI index is provided, it will be created at runtime, and stored in
-                                                the same folder of the control, and IP samples.
- -l  or --whitelist        <string>             A whitelist containing transcript IDs (one per each row) to restrict the analysis to
- -p  or --processors       <int>                Number of processors to use (Default: 1)
- -o  or --output           <string>             Output folder (Default: <IP>_vs_<Control> if a control RC file is provided, or
-                                                                        <IP> if only the IP RC file is provided)
- -ow or --overwrite                             Overwrites output folder (if the specified folder already exists)
- -g  or --img                                   Enables the generation of coverage plots
- -mp or --meta-plot                             Enables the generation of meta-gene plots
- -eo or --plot-enriched-only                    Meta-gene plots will be calculated only on transcripts with a detected enrichment (requires -mp)
- -w  or --window           <int>                Window's size for peak calling (>=10, Default: 150)
- -f  or --offset           <int>                Offset for window sliding (>=1, Default: Window's size / 2)
- -md or --merge-distance   <int>                Maximum distance in nt for merging non-overlapping windows (>=0, Default: 50)
- -e  or --enrichment       <float>              Minimum log2 enrichment in IP vs. control sample, for reporting a peak (>=1, Default: 3)
- -v  or --p-value          <float>              P-value cutoff for reporting a peak (0<=p<=1, Default: 0.05)
- -s  or --summit                                Generates an additional BED file containing the coordinates of peak summits
- -r  or --refine                                Refines peak boundaries
- -x  or --relaxed                               Uses more relaxed criteria to refine peak boundaries (requires -r)
- -pc or --pseudocount      <float>              Pseudocount added to read counts to avoid division by 0 (>0, Default: 1)
- -mc or --mean-coverage    <float>              Discards any transcript with mean coverage below this threshold in the control sample (>=0, Default: 0)
- -ec or --median-coverage  <float>              Discards any transcript with median coverage below this threshold in the control sample (>=0, Default: 0)
- -D  or --decimals         <int>                Number of decimals for reporting enrichment/p-value (1-10, Default: 3)
+ Options                                            Description
+ -c   or --control              <string>             Control sample RC file
+ -I   or --IP                   <string>             Immunoprecipitated (IP) sample RC file
+ -i   or --index                <string>[,<string>]  A comma separated (no spaces) list of RCI index files for the provided RC files.
+                                                     Note: RCI files must be provided in the order: 1. Control, 2. IP.
+                                                     If a single RCI file is specified along with both control and IP sample,
+                                                     it will be used for all samples.
+                                                     If no RCI index is provided, it will be created at runtime, and stored in
+                                                     the same folder of the control, and IP samples.
+ -l   or --whitelist            <string>             A whitelist containing transcript IDs (one per each row) to restrict the analysis to
+ -p   or --processors           <int>                Number of processors to use (Default: 1)
+ -o   or --output               <string>             Output folder (Default: <IP>_vs_<Control> if a control RC file is provided, or
+                                                                             <IP> if only the IP RC file is provided)
+ -ow  or --overwrite                                 Overwrites output folder (if the specified folder already exists)
+
+ Peak calling options
+ -w   or --window               <int>                Window's size for peak calling (>=10, Default: 150)
+ -f   or --offset               <int>                Offset for window sliding (>=1, Default: Window's size / 2)
+ -md  or --merge-distance       <int>                Maximum distance in nt for merging non-overlapping windows (>=0, Default: 50)
+ -e   or --enrichment           <float>              Minimum log2 enrichment in IP vs. control sample, for reporting a peak (>=1, Default: 3)
+ -v   or --p-value              <float>              P-value cutoff for reporting a peak (0<=p<=1, Default: 0.05)
+ -s   or --summit                                    Generates an additional BED file containing the coordinates of peak summits
+ -r   or --refine                                    Refines peak boundaries
+ -x   or --relaxed                                   Uses more relaxed criteria to refine peak boundaries (requires -r)
+ -pc  or --pseudocount          <float>              Pseudocount added to read counts to avoid division by 0 (>0, Default: 1)
+ -mc  or --mean-coverage        <float>              Discards any transcript with mean coverage below this threshold in the control sample (>=0, Default: 0)
+ -ec  or --median-coverage      <float>              Discards any transcript with median coverage below this threshold in the control sample (>=0, Default: 0)
+ -D   or --decimals             <int>                Number of decimals for reporting enrichment/p-value (1-10, Default: 3)
+
+ Plotting options
+ -g   or --img                                       Enables the generation of coverage plots
+ -mp  or --meta-plot                                 Enables the generation of meta-gene plots
+ -mcp or --meta-coding-plot                          Enables the generation of a protein-coding-only meta-gene plot, by aligning the TSS, start codon,
+                                                     stop codon, and TES
+                                                     Note: the longest ORF will be automatically identified
+ -mo  or --min-orf-length      <int>                 Minimum length (in aa) to select the longest ORF (requires -mcp, Default: 50)
+ -als or --alt-start                                 The longest ORF is allowed to start with alternative start codons (requires -mcp)
+ -ans or --any-start                                 The longest ORF is allowed to start with any codon (requires -mcp)
+ -gc  or --genetic-code        <int>                 Genetic code table for the reference organism (requires -mcp, 1-33, Default: 1)
+ -eo  or --plot-enriched-only                        Meta-gene plots will be calculated only on transcripts with a detected enrichment (requires -mp or -mcp)
 
 HELP
 
