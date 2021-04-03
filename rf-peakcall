@@ -186,7 +186,7 @@ if (-e $output) {
 mkpath($output, { mode  => 0755,
                   error => \$error });
 mkpath($output . "plots", { mode  => 0755,
-                            error => \$error }) if ($metaplot);
+                            error => \$error }) if ($metaplot || $metacoding);
 mkpath($output . "plots/transcripts", { mode  => 0755,
                                         error => \$error }) if ($img);
 
