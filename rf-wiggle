@@ -3,7 +3,7 @@
 ##
 # RF Wiggle
 # RNA Framework [http://www.rnaframework.com]
-#    
+#
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Produces WIGGLE track files from RC or XML input files
 #
@@ -33,11 +33,11 @@ $|++;
 
 my ($coverage, $overwrite, $ratio, $help,
     $keepbases, %stats);
-%stats = ( processed => 0, 
+%stats = ( processed => 0,
            failed    => 0 );
 
 do {
-    
+
     local $SIG{__WARN__} = sub { };
 
     GetOptions( "h|help"          => \$help,
@@ -64,12 +64,12 @@ die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i &&
                                                 !isiupac($keepbases));
 for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 
-$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(iupac2nt(rna2dna($keepbases)))));
+$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($keepbases)))))));
 
 print "\n[+] Processing input file(s) [Current: none]";
 
 foreach my $input (@ARGV) {
-    
+
     my ($name, $rcio, $isxml, $output,
         @input);
     $name = $input;
@@ -77,178 +77,178 @@ foreach my $input (@ARGV) {
     $name = fileparse($name, qr/\.[^.]*/);
     $name =~ s/\.(?:xml|rc)$//;
     $output = $name . ".wig" if (!$output);
-    
+
     print CLRRET . "[+] Processing input file(s) [Current: " . $name . "]";
-    
+
     if (!-d $input) { # Input is a file
-        
+
         die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n" if ($input !~ m/\.(xml|rc)$/);
-            
+
         push(@input, $input);
         $isxml = 1 if ($input =~ m/\.xml$/);
-        
+
     }
     else {
-        
+
         opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
         while(my $file = readdir($dh)) {
-            
+
             next if ($file !~ m/\.(xml|rc)$/);
-            
+
             push(@input, $input . "/" . $file);
             $isxml = 1 if ($file =~ m/\.xml$/);
-            
+
         }
         closedir($dh);
-        
+
         die "\n\n  [!] Error: Specified folder doesn't contain any RC/XML file\n\n" unless(@input);
-        
+
     }
-    
+
     if (-e $output) {
-    
+
         if ($overwrite) {
-            
+
             unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n";
-            
+
         }
         else { die "\n\n  [!] Error: Output file already exists." .
                    "\n      Please use -ow (or --overwrite) to overwrite it\n\n"; }
-        
+
     }
-    
+
     open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output WIGGLE file (" . $! . ")\n\n";
     select((select($wh), $|=1)[0]);
-    
+
     print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
-        
+
     foreach my $file (@input) {
 
         $stats{processed}++;
-        
+
         if ($file =~ m/\.xml$/) {
-        
+
             my ($xmlref, $i, $sequence, @data);
-            
+
             eval { $xmlref = RF::Data::IO::XML->new(file => $file); };
-            
+
             if ($@) {
-    
+
                 $stats{failed}++;
-                
+
                 undef($@);
-                
+
                 next;
-                
+
             }
-            
+
             $i = 0;
             $sequence = $xmlref->sequence();
             @data = $xmlref->tool() eq "rf-norm" ? $xmlref->reactivity() : ($ratio ? $xmlref->ratio() : $xmlref->score());
-            
+
             next if (!sum(grep {$_ !~ m/^NaN$/i} @data));
-            
+
             print $wh "variableStep chrom=" . $xmlref->id() . "\n";
-           
+
             undef($data[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
-            
+
             for (@data) {
-                
+
                 $i++;
-                
+
                 print $wh $i . " " . $_ . "\n" if ($_ &&
                                                    !isnan($_));
-                
+
             }
-            
+
         }
         else {
-            
+
             eval { $rcio = RF::Data::IO::RC->new(file => $input); };
-            
-            if ($@) { 
-            
+
+            if ($@) {
+
                 $stats{failed}++;
-                
+
                 undef($@);
-                
+
                 next;
-            
+
             }
-            
+
             while(my $entry = $rcio->read()) {
-                
+
                 next if (($coverage && !sum($entry->coverage())) ||
                          (!$coverage && !sum($entry->counts())));
-                
+
                 my ($i, $sequence, @counts, @coverage);
                 $i = 0;
                 $sequence = $entry->sequence();
                 @counts = $entry->counts();
                 @coverage = $entry->coverage();
-                
+
                 print $wh "variableStep chrom=" . $entry->id() . "\n";
-                
+
                 while($sequence =~ m/[^$keepbases]/g) {
-                    
+
                     undef($counts[$-[0]]);
                     undef($coverage[$-[0]]);
-                    
+
                 }
-                
+
                 for (0 .. $#coverage) {
-                    
+
                     $i++;
-                
+
                     if ($coverage[$_]) {
-                
+
                         if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n"; }
                         elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($counts[$_]); }
                         else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
-                    
+
                     }
-                
+
                 }
-                
+
             }
-            
+
         }
-    
+
     }
-    
+
     close($wh);
-    
+
 }
 
 print CLRRET . "[+] Processing input file(s) [Total: " . $stats{processed} . "]";
 
 if ($stats{failed}) {
-    
+
     die "\n\n  [!] Error: Parsing failed for all files." .
         "\n      Please check your input and try again\n\n" if ($stats{failed} == $stats{processed});
-    
+
     warn "\n\n  [!] Warning: Parsing failed for " . $stats{failed} . " files.\n\n";
-    
+
 }
 
 print "\n[+] All done.\n\n";
 
 sub help {
-    
+
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    
+
     die <<HELP;
- 
+
  RF Wiggle (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
-    
+
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Produces WIGGLE track files from RC or XML input files
- 
+
  Usage:   rf-wiggle [Options] Sample.rc
           rf-wiggle [Options] transcript.xml
           rf-wiggle [Options] RC_XML_folder/
- 
+
  Options                                     Description
  -ow or --overwrite                          Overwrites output file (if the specified file already exists)
  -c  or --coverage                           Reports per-base coverage instead of RT-stop/mutation count
@@ -257,7 +257,7 @@ sub help {
                                              or the ratio from rf-modcall XML files
                                              Note: this option only works for RC files or XML files generated with rf-modcall
  -kb or --keep-bases        <string>         Bases to report in the WIGGLE file (Default: N)
- 
+
 HELP
-    
+
 }
