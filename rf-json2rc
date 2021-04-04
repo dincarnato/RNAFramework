@@ -771,7 +771,7 @@ sub help {
  Summary: Extract information for deconvoluted structure profiles from DRACO JSON output,
           producing RC files suitable for structure prediction
 
- Usage:   rf-json2rc [Options] -j Replicate1.json,Replicate2.json,...,Replicaten.json
+ Usage:   rf-json2rc [Options] -j file1.json,file2.json,...,filen.json -r file1.rc,file2.rc,...,filen.rc
 
  Options                                          Description
  -o   or --output                 <string>        Output folder (Default: rf_json2rc/)

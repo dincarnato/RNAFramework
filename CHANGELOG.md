@@ -3,7 +3,11 @@
 - Added parameter "-mcp" (or "--meta-coding-plot") to rf-peakcall to generate protein-coding-only meta-gene plots, by aligning the TSS, start codon, stop codon, and TES
 - Added the rf-motifdiscovery module to perform motif discovery from RIP peaks
 - Added the rf-json2rc module to post-process DRACO JSON output files into RC format
+- Added support for direct comparison of RC files in rf-correlate
 - Every RNA Framework module will now notify the user if a new version is available
+
+### Changed
+- Fixed a bug in the way rf-norm and rf-wiggle handled reactive bases from IUPAC codes
 
 ### API Changes
 - The Graphics::Object::Ruler can now take user-defined labels

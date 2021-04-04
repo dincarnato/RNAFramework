@@ -28,6 +28,8 @@ use lib $Bin . "/lib";
 use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
+use Data::Sequence::Utils;
+use RF::Data::IO::RC;
 use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
 use Term::Table;
@@ -39,8 +41,9 @@ $|++;
 
 my ($output, $overwrite, $help, $minvalues,
     $threads, $table, $skipoverall, $spearman,
-    $ignoreseq, $singlefile, @pool, @xml,
-    @overall, %xml);
+    $ignoreseq, $singlefile, $isRC, $keepbases,
+    $coverage, $ratio, $minCov, @pool, @files,
+    @overall, %files);
 
 my @ids : shared;
 my @allreactivities1 : shared;
@@ -50,7 +53,8 @@ my %results : shared;
 %results = ( diffseq     => 0,
              nominvalues => 0,
              failed      => 0,
-             correlated  => 0 );
+             correlated  => 0,
+             missing     => 0 );
 
 do {
 
@@ -63,9 +67,13 @@ do {
                 "p|processors=i"    => \$threads,
                 "s|skip-overall"    => \$skipoverall,
                 "S|spearman"        => \$spearman,
-                "i|ignore-sequence" => \$ignoreseq ) or help(1);
+                "kb|keep-bases=s"   => \$keepbases,
+                "i|ignore-sequence" => \$ignoreseq,
+                "c|coverage"        => \$coverage,
+                "r|ratio"           => \$ratio,
+                "mc|min-coverage=i" => \$minCov ) or help(1);
 
-    @xml = uniq(@ARGV);
+    @files = uniq(@ARGV);
 
 };
 
@@ -74,9 +82,8 @@ help() if ($help);
 # Default
 $output ||= "rf_correlate.csv";
 $threads ||= 1;
-$minvalues = round($minvalues) if (isnumeric($minvalues) &&
-                                   $minvalues > 1);
-
+$keepbases ||= "ACGT";
+$minCov ||= 1;
 $output =~ s/(?:\.csv)?$/\.csv/ if (defined $output);
 
 ##
@@ -84,17 +91,21 @@ $output =~ s/(?:\.csv)?$/\.csv/ if (defined $output);
 ##
 
 die "\n  [!] Error: No output directory specified\n\n" unless(defined $output);
-die "\n  [!] Error: 2 XML directories/files required\n\n" if (@xml != 2);
+die "\n  [!] Error: 2 XML directories/files required\n\n" if (@files < 2);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Miminum number of values must be greater than 0\n\n" if (defined $minvalues &&
                                                                              (!isnumeric($minvalues) ||
                                                                               $minvalues == 0));
+die "\n  [!] Error: Parameters -r and -c are mutually exclusive\n\n" if ($ratio && $coverage);
+die "\n  [!] Error: Invalid bases to keep\n\n" if (!isiupac($keepbases) && $keepbases !~ m/^all$/i);
 
-$singlefile = 1 if (!-d $xml[0] && !-d $xml[1]);
+$minvalues = round($minvalues) if ($minvalues > 1);
+$singlefile = 1 if (!-d $files[0] && !-d $files[1]);
+$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($keepbases)))))));
 
 print "\n[+] Importing input XML directories\/files...";
 
-for (@xml) {
+for (@files) {
 
     die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $_);
 
@@ -108,24 +119,32 @@ for (@xml) {
             next if ($file !~ m/\.xml$/);
 
             $file =~ s/\.xml//;
-            $xml{$file}++;
+            $files{$file}++;
 
         }
         close($dh);
 
     }
-    else { $xml{(fileparse($_, ".xml"))[0]}++; }
+    else {
+
+        $files{(fileparse($_, qw(.rc .xml)))[0]}++;
+        $isRC++ if ($_ =~ m/\.rc$/);
+
+    }
 
 }
+
+# Only one of the two files is in RC format
+die "\n\n  [!] Error: Mixed file types provided\n\n" if ($isRC == 1);
 
 # Delete all transcripts that are not common to all XML directories
 if (!$singlefile) {
 
-    for (keys %xml) { delete($xml{$_}) if ($xml{$_} != @xml); }
+    for (keys %files) { delete($files{$_}) if ($files{$_} != @files); }
 
-    print " " . (keys %xml) . " common transcripts.";
+    print " " . (keys %files) . " common transcripts.";
 
-    die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %xml);
+    die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %files);
 
 }
 
@@ -142,27 +161,34 @@ select((select($wh), $|=1)[0]);
 
 print "\n[+] Calculating correlations [Last: none]";
 
-@ids = $singlefile ? (keys %xml)[0] : keys %xml;
+if ($isRC) {
+
+    my $io = RF::Data::IO::RC->new(file => $files[0]);
+    while(my $entry = $io->read()) { push(@ids, $entry->id()); }
+
+}
+else { @ids = $singlefile ? (keys %files)[0] : keys %files; }
+
 @pool = map{ threads->create(\&correlate) } 1 .. $threads;
 $_->join() for(@pool);
 
 close($wh);
 
-if (!$skipoverall && !$singlefile) {
-
-    @overall = $spearman ? spearman(\@allreactivities1, \@allreactivities2) : pearson(\@allreactivities1, \@allreactivities2);
-
-    print "\n[+] Overall correlation: " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
-
-}
-
-if ($singlefile) {
+if ($singlefile && !$isRC) {
 
     if (my $id = (keys %correlations)[0]) { print "\n[+] Correlation: " . sprintf("%.3f", $correlations{$id}->[0]) . " (p-value: " .  sprintf("%.2e", $correlations{$id}->[1]) . ")"; }
     else { print "\n\n  [!] Error: Correlation calculation failed"; }
 
 }
 else {
+
+    if (!$skipoverall) {
+
+        @overall = _correlate(\@allreactivities1, \@allreactivities2);
+
+        print "\n[+] Overall correlation: " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
+
+    }
 
     print "\n[+] Top 10 correlated transcripts:\n\n";
 
@@ -176,9 +202,10 @@ else {
 print "\n\n[+] Combination statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{correlated} .
       "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
-      "\n                             " . ($results{failed} - $results{diffseq} - $results{nominvalues}) . " XML parsing failed" .
+      "\n                             " . ($results{failed} - $results{diffseq} - $results{nominvalues}) . " parsing failed" .
       "\n                             " . $results{diffseq} . " mismatch between transcript sequences" .
       "\n                             " . $results{nominvalues} . " not enaugh values for correlation calculation";
+print "\n                             " . $results{missing} . " transcripts absent in second RC file" if ($isRC);
 
 print "\n\n[+] All done.\n\n";
 
@@ -186,9 +213,16 @@ sub correlate {
 
     while (1) {
 
-        my ($id, $xmlref1, $xmlref2, $nbases,
-            $sequence, $reactive, @reactivity1, @reactivity2,
+        my ($id, $io1, $io2, $entry1, $entry2, $nbases,
+            $sequence, @reactivity1, @reactivity2,
             @commonidx, @pearson);
+
+        if ($isRC) {
+
+            $io1 = RF::Data::IO::RC->new(file => $files[0]);
+            $io2 = RF::Data::IO::RC->new(file => $files[1]);
+
+        }
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
@@ -199,8 +233,12 @@ sub correlate {
 
             no warnings;
 
-            $xmlref1 = RF::Data::IO::XML->new(file => -d $xml[0] ? $xml[0] . $id . ".xml" : $xml[0]);
-            $xmlref2 = RF::Data::IO::XML->new(file => -d $xml[1] ? $xml[1] . $id . ".xml" : $xml[1]);
+            if (!$isRC) {
+
+                $entry1 = RF::Data::IO::XML->new(file => -d $files[0] ? $files[0] . $id . ".xml" : $files[0]);
+                $entry2 = RF::Data::IO::XML->new(file => -d $files[1] ? $files[1] . $id . ".xml" : $files[1]);
+
+            }
 
         };
 
@@ -215,8 +253,27 @@ sub correlate {
 
         }
 
-        if ((!$ignoreseq && $xmlref1->sequence() ne $xmlref2->sequence()) ||
-            ($ignoreseq && $xmlref1->length() != $xmlref2->length())) {
+        if ($isRC) {
+
+            $entry1 = $io1->read($id);
+            $entry2 = $io2->read($id);
+
+            if (!$entry2) {
+
+                lock(%results);
+                $results{missing}++;
+                $results{failed}++;
+
+                undef($@);
+
+                next;
+
+            }
+
+        }
+
+        if ((!$ignoreseq && $entry1->sequence() ne $entry2->sequence()) ||
+            ($ignoreseq && $entry1->length() != $entry2->length())) {
 
             lock(%results);
             $results{diffseq}++;
@@ -228,15 +285,33 @@ sub correlate {
 
         }
 
-        $reactive = $xmlref1->reactive() || "ACGT";
-        $sequence = $xmlref1->sequence();
-        ($nbases) = $sequence =~ s/([$reactive])/$1/g;
+        $keepbases = $entry1->reactive() if (!$isRC);
+        $sequence = $entry1->sequence();
+        ($nbases) = $sequence =~ s/([$keepbases])/$1/ge;
 
-        @reactivity1 = $xmlref1->reactivity();
-        @reactivity2 = $xmlref2->reactivity();
+        if ($isRC) {
 
-        @commonidx = grep { isnumeric($reactivity1[$_]) &&
-                            isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
+            my (@counts1, @counts2, @cov1, @cov2);
+            @counts1 = $entry1->counts();
+            @counts2 = $entry2->counts();
+            @cov1 = $entry1->coverage();
+            @cov2 = $entry2->coverage();
+            @reactivity1 = $coverage ? @cov1 : ($ratio ? map { $counts1[$_] / $cov1[$_] } 0 .. $#cov1 : @counts1);
+            @reactivity2 = $coverage ? @cov2 : ($ratio ? map { $counts2[$_] / $cov2[$_] } 0 .. $#cov2 : @counts2);
+
+            @commonidx = grep { substr($sequence, $_, 1) =~ m/^[$keepbases]$/ &&
+                                $cov1[$_] >= $minCov && $cov2[$_] >= $minCov } 0 .. $#cov1;
+
+        }
+        else {
+
+            @reactivity1 = $entry1->reactivity();
+            @reactivity2 = $entry2->reactivity();
+
+            @commonidx = grep { isnumeric($reactivity1[$_]) &&
+                                isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
+
+        }
 
         if (defined $minvalues || @commonidx < 2) {
 
@@ -258,7 +333,7 @@ sub correlate {
 
         @reactivity1 = @reactivity1[@commonidx];
         @reactivity2 = @reactivity2[@commonidx];
-        @pearson = $spearman ? spearman(\@reactivity1, \@reactivity2) : pearson(\@reactivity1, \@reactivity2);
+        @pearson = _correlate(\@reactivity1, \@reactivity2);
 
         { lock(%results);
           $results{correlated}++;
@@ -281,6 +356,14 @@ sub correlate {
 
 }
 
+sub _correlate {
+
+    local $SIG{__WARN__} = sub { }; # Suppresses warnings from Pearson and Spearman when stdev = 0
+
+    return($spearman ? spearman(@_) : pearson(@_));
+
+}
+
 sub help {
 
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -294,18 +377,29 @@ sub help {
  Summary: Calculates pairwise correlations of structure probing experiments
 
  Usage:   rf-correlate [Options] XML_folder_rep1/ XML_folder_rep2/           # Whole transcriptome
+          rf-correlate [Options] file_rep1.rc file_rep2.rc                   # Whole transcriptome
           rf-correlate [Options] file_rep1.xml file_rep2.xml                 # Single transcript
 
- Options                               Description
- -p  or --processors    <int>          Number of processors to use (Default: 1)
- -o  or --output        <string>       Output CSV file (Default: rf_correlate.csv)
- -ow or --overwrite                    Overwrites output file (if the specified file already exists)
- -m  or --min-values    <float>        Minimum number of values to calculate correlation (Default: off)
-                                       Note: if a value between 0 and 1 is provided, this is interpreted as a
-                                             fraction of the transcript's length
- -s  or --skip-overall                 Skips overall experiment correlation calculation (faster)
- -S  or --spearman                     Uses Spearman instead of Pearson to calculate correlation
- -i  or --ignore-sequences             Ignores sequence differences (e.g. SNVs) between the compared transcripts
+ Options                                  Description
+ -p  or --processors       <int>          Number of processors to use (Default: 1)
+ -o  or --output           <string>       Output CSV file (Default: rf_correlate.csv)
+ -ow or --overwrite                       Overwrites output file (if the specified file already exists)
+ -m  or --min-values       <float>        Minimum number of values to calculate correlation (Default: off)
+                                          Note: if a value between 0 and 1 is provided, this is interpreted as a
+                                                fraction of the transcript's length
+ -s  or --skip-overall                    Skips overall experiment correlation calculation (faster)
+ -i  or --ignore-sequences                Ignores sequence differences (e.g. SNVs) between the compared transcripts
+ -S  or --spearman                        Uses Spearman instead of Pearson to calculate correlation
+
+ RC file-specific options
+ -kb or --keep-bases       <string>       Bases on which correlation should be calculated (Default: all)
+                                          Note: this option has effect only on RC files. For XML files, reactive
+                                                bases are automatically identified from the "reactive" attribute
+ -mc or --min-coverage     <int>          Restricts the correlation analysis to bases exceeding this coverage
+ -c  or --coverage                        Correlation is calculated on the coverage, rather than on the raw RT
+                                          stop/mutation counts
+ -r  or --ratio                           Correlation is calculated on the ratio between, the RT stop/mutation
+                                          counts and the coverage, rather than on the raw RT stop/mutation counts
 
 HELP
 
