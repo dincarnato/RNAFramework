@@ -705,7 +705,7 @@ sub count {
                         $rcio->write($rentry);
 
                         $covered++;
-                        print $wh $last{id} . "\n" if (median(@coverage) >= $whitelist);
+                        print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
                     }
 
@@ -814,7 +814,7 @@ sub count {
                 $rcio->write($rentry);
 
                 $covered++;
-                print $wh $last{id} . "\n" if (median(@coverage) >= $whitelist);
+                print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
             }
 
