@@ -182,7 +182,7 @@ if ($singlefile && !$isRC) {
 }
 else {
 
-    if (!$skipoverall) {
+    if (!$skipoverall && @allreactivities1) {
 
         @overall = _correlate(\@allreactivities1, \@allreactivities2);
 
@@ -199,12 +199,12 @@ else {
 
 }
 
-print "\n\n[+] Combination statistics:\n" .
+print "\n\n[+] Correlation statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{correlated} .
       "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
       "\n                             " . ($results{failed} - $results{diffseq} - $results{nominvalues}) . " parsing failed" .
       "\n                             " . $results{diffseq} . " mismatch between transcript sequences" .
-      "\n                             " . $results{nominvalues} . " not enaugh values for correlation calculation";
+      "\n                             " . $results{nominvalues} . " not enough values for correlation calculation";
 print "\n                             " . $results{missing} . " transcripts absent in second RC file" if ($isRC);
 
 print "\n\n[+] All done.\n\n";

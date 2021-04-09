@@ -1351,7 +1351,7 @@ sub winfold {
         $cmd = $viennarna . " --infile='" . $parameters{file} . ".fa' --outfile='" . $parameters{file} . ".fold' -C --enforceConstraint";
         $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
 
-        $ret = `$cmd $vrfoldparams 2>/dev/null`;
+        $ret = `$cmd $vrfoldparams --noPS 2>/dev/null`;
 
         my $outFile = (-e $parameters{file} . ".fold_" . $parameters{file} . ".fold" ? $parameters{file} . ".fold_" . $parameters{file} . ".fold" : $parameters{file} . ".fold");
 
@@ -1360,7 +1360,7 @@ sub winfold {
             $cmd = $viennarna . " --infile='" . $parameters{file} . ".fa' --outfile='" . $parameters{file} . ".fold' -C";
             $cmd .= " --shape='" . $parameters{file} . ".shape'" if (!$ignore);
 
-            $ret = `$cmd $vrfoldparams 2>/dev/null`;
+            $ret = `$cmd $vrfoldparams --noPS 2>/dev/null`;
 
         }
 
@@ -1437,7 +1437,7 @@ sub partition {
                            $hc) ||
                           $pk);
 
-        $ret = `$cmd $vrfoldparams 2>/dev/null`;
+        $ret = `$cmd $vrfoldparams --noPS 2>/dev/null`;
 
         open(my $fh, "<", $parameters{file} . "_dp.ps") or return;
         while(<$fh>) {
