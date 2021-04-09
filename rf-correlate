@@ -164,7 +164,7 @@ print "\n[+] Calculating correlations [Last: none]";
 if ($isRC) {
 
     my $io = RF::Data::IO::RC->new(file => $files[0]);
-    while(my $entry = $io->read()) { push(@ids, $entry->id()); }
+    @ids = $io->ids();
 
 }
 else { @ids = $singlefile ? (keys %files)[0] : keys %files; }
