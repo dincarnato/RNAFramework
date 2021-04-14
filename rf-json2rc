@@ -196,6 +196,8 @@ for (0 .. $#jsonin) {
 
         foreach my $window (@{$transcript->{windows}}) {
 
+            die "\n\n  [!] Error: Input file does not look like a valid DRACO JSON file (preCoverage field is missing)\n\n" if (!exists $window->{preCoverage});
+
             next if (median(@{$window->{preCoverage}}) < $medianPreCov);
 
             my ($start, $end, @stoichiometries, @cumCov);
