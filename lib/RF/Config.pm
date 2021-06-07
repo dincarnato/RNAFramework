@@ -66,7 +66,7 @@ sub _validate {
 
     my $self = shift;
 
-    $self->{normwindow} = $self->{windowoffset} if ($self->{windowoffset} > $self->{normwindow});
+    $self->{windowoffset} = $self->{normwindow} if ($self->{windowoffset} > $self->{normwindow});
 
     $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
     $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|[123])$/i);
