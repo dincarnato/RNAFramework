@@ -25,8 +25,6 @@ use File::Spec;
 use FindBin qw($Bin);
 use Fcntl qw(SEEK_SET SEEK_END);
 use Getopt::Long qw(:config no_ignore_case);
-use threads;
-use threads::shared;
 
 use lib $Bin . "/lib";
 
@@ -58,12 +56,8 @@ my ($tmp, $tmpdir, $output, $wt,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
     $maxcov, $primaryonly, $whitelist, $onlyMut, @bam_trim5,
-    @pool, %transcripts, %spacer, %files,
+    @pool, @qcounter, %transcripts, %spacer, %files,
     %masks, %realid, %onlyMut);
-
-my $lock : shared;
-my @qcounter : shared;
-my @qresults : shared;
 
 do {
 
@@ -274,12 +268,12 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
 
-    push(@qcounter, shared_clone({ path           => $sample,
+    push(@qcounter, { path           => $sample,
                                    file           => $file,
                                    type           => guess_type($sample),
                                    head           => undef,
                                    trim5          => 0,
-                                   hashead        => 0 }));
+                                   hashead        => 0 });
 
     $files{$file} = $#qcounter;
     $spacer{$file} = length($file);
@@ -544,7 +538,7 @@ else {
     $processmanager->start();
     $processmanager->waitall();
 
-    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
+    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
 
     print "\n";
 
@@ -610,13 +604,22 @@ if (-e $mbfile) {
 
 print "\n[+] Calculating per-base " . ($covonly ? "coverage" : ($mutcount ? "mutation counts" : "RT-stops") . " and coverage") . ". This may take a while...\n";
 
-@pool = map{ threads->create(\&count) } 1 .. $threads;
+$processmanager->onstart(sub { print "\n  [-] Processing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
 
-$_->join() for(@pool);
+foreach my $sample (@qcounter) {
+
+    $processmanager->enqueue( command   => \&count,
+                              arguments => [ $sample ],
+                              id        => $sample->{file} );
+
+}
+
+$processmanager->start();
+$processmanager->waitall();
 
 print "\n\n[+] Statistics:\n";
 
-foreach my $result (@qresults) { print $result; }
+while (my $sample = $processmanager->dequeue()) { print "\n" . $sample->exitcode(); }
 
 print "\n\n[+] Cleaning up temporary files...";
 
@@ -626,277 +629,247 @@ print "\n[+] All done.\n\n";
 
 sub count {
 
-    while (1) {
+    my $sample = shift;
 
-        my ($sample);
+    $seqio->forceReopenFh(); # On fork() filehandle is cloned. With this we close it and reopen it for all children.
 
-        { lock(@qcounter);
-          $sample = shift(@qcounter) if (@qcounter); }
+    my ($covered, $rcio, $stats, $readscount,
+        $mmio, $readsToMaxCov, $wh, @lastPos, @counts,
+        @coverage, %last, %stats);
+    $covered = 0;
+    %last = ( id       => undef,
+              sequence => undef );
+    %stats = ( A       => 0,
+               C       => 0,
+               G       => 0,
+               T       => 0,
+               mutated => 0,
+               total   => 0 );
 
-        last unless($sample);
+    return("\n  [!] Error: Unable to copy counts table structure for sample \"" . $sample->{file} . "\" (" . $! . ")") unless (copy($tmpdir . $tmp . "_base.rc", $output . $sample->{file} . ".rc"));
 
-        my ($covered, $rcio, $stats, $readscount,
-            $mmio, $readsToMaxCov, $wh, @lastPos, @counts,
-            @coverage, %last, %stats);
-        $covered = 0;
-        %last = ( id       => undef,
-                  sequence => undef );
-        %stats = ( A       => 0,
-                   C       => 0,
-                   G       => 0,
-                   T       => 0,
-                   mutated => 0,
-                   total   => 0 );
+    $rcio = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
+                                   index => $output . "index.rci",
+                                   mode  => "w+" );
+    $mmio = RF::Data::IO::MM->new( file  => $output . $sample->{file} . ".mm",
+                                   index => $output . "index.mmi",
+                                   mode  => "w" ) if ($mutmap);
 
-        { lock($lock);
-          print "\n  [-] Processing sample \"" . $sample->{file} . "\"" . (" " x $spacer{$sample->{file}}) . "(Thread #" . threads->tid . ")..."; }
+    if (open(my $fh, $samtools . " view " . $sample->{path} . " |")) {
 
-        unless (copy($tmpdir . $tmp . "_base.rc", $output . $sample->{file} . ".rc")) {
+        if ($whitelist) {
 
-            lock(@qresults);
-            push(@qresults, "\n  [!] Error: Unable to copy counts table structure for sample \"" . $sample->{file} . "\" (" . $! . ")");
-
-            next;
+            open($wh, ">", $output . "whitelists/" . $sample->{file} . ".txt");
+            select((select($wh), $|=1)[0]);
 
         }
 
-        $rcio = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
-                                       index => $output . "index.rci",
-                                       mode  => "w+" );
-        $mmio = RF::Data::IO::MM->new( file  => $output . $sample->{file} . ".mm",
-                                       index => $output . "index.mmi",
-                                       mode  => "w" ) if ($mutmap);
+        while (!eof($fh)) {
 
-        if (open(my $fh, $samtools . " view " . $sample->{path} . " |")) {
+            my ($row, $clip5, $cov, $ins,
+                $editdist, $truelen, $id, @row);
+            $row = <$fh>;
+            chomp($row);
+            @row = split(/\t/, $row);
 
-            if ($whitelist) {
+            next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
 
-                open($wh, ">", $output . "whitelists/" . $sample->{file} . ".txt");
-                select((select($wh), $|=1)[0]);
+            $id = $row[2];
+            $id =~ s/\//_/g;
+            ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
+            @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
+            $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
 
-            }
+            next if (!exists $transcripts{$id});
+            next if ($mutcount &&
+                     $truelen < ($discardshorter =~ m/^median$/i ? $sample->{medianReadLen} : $discardshorter));
+            next if ($mutcount &&
+                     $editdist / $cov > $maxmut);
+            next if ($mutcount &&
+                     median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
+            next if ($po &&
+                     $row[1] & 1 &&
+                     $row[1] & 8); # Read is one of a pair, but one mate is unmapped
+            next if ($pp &&
+                     $row[1] & 1 &&
+                     !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
+            next if ($row[1] & 16 &&
+                     !$mutcount &&
+                     !$covonly); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
+            next if ($clip5 &&
+                     !$mutcount &&
+                     !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
+            next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
+            next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
 
-            while (!eof($fh)) {
+            if ($row[2] ne $last{id}) {
 
-                my ($row, $clip5, $cov, $ins,
-                    $editdist, $truelen, $id, @row);
-                $row = <$fh>;
-                chomp($row);
-                @row = split(/\t/, $row);
+                if (defined $last{id}) {
 
-                next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
+                    if (exists $masks{$last{id}}) {
 
-                $id = $row[2];
-                $id =~ s/\//_/g;
-                ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
-                @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
-                $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
-
-                next if (!exists $transcripts{$id});
-                next if ($mutcount &&
-                         $truelen < ($discardshorter =~ m/^median$/i ? $sample->{medianReadLen} : $discardshorter));
-                next if ($mutcount &&
-                         $editdist / $cov > $maxmut);
-                next if ($mutcount &&
-                         median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
-                next if ($po &&
-                         $row[1] & 1 &&
-                         $row[1] & 8); # Read is one of a pair, but one mate is unmapped
-                next if ($pp &&
-                         $row[1] & 1 &&
-                         !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
-                next if ($row[1] & 16 &&
-                         !$mutcount &&
-                         !$covonly); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
-                next if ($clip5 &&
-                         !$mutcount &&
-                         !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
-                next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
-                next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
-
-                if ($row[2] ne $last{id}) {
-
-                    if (defined $last{id}) {
-
-                        if (exists $masks{$last{id}}) {
-
-                            @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
-                            @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
-
-                        }
-
-                        my $rentry = RF::Data::RC->new( id         => $last{id},
-                                                        sequence   => $last{sequence},
-                                                        counts     => \@counts,
-                                                        coverage   => \@coverage,
-                                                        readscount => $readscount );
-
-                        $rcio->write($rentry);
-
-                        $covered++;
-                        print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
+                        @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                        @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
 
                     }
 
-                    # The object $seqio is a different copy in each
-                    # thread, but the filehandle is shared
-                    # Locking prevents multiple threads from seeking
-                    # inside file at the same moment
-                    { lock($lock);
-                      my $entry = $seqio->read($row[2]);
-                      $entry->unmask();
-                      $last{id} = $id;
-                      $last{sequence} = $entry->sequence(); }
+                    my $rentry = RF::Data::RC->new( id         => $last{id},
+                                                    sequence   => $last{sequence},
+                                                    counts     => \@counts,
+                                                    coverage   => \@coverage,
+                                                    readscount => $readscount );
 
-                    $readscount = 0;
-                    $readsToMaxCov = $transcripts{$id} < $sample->{medianReadLen} ? $maxcov : round(($transcripts{$id} * $maxcov / $sample->{medianReadLen}) / ($transcripts{$id} - $sample->{medianReadLen} + 1)) if ($maxcov);
-                    @lastPos = (0, 0); # position, count
-                    @counts = (0) x $transcripts{$id};
-                    @coverage = (0) x $transcripts{$id};
+                    $rcio->write($rentry);
 
-                    $mmio->append_transcript($last{id}, $last{sequence}) if ($mutmap);
+                    $covered++;
+                    print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
                 }
 
-                if ($mutcount ||
-                    $covonly) {  # Mutations count / Coverage only modes
+                my $entry = $seqio->read($row[2]);
+                $entry->unmask();
+                $last{id} = $id;
+                $last{sequence} = $entry->sequence();
 
-                    my $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+                $readscount = 0;
+                $readsToMaxCov = $transcripts{$id} < $sample->{medianReadLen} ? $maxcov : round(($transcripts{$id} * $maxcov / $sample->{medianReadLen}) / ($transcripts{$id} - $sample->{medianReadLen} + 1)) if ($maxcov);
+                @lastPos = (0, 0); # position, count
+                @counts = (0) x $transcripts{$id};
+                @coverage = (0) x $transcripts{$id};
 
-                    if ($maxcov) {
+                $mmio->append_transcript($last{id}, $last{sequence}) if ($mutmap);
 
-                        next if ($transcripts{$id} >= $sample->{medianReadLen} &&
-                                 $start > $transcripts{$id} - $sample->{medianReadLen});
+            }
 
-                        if ($lastPos[0] == $start && $lastPos[1] == $readsToMaxCov) { next; }
-                        elsif ($lastPos[0] < $start) { @lastPos = ($start, 0); }
+            if ($mutcount ||
+                $covonly) {  # Mutations count / Coverage only modes
+
+                my $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+
+                if ($maxcov) {
+
+                    next if ($transcripts{$id} >= $sample->{medianReadLen} &&
+                             $start > $transcripts{$id} - $sample->{medianReadLen});
+
+                    if ($lastPos[0] == $start && $lastPos[1] == $readsToMaxCov) { next; }
+                    elsif ($lastPos[0] < $start) { @lastPos = ($start, 0); }
+
+                }
+
+                $readscount++ unless ($row[1] & 256);
+                $stats{total}++;
+
+                # Parse the MD flag only when edit distance != 0
+                if ($mutcount &&
+                    $row !~ m/NM:i:0/) {
+
+                    my ($end, @mutations, @uniqmutations);
+                    $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
+                    @mutations = parsemd(\@row, $last{sequence});
+                    @mutations = uniq(@mutations, @{$ins}) if (!$noins);
+                    @mutations = rmconsecutive(@mutations) if ($rmconsecutive);
+                    @mutations = collapsemutations(@mutations) if ($collapse);
+                    $stats{mutated}++ if (@mutations);
+
+                    for (@mutations) {
+
+                        $counts[$_]++;
+                        $stats{substr($last{sequence}, $_, 1)}++;
 
                     }
+
+                    $mmio->append_read($start, $end, scalar(@mutations), \@mutations) if ($mutmap);
+
+                }
+
+                $lastPos[1]++;
+                map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
+                                       ($row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2);
+
+
+            }
+            else {  # RT-stops count mode
+
+                if ($row[3] >= 2 + $sample->{trim5} + $clip5) { # Read 5'-end is not before transcript 5'-end
+
+                    $row[3] -= $sample->{trim5} + $clip5 + 2;
+                    $counts[$row[3]]++;
+                    $stats{substr($last{sequence}, $row[3], 1)}++;
+
+                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov + $clip5 - 2);
 
                     $readscount++ unless ($row[1] & 256);
                     $stats{total}++;
 
-                    # Parse the MD flag only when edit distance != 0
-                    if ($mutcount &&
-                        $row !~ m/NM:i:0/) {
-
-                        my ($end, @mutations, @uniqmutations);
-                        $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
-                        @mutations = parsemd(\@row, $last{sequence});
-                        @mutations = uniq(@mutations, @{$ins}) if (!$noins);
-                        @mutations = rmconsecutive(@mutations) if ($rmconsecutive);
-                        @mutations = collapsemutations(@mutations) if ($collapse);
-                        $stats{mutated}++ if (@mutations);
-
-                        for (@mutations) {
-
-                            $counts[$_]++;
-                            $stats{substr($last{sequence}, $_, 1)}++;
-
-                        }
-
-                        $mmio->append_read($start, $end, scalar(@mutations), \@mutations) if ($mutmap);
-
-                    }
-
-                    $lastPos[1]++;
-                    map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
-                                           ($row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2);
-
-
-                }
-                else {  # RT-stops count mode
-
-                    if ($row[3] >= 2 + $sample->{trim5} + $clip5) { # Read 5'-end is not before transcript 5'-end
-
-                        $row[3] -= $sample->{trim5} + $clip5 + 2;
-                        $counts[$row[3]]++;
-                        $stats{substr($last{sequence}, $row[3], 1)}++;
-
-                        map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov + $clip5 - 2);
-
-                        $readscount++ unless ($row[1] & 256);
-                        $stats{total}++;
-
-                    }
-
                 }
 
             }
-
-            # Writes the last entry after EOF has been reached
-            if (defined $last{id}) {
-
-                if (exists $masks{$last{id}}) {
-
-                    @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
-                    @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
-
-                }
-
-                my $rentry = RF::Data::RC->new( id         => $last{id},
-                                                sequence   => $last{sequence},
-                                                counts     => \@counts,
-                                                coverage   => \@coverage,
-                                                readscount => $readscount );
-
-                $rcio->write($rentry);
-
-                $covered++;
-                print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
-
-            }
-
-            close($wh) if ($whitelist);
-            close($fh);
-
-            $rcio->mappedreads($stats{total});
-            $rcio->close();
-            $mmio->close() if ($mutmap);
-
-            if ($mutcount && $onlyMut) {
-
-                my $totMuts = sum(map { $onlyMut{$_}->{count} } keys %onlyMut);
-
-                open(my $mh, ">", $output . "frequencies/" . $sample->{file} . ".txt");
-                select((select($mh), $|=1)[0]);
-
-                for (sort keys %onlyMut) {
-
-                    print $mh $_ . "\t" . sprintf("%.6f", $onlyMut{$_}->{count} / $totMuts) . "\n";
-                    $onlyMut{$_}->{count} = 0; # Clears it for next file
-
-                }
-
-                close($mh);
-
-            }
-
-            $stats = "\n  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " transcripts covered";
-
-            if (!$covonly) {
-
-                my $total = sum(map { $stats{$_} } qw(A C G T));
-                $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
-                $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total} * 100) . "\%) mutated alignments" if ($mutcount &&
-                                                                                                                                                                       $stats{total});
-
-            }
-
-            { lock(@qresults);
-              push(@qresults, $stats); }
 
         }
-        else {
 
-            lock(@qresults);
-            push(@qresults, "\n  [!] Error: Unable to read from sample \"" . $sample->{file} . "\" (" . $! . ")");
+        # Writes the last entry after EOF has been reached
+        if (defined $last{id}) {
 
-            next;
+            if (exists $masks{$last{id}}) {
+
+                @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+
+            }
+
+            my $rentry = RF::Data::RC->new( id         => $last{id},
+                                            sequence   => $last{sequence},
+                                            counts     => \@counts,
+                                            coverage   => \@coverage,
+                                            readscount => $readscount );
+
+            $rcio->write($rentry);
+
+            $covered++;
+            print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
         }
+
+        close($wh) if ($whitelist);
+        close($fh);
+
+        $rcio->mappedreads($stats{total});
+        $rcio->close();
+        $mmio->close() if ($mutmap);
+
+        if ($mutcount && $onlyMut) {
+
+            my $totMuts = sum(map { $onlyMut{$_}->{count} } keys %onlyMut);
+
+            open(my $mh, ">", $output . "frequencies/" . $sample->{file} . ".txt");
+            select((select($mh), $|=1)[0]);
+
+            for (sort keys %onlyMut) {
+
+                print $mh $_ . "\t" . sprintf("%.6f", $onlyMut{$_}->{count} / $totMuts) . "\n";
+                $onlyMut{$_}->{count} = 0; # Clears it for next file
+
+            }
+
+            close($mh);
+
+        }
+
+        $stats = "  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " transcripts covered";
+
+        if (!$covonly) {
+
+            my $total = sum(map { $stats{$_} } qw(A C G T));
+            $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $stats{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
+            $stats .= " - " . $stats{mutated} . "/" . $stats{total} . " (" . sprintf("%.2f", $stats{mutated} / $stats{total} * 100) . "\%) mutated alignments" if ($mutcount &&
+                                                                                                                                                                   $stats{total});
+
+        }
+
+        return($stats);
 
     }
+    else { return("  [!] Error: Unable to read from sample \"" . $sample->{file} . "\" (" . $! . ")"); }
 
 }
 
@@ -930,9 +903,9 @@ sub guess_type {
             $row = <$fh>;
             @row = split("\t", $row);
 
-            die "\n  [!] Error: Sample \"" . $file . "\" is not a valid FastQ/SAM/BAM file\n\n" if (@row < 12 ||
-                                                                                                    !isint($row[3]) ||
-                                                                                                    !isdna($row[9]));
+            die "\n  [!] Error: Sample \"" . $file . "\" is not a valid SAM/BAM file\n\n" if (@row < 12 ||
+                                                                                              !isint($row[3]) ||
+                                                                                              !isdna($row[9]));
 
         }
         close($fh);
@@ -1275,7 +1248,11 @@ sub help {
  |
  +- Mutation count mode options
     -om or --only-mut                <string>     Only the specified mutations will be counted
-                                                  Note: when specified, this parameter automatically disables insertion and deletion count
+                                                  Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
+                                                        or "A:T") will only count mutation events in which a reference A base has been sequenced as
+                                                        a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
+                                                        separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion 
+                                                        and deletion count
     -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
                                                   Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
     -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)

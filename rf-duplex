@@ -1013,7 +1013,6 @@ sub foldChimeras {
 }
 
 # Quick-and-dirty alternative to the ViennaRNA fold()
-# that has some issues with multithreading
 sub basePairsFromAln {
 
     my ($seq1, $seq2) = @_;
