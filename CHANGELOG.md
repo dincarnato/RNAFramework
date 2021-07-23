@@ -2,6 +2,7 @@
 ### Added
 - Added function "extract" to rf-rctools to extract a set of regions specified in a BED file, from an input RC file
 - Added the rf-duplex module to enable the analysis of direct RNA-RNA interaction mapping experiments (COMRADES, SPLASH, PARIS, etc.)
+- Added the "--only-mut" parameter to rf-count, to allow counting only specific mutation events
 
 ### Changed
 - Fixed rf-count to use Core::Process::Queue instead of threads, which resulted in a significant speedup of parallel BAM processing
