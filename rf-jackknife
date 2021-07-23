@@ -292,7 +292,7 @@ if (keys %files) {
         $processmanager->waitall();
 
         while (my $test = $processmanager->dequeue()) { die "\n\n  [!] Error: Folding failed for transcript \"" . $id . "\"." .
-                                                              "\n             Please check input parameters and files and try again.\n\n" if ($test->exitcode()); }
+                                                              "\n             Please check input parameters and files and try again.\n\n" if ($test->exitcode()->[0]); }
 
         print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "; PPV/Sensitivity calculation]";
 

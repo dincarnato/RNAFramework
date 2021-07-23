@@ -157,7 +157,7 @@ sub _preplotcalc {
         @ticks = keys %{$self->{labelMap}} ? map { $self->{labelMap}->{$_} } @{$self->{_ticks}} : @{$self->{_ticks}};
         $height = 0;
         $maxheight = max(map { $self->_textwidth($_, 10) } @ticks) || 0;
-        $maxheight = sqrt($maxheight ** 2 + 10 ** 2) * sin(atan2(10, $maxheight) + $self->{labelrotate} / 180 * pi);
+        $maxheight = sqrt($maxheight ** 2 + 10 ** 2) * sin(atan2(10, $maxheight) + $self->{labelrotate} / 180 * 3.14159265359);
         #$height = $self->{_height};
         $height += 20 if ($self->{name});
         $height += 5 if ($self->{plotticks});

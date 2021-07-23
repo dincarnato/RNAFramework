@@ -57,9 +57,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $maxcov, $primaryonly, $whitelist, @bam_trim5,
+    $maxcov, $primaryonly, $whitelist, $onlyMut, @bam_trim5,
     @pool, %transcripts, %spacer, %files,
-    %masks, %realid);
+    %masks, %realid, %onlyMut);
 
 my $lock : shared;
 my @qcounter : shared;
@@ -105,7 +105,8 @@ do {
                 "dc|discard-consecutive=i"   => \$rmconsecutive,
                 "mv|max-coverage=i"          => \$maxcov,
                 "pn|primary-only"            => \$primaryonly,
-                "wl|whitelist=i"             => \$whitelist ) or help(1);
+                "wl|whitelist=i"             => \$whitelist,
+                "om|only-mut=s"              => \$onlyMut ) or help(1);
 
 };
 
@@ -168,6 +169,32 @@ die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (de
                                                                                $discardshorter !~ m/^median$/i));
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
+if ($mutcount && $onlyMut) {
+
+    # Automatically disables counting indels
+    $nodel = 1;
+    $noins = 1;
+
+    %onlyMut = map { my $i = $_; map { $i . $_ => { count => 0,
+                                                    take  => 0 } } qw(A C G T) } qw(A C G T);
+
+    foreach my $mutation (split(/[,;]/, $onlyMut)) {
+
+        my @bases = split(/[:2>]/, $mutation);
+
+        die "\n  [!] Error: Invalid format for -mo parameter's argument \"" . $mutation . "\"\n\n" if (@bases != 2);
+        die "\n  [!] Error: Mutation in -mo parameter's argument \"" . $mutation . "\" contains a non-IUPAC character\n\n" if (!isiupac(join("", @bases)));
+
+        foreach my $base1 (iupac2nt($bases[0])) {
+
+            foreach my $base2 (iupac2nt($bases[1])) { $onlyMut{$base1 . $base2}->{take} = 1; }
+
+        }
+
+    }
+
+}
+
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
 elsif (!-e $samtools) { die "\n  [!] Error: samtools doesn't exist\n\n"; }
 elsif (!-x $samtools) { die "\n  [!] Error: samtools is not executable\n\n"; }
@@ -175,7 +202,7 @@ else {
 
     my $ret = `$samtools 2>&1`;
 
-    if ($ret =~ m/Version: (.+)$/m) {
+    if ($ret =~ m/Version: ([\d\.]+)/) {
 
         my $version = $1;
 
@@ -211,6 +238,8 @@ die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(
 
 mkpath($output . "whitelists/", { mode  => 0755,
                                   error => \$error }) if ($whitelist);
+mkpath($output . "frequencies/", { mode  => 0755,
+                                   error => \$error }) if ($onlyMut);
 
 if (!-e $tmpdir) {
 
@@ -825,6 +854,24 @@ sub count {
             $rcio->close();
             $mmio->close() if ($mutmap);
 
+            if ($mutcount && $onlyMut) {
+
+                my $totMuts = sum(map { $onlyMut{$_}->{count} } keys %onlyMut);
+
+                open(my $mh, ">", $output . "frequencies/" . $sample->{file} . ".txt");
+                select((select($mh), $|=1)[0]);
+
+                for (sort keys %onlyMut) {
+
+                    print $mh $_ . "\t" . sprintf("%.6f", $onlyMut{$_}->{count} / $totMuts) . "\n";
+                    $onlyMut{$_}->{count} = 0; # Clears it for next file
+
+                }
+
+                close($mh);
+
+            }
+
             $stats = "\n  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " transcripts covered";
 
             if (!$covonly) {
@@ -990,16 +1037,24 @@ sub parsemd { # SAM MD flag parser
             }
             elsif ($next =~ m/^([ACGNT])$/) {
 
-                # Include the mutation if both the mutated base and the bases immediately surroundinding
-                # have a quality score >= minqual, and the mutated base is not a N in the reference
-                push(@pos, $len + $llen) if ($quals{$llen + $len} >= $minqual &&
-                                             (($evalsurround &&
-                                               ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
-                                               ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
-                                              !$evalsurround) &&
-                                             $next ne "N");
-                $md =~ s/^$next//;
+                my $readBase = substr($row->[9], $len, 1);
 
+                if ($next ne "N" && $readBase ne "N") {
+
+                    # Include the mutation if both the mutated base and the bases immediately surroundinding
+                    # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
+                    push(@pos, $len + $llen) if ($quals{$llen + $len} >= $minqual &&
+                                                 (($evalsurround &&
+                                                   ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
+                                                   ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
+                                                  !$evalsurround) &&
+                                                  (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut));
+
+                    $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
+
+                }
+
+                $md =~ s/^$next//;
                 $len++;
 
             }
@@ -1219,6 +1274,8 @@ sub help {
 
  |
  +- Mutation count mode options
+    -om or --only-mut                <string>     Only the specified mutations will be counted
+                                                  Note: when specified, this parameter automatically disables insertion and deletion count
     -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
                                                   Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
     -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)

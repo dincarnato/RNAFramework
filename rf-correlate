@@ -190,12 +190,17 @@ else {
 
     }
 
-    print "\n[+] Top 10 correlated transcripts:\n\n";
+    if (keys %correlations) {
 
-    $table = Term::Table->new(indent => 2);
-    $table->head("Transcript", "Correlation", "p-value");
-    $table->row($_, sprintf("%.3f", $correlations{$_}->[0]), sprintf("%.2e", $correlations{$_}->[1])) for ((sort {$correlations{$b}->[0] <=> $correlations{$a}->[0] } keys %correlations)[0 .. min(scalar(keys(%correlations)) - 1, 9)]);
-    $table->print();
+        print "\n[+] Top 10 correlated transcripts:\n\n";
+
+        $table = Term::Table->new(indent => 2);
+        $table->head("Transcript", "Correlation", "p-value");
+        $table->row($_, sprintf("%.3f", $correlations{$_}->[0]), sprintf("%.2e", $correlations{$_}->[1])) for ((sort {$correlations{$b}->[0] <=> $correlations{$a}->[0] } keys %correlations)[0 .. min(scalar(keys(%correlations)) - 1, 9)]);
+        $table->print();
+
+    }
+    else { print "\n\n  [!] Error: correlation calculation failed for all transcripts"; }
 
 }
 

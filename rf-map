@@ -229,7 +229,7 @@ else {
 
     my $ret = `$samtools 2>&1`;
 
-    if ($ret =~ m/Version: (.+)$/m) {
+    if ($ret =~ m/Version: ([\d\.]+)/) {
 
         my $version = $1;
 
@@ -442,7 +442,7 @@ if (!$clipped) {
     $processmanager->waitall();
 
     while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform adapter clipping on sample \"" . $sample->id() . "\"." .
-                                                          "\n             Please check input file's format/quality and try again.\n\n" if ($sample->exitcode()); }
+                                                          "\n             Please check input file's format/quality and try again.\n\n" if ($sample->exitcode()->[0]); }
 
     print "\n";
 
@@ -546,7 +546,7 @@ foreach my $sample (@tmp) {
 $processmanager->start();
 $processmanager->waitall();
 
-while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: An error has occurred while mapping sample \"" . $sample->id() . "\" reads to transcriptome\n\n" if ($sample->exitcode()); }
+while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: An error has occurred while mapping sample \"" . $sample->id() . "\" reads to transcriptome\n\n" if ($sample->exitcode()->[0]); }
 
 print "\n\n[+] Mapping statistics:\n";
 
@@ -603,7 +603,7 @@ foreach my $sample (@tmp) {
 $processmanager->start();
 $processmanager->waitall();
 
-while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()); }
+while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
 
 cleanup();
 

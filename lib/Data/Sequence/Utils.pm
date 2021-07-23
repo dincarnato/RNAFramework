@@ -27,7 +27,8 @@ our @EXPORT = qw(isdna isrna isna isaa
                  dnacomp rnacomp revcomp dnarevcomp
                  rnarevcomp dna2rna rna2dna translate
                  aa1to3 nt2iupac iupac2nt iupac2regex
-                 nshuffle dishuffle longestorf gencode);
+                 nshuffle dishuffle longestorf gencode
+                 hamming);
 
 sub isdna { return(is($_[0], $_[1] . "ACGNT")); }
 
@@ -570,5 +571,7 @@ sub longestorf {
    return(wantarray() ? ($orf, $index) : $orf);
 
 }
+
+sub hamming { return ($_[0] ^ $_[1]) =~ tr/\001-\255//; }
 
 1;

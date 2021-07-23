@@ -58,8 +58,8 @@ sub pearson {
     Core::Utils::throw("Values ARRAY references are empty") if (@{$data[0]} <= 1);
 
     $size = scalar(@{$data[0]});
-    $avgx = average(@{$data[0]});
-    $avgy = average(@{$data[1]});
+    $avgx = mean(@{$data[0]});
+    $avgy = mean(@{$data[1]});
     $stdevx = stdev(@{$data[0]});
     $stdevy = stdev(@{$data[1]});
 
@@ -68,7 +68,7 @@ sub pearson {
 
 		Core::Utils::warn("Standard deviation is 0");
 
-		return(nan, 1);
+		return("NaN", 1);
 
     }
 
@@ -108,7 +108,7 @@ sub spearman {
 
         Core::Utils::warn("Standard deviation is 0");
 
-        return(nan, 1);
+        return("NaN", 1);
 
     }
 
@@ -184,7 +184,7 @@ sub phyper {   # phyper returns the probability of having $i OR MORE successes
 
         Core::Utils::warn("phyper() function returned a NaN");
 
-        return(nan);
+        return("NaN");
 
     }
 
@@ -250,7 +250,7 @@ sub chisq {
 
         Core::Utils::warn("chisq() function returned a NaN");
 
-        return(nan, nan);
+        return("NaN", "NaN");
 
     }
 
@@ -289,7 +289,7 @@ sub fisher {
 
             Core::Utils::warn("fisher() function returned a NaN");
 
-            return(nan);
+            return("NaN");
 
         }
 
@@ -320,7 +320,7 @@ sub _fisher {
 
         Core::Utils::warn("_fisher() function returned a NaN");
 
-        return(nan);
+        return("NaN");
 
     }
 
@@ -384,7 +384,7 @@ sub gammln {
                      -0.21026444172410488319e-3, 0.21743961811521264320e-3, -.16431810653676389022e-3,
                      0.84418223983852743293e-4, -0.26190838401581408670e-4, 0.36899182659531622704e-5);
 
-    if ($x < 0.5) { return(log(pi / (sin(pi * $x)) - gammln(1 - $x))); }
+    if ($x < 0.5) { return(log(Core::Mathematics::pi / (sin(Core::Mathematics::pi * $x)) - gammln(1 - $x))); }
     else {
 
         my $tmp = $coefficients[0];
@@ -714,12 +714,12 @@ sub qnorm {
 
         Core::Utils::warn("qnorm() function returned a NaN");
 
-        return(nan);
+        return("NaN");
 
     }
 
-    return(inf) if ($p == 1);
-    return(ninf) if ($p == 0);
+    return(Core::Mathematics::inf) if ($p == 1);
+    return(Core::Mathematics::ninf) if ($p == 0);
 
     my ($split, $q, $r, $ppnd,
         @a, @b, @c, @d);

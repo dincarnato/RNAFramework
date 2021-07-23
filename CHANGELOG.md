@@ -1,3 +1,15 @@
+## [2.7.2] - 2021-07-22
+### Added
+- Added function "extract" to rf-rctools to extract a set of regions specified in a BED file, from an input RC file
+- Added the rf-duplex module to enable the analysis of direct RNA-RNA interaction mapping experiments (COMRADES, SPLASH, PARIS, etc.)
+
+### Changed
+- Fixed rf-count to use Core::Process::Queue instead of threads, which resulted in a significant speedup of parallel BAM processing
+
+### API Changes
+- The Core::Process and Core::Process::Queue modules now use Storable instead of pipes for IPC, to allow children to return even complex data structures
+- Added several new methods to Data::IO for enabling control over the filehandle (seek, tell, eof, goToEof), as well as the forceReopenFh method to allow a Data::IO object that has been cloned in a thread (or child process) to be fully independent
+
 ## [2.7.1] - 2021-04-03
 ### Added
 - Added parameter "-mcp" (or "--meta-coding-plot") to rf-peakcall to generate protein-coding-only meta-gene plots, by aligning the TSS, start codon, stop codon, and TES

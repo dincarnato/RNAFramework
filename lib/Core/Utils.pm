@@ -23,6 +23,7 @@ use File::Find qw(finddepth);
 use File::Spec;
 use HTTP::Tiny;
 use Scalar::Util qw(reftype);
+use threads::shared;
 
 use base qw(Exporter);
 
@@ -32,7 +33,8 @@ our ($VERSION, @EXPORT);
              unquotemeta striptags questionyn uniq
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
-             mktree ncores);
+             mktree ncores blessed unbless shareDataStruct
+	         formatTime);
 
 BEGIN {
 
@@ -157,15 +159,6 @@ sub checkparameters {
     }
 
     return($default);
-
-}
-
-sub blessed {
-
-    my $reference = shift;
-
-    return(1) if (ref($reference) &&
-                  eval { $reference->can("can") });
 
 }
 
@@ -313,12 +306,12 @@ sub randmixed { return(_randstring("m", $_[0])); }
 
 sub which {
 
-    my $file = shift || return();
+    my $file = shift || return(undef);
 
     for (map { File::Spec->catfile($_, $file) } File::Spec->path()) { return($_) if (-x $_ &&
                                                                                      !-d $_); }
 
-    return();
+    return(undef);
 
 }
 
@@ -421,6 +414,98 @@ sub ncores {
     elsif ($^O eq "linux") { chomp($ncores = `grep -c -P '^processor\\s+:' /proc/cpuinfo`); }
 
     return($ncores);
+
+}
+
+sub blessed {
+
+    my $reference = shift;
+
+    return() unless(ref($reference));
+
+    my $eval = do { local $@;
+                    eval { $reference->can("can"); };
+                    $@; };
+
+    return(1) if (!$eval);
+
+}
+
+sub unbless {
+
+    my $reference = shift;
+
+    if (!blessed($reference)) { Core::Utils::warn("Unblessed reference"); }
+    else { return({%{$reference}}); }
+
+}
+
+sub shareDataStruct {
+
+    my $var = shift;
+
+    my ($shared, $class);
+
+    if (blessed($var)) {
+
+        $class = ref($var);
+        $var = unbless($var);
+
+    }
+
+    if (ref($var) eq "ARRAY") {
+
+        $shared = shared_clone([]);
+
+        for (@{$var}) { push(@{$shared}, ref($_) ? shareDataStruct($_) : $_); }
+
+    }
+    elsif (ref($var) eq "HASH") {
+
+        $shared = shared_clone({});
+
+        for (keys %{$var}) { $shared->{$_} = ref($var->{$_}) ? shareDataStruct($var->{$_}) : $var->{$_}; }
+
+    }
+    else { $shared = $var; }
+
+    bless($shared, $class) if (defined $class);
+
+    return($shared);
+
+}
+
+sub formatTime {
+
+    my $time = shift;
+    my $extended = shift if (@_);
+
+    my ($i, @conv, @form);
+    @conv = ( [ "second", 1                ],
+              [ "minute", 60               ],
+              [ "hour",   60*60            ],
+              [ "day",    60*60*24         ],
+              [ "week",   60*60*24*7       ],
+              [ "month",  60*60*24*30.5    ],
+              [ "year",   60*60*24*30.5*12 ] );
+    $i = $#conv;
+
+    while ($i >= 0 && $time) {
+
+        if ($time / $conv[$i]->[1] >= 1) {
+
+            push(@form, sprintf("%d", $time / $conv[$i]->[1]));
+            $form[-1] .= $extended ? " " . $conv[$i]->[0] : substr($conv[$i]->[0], 0, 1);
+            $form[-1] .= "s" if ($extended && sprintf("%d", $time / $conv[$i]->[1]) > 1);
+
+        }
+
+        $time %= $conv[$i]->[1];
+        $i--;
+
+    }
+
+    return(join($extended ? ", " : " ", @form) || "0" . ($extended ? " seconds" : "s"));
 
 }
 

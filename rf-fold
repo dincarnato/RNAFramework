@@ -1151,7 +1151,7 @@ sub pkdetect {
 
             foreach my $subopt (@subopt) {
 
-                foreach my $helix (@{(listhelices($subopt->[0], 1))[0]}) { # Listed helices are split -> listhelices($db, 1)
+                foreach my $helix (@{(listhelices($subopt->[0], $nlp ? 0 : 1))[0]}) { 
 
                     my ($pairedinmfe, $h5, $h3, $tmpsubopt,
                         $tmpenergy, @tmpsubopt, @pkbases);

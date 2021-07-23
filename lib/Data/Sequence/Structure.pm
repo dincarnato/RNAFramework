@@ -1,19 +1,3 @@
-#!/usr/bin/perl
-
-##
-# Chimaera Framework
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 package Data::Sequence::Structure;
 
 use strict;
@@ -33,17 +17,20 @@ sub new {
     $parameters{type} = "RNA";
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ structure    => undef,
-                   energy       => 0,
-                   basepairs    => [],
-                   _ncpairs     => [],
-                   _pkpairs     => [],
-                   _lonelypairs => [],
-                   _helices     => [],
-                   _pkhelices   => [],
-                   pseudoknots  => 0,
-                   noncanonical => 0,
-                   lonelypairs  => 0 }, \%parameters);
+    $self->_init({ structure       => undef,
+                   mea             => undef,
+                   energy          => 0,
+                   pseudoknots     => 0,
+                   noncanonical    => 0,
+                   lonelypairs     => 0,
+                   sci             => undef,
+                   bpprobabilities => {},
+                   basepairs       => [],
+                   _ncpairs        => [],
+                   _pkpairs        => [],
+                   _lonelypairs    => [],
+                   _helices        => [],
+                   _pkhelices      => [] }, \%parameters);
 
     $self->_validate();
     $self->_fixproperties();
@@ -58,16 +45,20 @@ sub _validate {
 
     $self->SUPER::_validate();
 
-    $self->throw("Energy value must be a real <= 0") if (!isreal($self->{energy}) ||
-                                                         $self->{energy} > 0);
+    $self->throw("Energy value must be REAL") if (!isreal($self->{energy}));
     $self->throw("Pseudoknots parameter must be BOOL") if (!isbool($self->{pseudoknots}));
     $self->throw("Non canonical parameter must be BOOL") if (!isbool($self->{noncanonical}));
     $self->throw("Lonely pairs parameter must be BOOL") if (!isbool($self->{lonelypairs}));
     $self->throw("Sequence and structure have different lengths") if (defined $self->{sequence} &&
                                                                       defined $self->{structure} &&
                                                                       length($self->{sequence}) != length($self->{structure}));
+    $self->throw("Sequence and MEA structure have different lengths") if (defined $self->{sequence} &&
+                                                                          defined $self->{mea} &&
+                                                                          length($self->{sequence}) != length($self->{mea}));
     $self->throw("Invalid dot-bracket structure") if (defined $self->{structure} &&
                                                       !isdotbracket($self->{structure}));
+    $self->throw("Invalid dot-bracket MEA structure") if (defined $self->{mea} &&
+                                                          !isdotbracket($self->{mea}));
     $self->throw("Base pairs must be a bidimensional ARRAY reference") if (ref($self->{basepairs}) ne "ARRAY");
 
     my $length = length($self->{sequence});
@@ -109,9 +100,9 @@ sub _fixproperties {
     my $self = shift;
 
     $self->{sequence} = dna2rna($self->{sequence}) if (isna($self->{sequence}));
+    $self->{type} = "RNA";
 
     $self->SUPER::_fixproperties();
-    $self->{type} = "RNA";
 
     if (@{$self->{basepairs}} ||
         defined $self->{structure}) {
@@ -244,11 +235,49 @@ sub structure {
 
 }
 
+sub mea {
+
+    my $self = shift;
+
+    return($self->{mea});
+
+}
+
 sub basepairs {
 
     my $self = shift;
 
     return(wantarray() ? @{$self->{basepairs}} : $self->{basepairs});
+
+}
+
+sub bpprobability {
+
+    my $self = shift;
+    my ($base1, $base2) = sort {$a <=> $b} @_ if (@_);
+
+    if (defined $base1) {
+
+        $self->throw("Start base must be numeric") if (!isnumeric($base1));
+
+        if (defined $base2) {
+
+            $self->throw("End base must be numeric") if (!isnumeric($base2));
+
+            if (exists $self->{bpprobabilities}->{$base1}->{$base2}) { return($self->{bpprobabilities}->{$base1}->{$base2}); }
+            else { $self->warn("Base-pair " . $base1 . "-" . $base2 . " does not exist"); }
+
+        }
+        else {
+
+            my @probs = map { [$_, $self->{bpprobabilities}->{$base1}->{$_}] } keys %{$self->{bpprobabilities}->{$base1}};
+
+            return(wantarray() ? @probs : \@probs);
+
+        }
+
+    }
+    else { return(wantarray() ? %{$self->{bpprobabilities}} : $self->{bpprobabilities}); }
 
 }
 
@@ -265,16 +294,27 @@ sub energy {
     my $self = shift;
     my $energy = shift if (@_);
 
-    $self->{energy} = $energy if (isreal($energy) &&
-                                  $energy <= 0);
+    $self->{energy} = $energy if (isreal($energy));
 
     return($self->{energy});
+
+}
+
+sub sci {
+
+    my $self = shift;
+    my $sci = shift if (@_);
+
+    $self->{sci} = $sci if (isreal($sci));
+
+    return($self->{sci});
 
 }
 
 sub helices {
 
     my $self = shift;
+    my $split = shift if (@_);
 
     if (!@{$self->{_helices}}) {
 

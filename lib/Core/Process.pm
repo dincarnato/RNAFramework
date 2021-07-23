@@ -2,7 +2,7 @@ package Core::Process;
 
 use strict;
 use Core::Utils;
-use Socket;
+use Storable qw(store retrieve);
 use POSIX;
 
 use base qw(Core::Base);
@@ -13,15 +13,15 @@ sub new {
     my %parameters = @_ if (@_);
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ #detached  => 0,
-                   id        => randalphanum(0xf), # Random generated alphanumeric ID if not specified
-                   stdout    => undef,
-                   stderr    => undef,
-                   onstart   => sub {},
-                   onexit    => sub {},
-                   _pid      => undef,
-                   _child    => undef,
-                   _exitcode => undef }, \%parameters);
+    $self->_init({ tmpDir       => "/tmp",
+                   id           => randalphanum(0xf), # Random generated alphanumeric ID if not specified
+                   stdout       => undef,
+                   stderr       => undef,
+                   onstart      => sub {},
+                   onexit       => sub {},
+                   _pid         => undef,
+                   _exitcode    => undef,
+                   _tmpDataFile => undef }, \%parameters);
 
     $self->_validate();
 
@@ -36,6 +36,19 @@ sub _validate {
     #$self->throw("Detached parameter value must be BOOL") if ($self->{detached} !~ m/^[01]$/);
     $self->throw("On start parameter value must be a CODE reference") if (ref($self->{onstart}) ne "CODE");
     $self->throw("On exit parameter value must be a CODE reference") if (ref($self->{onexit}) ne "CODE");
+    $self->throw("Provided temporary directory does not exist") if (!-d $self->{tmpDir});
+
+    $self->{tmpDir} =~ s/\/?$/\//;
+    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{id} . ".tmp";
+
+    my $i = 0;
+
+    while(-e $self->{_tmpDataFile}) { # To avoid clashes with other processes
+
+        $self->{_tmpDataFile} = $self->{tmpDir} . $self->{id} . "_" . $i . ".tmp";
+        $i++;
+
+    }
 
 }
 
@@ -46,13 +59,6 @@ sub start {
     my @parameters = @_ if (@_);
 
     if (defined $command) {
-
-        my ($fchild, $tparent);
-
-        pipe($fchild,  $tparent) or $self->throw("Unable to create pipe from child to child parent (" . $! . ")");
-        select((select($tparent), $| = 1)[0]);
-
-        #$SIG{CHLD} = sub { while (waitpid(-1, WNOHANG) == 0) {} };
 
         $self->{_pid} = fork();
 
@@ -65,8 +71,6 @@ sub start {
             $|++;
 
             my ($exitcode);
-
-            close($fchild);
 
             $self->{onstart}->($self->{id}, $$) if (defined $self->{onstart});
 
@@ -86,21 +90,18 @@ sub start {
 
             }
 
-            if (ref($command) eq "CODE") { $exitcode = $command->(@parameters); }
-            else { $exitcode = system($command, @parameters); }
+            local $Storable::Deparse = 1;
 
-            print $tparent $exitcode;
-            close($tparent);
+            if (ref($command) eq "CODE") { $exitcode = [$command->(@parameters)]; }
+            else { $exitcode = [ system($command, @parameters) ]; }
+
+            store($exitcode, $self->{_tmpDataFile});
 
             $self->{onexit}->($self->{id}, $$, $exitcode) if (defined $self->{onexit});
 
             exit(0);
 
         }
-
-        close($tparent);
-
-        $self->{_child} = $fchild;
 
     }
 
@@ -118,29 +119,22 @@ sub id { return($_[0]->{id}); }
 
 sub pid { return($_[0]->{_pid}); }
 
-sub _closepair {
+sub _retrieveReturnData {
 
     my $self = shift;
 
-    my ($child, $exitcode);
-    $child = $self->{_child};
+    if (-e $self->{_tmpDataFile}) {
 
-    if (fileno($child)) {
+        local $Storable::Eval = 1;
+        $self->{_exitcode} = retrieve($self->{_tmpDataFile});
 
-        while(my $read = <$child>) {
-
-            chomp($read);
-            $self->{_exitcode} .= $read;
-
-        }
-
-        close($child);
+        unlink($self->{_tmpDataFile});
 
     }
 
 }
 
-sub exitcode { return($_[0]->{_exitcode}); }
+sub exitcode { return(wantarray() ? @{$_[0]->{_exitcode}} : $_[0]->{_exitcode}); }
 
 sub wait {
 
@@ -152,7 +146,7 @@ sub wait {
 
     waitpid($self->{_pid}, 0);
 
-    $self->_closepair();
+    $self->_retrieveReturnData();
 
 }
 
@@ -192,14 +186,6 @@ sub kill {
     my $signal = shift || 9;
 
     CORE::kill($signal, $self->{_pid}) if (defined $self->{_pid});
-
-}
-
-sub DESTROY {
-
-    local $SIG{__DIE__};
-
-    close($_[0]->{_child});
 
 }
 

@@ -1,0 +1,1411 @@
+#!/usr/bin/perl
+
+use strict;
+use File::Basename;
+use File::Path qw(mkpath);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use List::Util qw(shuffle);
+use POSIX qw(ceil SEEK_END SEEK_SET);
+use threads;
+use threads::shared;
+
+use lib $Bin . "/lib";
+
+use Align::SmithWaterman;
+use Cluster::Kmeans;
+use Core::Mathematics qw(:all);
+use Core::Utils;
+use Data::IO;
+use Data::IO::Sequence;
+use Data::Sequence::Utils;
+use Graphics::Container;
+use Graphics::Object::Path;
+use Graphics::Object::RNAarcs;
+use Graphics::Object::Ruler;
+use RNA::Utils;
+use Term::Constants qw(:screen);
+use Term::Table;
+
+$|++;
+
+my ($output, $overwrite, $minOverlapFrac, $minGap,
+    $minReads, $minProb, $noUseVienna, $makeImage,
+    $makeClustersSam, $reference, $minPairedFrac, $makeConstraint,
+    $minHalfLen, $minSampleSize, $maxReads, $requireBpSupport,
+    $refIO, $help, $samtools, $table,
+    $threads, $tmpDir, $logDir, $error,
+    $whitelist, $suffix, $singleTranscript, $constraintThresh,
+    $colorScale, $minChimeraFrac, $maxIter, @colorScale,
+    @input, %samples, %transcripts);
+
+my @transcripts : shared;
+my %sharedData : shared;
+my %stats : shared;
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                    => \$help,
+                "o|output=s"                => \$output,
+                "ow|overwrite"              => \$overwrite,
+                "p|processors=i"            => \$threads,
+                "c|constraint"              => \$makeConstraint,
+                "ct|constraint-threshold=s" => \$constraintThresh,
+                "g|img"                     => \$makeImage,
+                "cb|make-clusters-bam"      => \$makeClustersSam,
+                "mh|min-half=i"             => \$minHalfLen,
+                "mpf|min-paired-frac=s"     => \$minPairedFrac,
+                "mo|min-overlap-frac=s"     => \$minOverlapFrac,
+                "mg|min-gap=i"              => \$minGap,
+                "mr|min-reads=i"            => \$minReads,
+                "xr|max-reads=i"            => \$maxReads,
+                "mp|min-prob=s"             => \$minProb,
+                "mss|min-sample-size=i"     => \$minSampleSize,
+                "f|fasta=s"                 => \$reference,
+                "p|processors=i"            => \$threads,
+                "wl|whitelist=s"            => \$whitelist,
+                "nv|no-use-vienna"          => \$noUseVienna,
+                "st|single-transcript"      => \$singleTranscript,
+                "cs|color-scale=s"          => \$colorScale,
+                "rmc|require-min-chimera"   => \$requireBpSupport,
+                "mcf|min-chimera-frac=s"    => \$minChimeraFrac,
+                "mi|max-iterations=i"       => \$maxIter ) or help(1);
+
+    @input = @ARGV;
+
+};
+
+help() if ($help);
+
+$suffix = 0;
+$threads ||= 1;
+$maxIter ||= 5;
+$minHalfLen ||= 20;
+$minGap ||= 1;
+$minReads ||= 2;
+$maxReads ||= 100000;
+$minProb //= 0.01;
+$minOverlapFrac ||= 0.01;
+$minSampleSize ||= 1000;
+$minPairedFrac //= 0.25;
+$constraintThresh ||= 0.5;
+$minChimeraFrac ||= 0.5;
+$samtools ||= which("samtools");
+$output ||= "rf_duplex/";
+@colorScale = $colorScale ? uniq(sort {$a <=> $b} split(/[:,;]/, $colorScale)) : (0.05, 0.1, 0.4, 0.7);
+$output =~ s/\/?$/\//;
+$tmpDir = $output . "tmp/";
+$logDir = $output . "logs/";
+
+if (!$noUseVienna) {
+
+    die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
+        "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless (eval { require RNA; 1; });
+
+    $RNA::fold_constrained = 1;
+    $RNA::noLonelyPairs = 1;
+
+}
+
+die "\n  [!] Error: No input file provided\n\n" if (!@input);
+die "\n  [!] Error: No FASTA reference provided\n\n" if (!defined $reference);
+die "\n  [!] Error: Provided FASTA reference does not exist\n\n" if (!-e $reference);
+die "\n  [!] Error: Provided whitelist does not exist\n\n" if (defined $whitelist && !-e $whitelist);
+die "\n  [!] Error: Minimum overlap must be comprised between 0 and 1\n\n" if (!inrange($minOverlapFrac, [0, 1]));
+die "\n  [!] Error: Minimum base-pair probability must be comprised between 0 and 1\n\n" if (!inrange($minProb, [0, 1]));
+die "\n  [!] Error: Minimum base-paired fraction must be comprised between 0 and 1\n\n" if (!inrange($minPairedFrac, [0, 1]));
+die "\n  [!] Error: Minimum chimera support must be comprised between 0.5 and 1\n\n" if ($requireBpSupport && !inrange($minChimeraFrac, [0.5, 1]));
+die "\n  [!] Error: Constraint threshold must be comprised between 0.5 and 1\n\n" if ($makeConstraint && !inrange($constraintThresh, [0.5, 1]));
+die "\n  [!] Error: Color scale must contain exactly 4 cut-points\n\n" if (@colorScale != 4);
+
+for (@colorScale) { die "\n  [!] Error: Color scale's cut-point values must be comprised between 0 and 1\n\n" if (!isnumeric($_) || !inrange($_, [0, 1])); }
+
+if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
+elsif (!-e $samtools) { die "\n  [!] Error: samtools doesn't exist\n\n"; }
+elsif (!-x $samtools) { die "\n  [!] Error: samtools is not executable\n\n"; }
+else {
+
+    my $ret = `$samtools 2>&1`;
+
+    if ($ret =~ m/Version: ([\d\.]+)/) {
+
+        my $version = $1;
+
+        die "\n  [!] Error: Samtools v1 or greater is required (Detected: v" . $version . ")\n\n" if (substr($version, 0, 1) < 1);
+
+    }
+    else { warn "\n  [!] Warning: Unable to detect Samtools version\n"; }
+
+}
+
+print "\n[+] Checking input file type and sorting...\n\n";
+
+$table = Term::Table->new(indent => 2);
+$table->head("Sample", "File", "Type", "Sorted");
+
+foreach my $sample (@input) {
+
+    my ($basename, @sample, @files);
+    @sample = split(":", $sample);
+    @files = sort split(",", @sample == 1 ? $sample : $sample[1]);
+    $basename = @sample == 1 ? (fileparse($files[0], qr/((\.[^.\s]+)+)$/))[0] : $sample[0];
+
+    if (exists $samples{$basename}) {
+
+        $suffix++;
+        $basename .= "_" . $suffix;
+
+    }
+
+    foreach my $file (@files) {
+
+        die "  [!] Error: File \"" . $file . "\" does not exist\n\n" if (!-e $file);
+
+        my ($fileType, $sorted) = fileTypeAndSorting($file);
+
+        die "  [!] Error: Too many input files for sample \"" . $sample . "\"." .
+            "\n             Each sample must consist at most of a SAM/BAM file and a chimeric junction file\n\n" if (exists $samples{$fileType});
+
+        $samples{$basename}->{$fileType} = { file   => $file,
+                                             sorted => $sorted };
+        $table->row($basename, $file, $fileType, $sorted ? "Yes" : "No");
+
+    }
+
+}
+
+$table->print();
+
+print "\n\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+mkpath($tmpDir, { mode  => 0755,
+                  error => \$error });
+mkpath($logDir, { mode  => 0755,
+                  error => \$error });
+
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+print "\n[+] Importing transcripts from FASTA reference... ";
+
+$refIO = Data::IO::Sequence->new(file => $reference);
+while(my $entry = $refIO->read()) { $transcripts{$entry->id()} = $entry->length(); }
+
+if ($whitelist) {
+
+    my ($total, @whitelist);
+    $total = scalar(keys %transcripts);
+
+    open(my $wh, "<", $whitelist) or die "\n\n  [!] Error: Unable to open whitelist file (" . $! . ")\n\n";
+    while(<$wh>) {
+
+        chomp();
+        push(@whitelist, $_);
+
+    }
+    close($wh);
+
+    die "\n\n  [!] Error: Whitelist file is empty\n\n" if (!@whitelist);
+
+    %transcripts = map { $_ => $transcripts{$_} } grep { exists $transcripts{$_} } @whitelist;
+
+    die "\n\n  [!] Error: None of the whitelisted transcript IDs found in reference\n\n" if (!keys %transcripts);
+
+    print $total . " imported, " . scalar(keys %transcripts) . " in whitelist.";
+
+}
+else { print scalar(keys %transcripts) . " imported."; }
+
+@transcripts = map { $_ } sort keys %transcripts;
+
+foreach my $sample (sort keys %samples) {
+
+    my ($chimericFile, $bamFile, @pool, %chimericIndex);
+    $bamFile = $samples{$sample}->{BAM}->{file} || $samples{$sample}->{SAM}->{file} if (exists $samples{$sample}->{SAM} ||
+                                                                                        exists $samples{$sample}->{BAM});
+    $chimericFile = $samples{$sample}->{chimeric}->{file};
+    %stats = ( totTranscripts => 0,
+               totChimeras    => 0 );
+
+    print "\n[+] Processing sample \"" . $sample . "\"\n";
+
+    mkpath($output . $sample . "/dotplot/", { mode  => 0755,
+                                              error => \$error });
+    mkpath($output . $sample . "/clustered/", { mode  => 0755,
+                                                error => \$error }) if ($makeClustersSam);
+    mkpath($output . $sample . "/images/", { mode  => 0755,
+                                             error => \$error }) if ($makeImage);
+    mkpath($output . $sample . "/constraints/", { mode  => 0755,
+                                                 error => \$error }) if ($makeConstraint);
+
+    die "\n\n  [!] Error: Unable to create output directory for sample \"" . $sample . "\" (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+    if (exists $samples{$sample}->{SAM} ||
+        (exists $samples{$sample}->{BAM} && !$samples{$sample}->{BAM}->{sorted})) {
+
+        print "\n  [*] " . (exists $samples{$sample}->{SAM} ? "Converting SAM file to BAM format, and sorting..." :
+                                                              "Sorting BAM file...");
+
+        my ($sortedFile, $logFile);
+        $sortedFile = $tmpDir . $sample . "_sorted.bam";
+        $logFile = $logDir . $sample . "_BAMsort.log";
+
+        system($samtools . " sort --threads " . $threads . " -O BAM -T \"" . $tmpDir . $sample . "_tmp\" -o \"" . $sortedFile . "\" \"" . $bamFile . "\" >> \"". $logFile . "\" 2>\&1");
+
+        if ($? == -1 || $? & 127) {
+
+            print "\n  [!] Error: Sort failed, please check the logs. Skipping sample...\n";
+
+            next;
+
+        }
+
+        $bamFile = $sortedFile;
+
+    }
+
+    if (defined $bamFile && !-e $bamFile . ".bai") {
+
+        print "\n  [*] Indexing BAM file...";
+        system($samtools . " index -@ " . $threads . " \"" . $bamFile . "\"");
+
+    }
+
+    if (defined $chimericFile) {
+
+        if (!$samples{$sample}->{chimeric}->{sorted}) {
+
+            print "\n  [*] Sorting chimeric junction file...";
+
+            my ($sortedFile, $logFile);
+            $sortedFile = $tmpDir . $sample . "_sorted.out";
+            $logFile = $logDir . $sample . "_Chimericsort.log";
+            system("LC_ALL=C sort -k 1,1 --parallel=" . $threads . " \"" . $samples{$sample}->{chimeric}->{file} . "\" 2>\"". $logFile . "\" > \"" . $sortedFile . "\"");
+
+            if ($? == -1 || $? & 127) {
+
+                print "\n  [!] Error: Sort failed, please check the logs. Skipping sample...\n";
+
+                next;
+
+            }
+
+            $chimericFile = $sortedFile;
+
+        }
+
+        print "\n  [*] Indexing chimeric junction file...\n";
+
+        if (open(my $ch, "<" , $chimericFile)) {
+
+            my ($lastId, $lastOffset);
+            $lastOffset = tell($ch);
+
+            while(<$ch>) {
+
+                my @row = split("\t", $_);
+
+                if ($row[0] ne $lastId) {
+
+                    $chimericIndex{$row[0]} = $lastOffset if (exists $transcripts{$row[0]});
+                    $lastId = $row[0];
+
+                }
+
+                $lastOffset = tell($ch);
+
+            }
+
+            close($ch);
+
+        }
+        else {
+
+            print "  [!] Error: Failed to open chimeric junction file (" . $! . "). Skipping sample...\n";
+
+            next;
+
+        }
+
+    }
+
+    @pool = map { threads->create(\&processTranscript, $sample, $bamFile, $chimericFile, \%chimericIndex) } 1 .. ($singleTranscript ? 1 : $threads);
+    $_->join() for(@pool);
+
+    print CLRRET . "  [*] Processing completed [" . $stats{totTranscripts} . " transcripts, " . $stats{totChimeras} . " unique chimeras analyzed]\n";
+
+}
+
+print "\n[+] Cleaning up temporary data...";
+
+for ($logDir, $tmpDir) {
+
+    unlink(glob($_ . "*"));
+    rmtree($_);
+
+}
+
+print "\n[+] All done.\n\n";
+
+sub processTranscript {
+
+    my $sample = shift;
+    my $bamFile = shift;
+    my $chimericFile = shift;
+    my %chimericIndex = %{$_[0]};
+
+    while (1) {
+
+        my ($id);
+
+        { lock(@transcripts);
+          $id = shift(@transcripts) if (@transcripts);
+
+          if (defined $id && !-e $output . $sample . "/dotplot/" . uc(substr($id, 0, 1))) {
+
+              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 });
+              mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
+              mkpath($output . $sample . "/images/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
+              mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
+
+          } }
+
+        last unless(defined $id);
+
+        my ($refinedCentroids, $refinedBasePairs, @ranges, @basePairs,
+            @centroids, %probTable, %basePairs, %baseProbs);
+
+        if (defined $bamFile) {
+
+            print CLRRET . "  [*] Transcript " . $id . ": importing chimeric reads from BAM file (this might take a while)";
+            @ranges = parseSam($bamFile, $id);
+
+        }
+
+        if (defined $chimericFile && exists $chimericIndex{$id}) {
+
+            print CLRRET . "  [*] Transcript " . $id . ": importing chimeric reads from chimeric junction file (this might take a while)";
+            push(@ranges, parseChimeric($chimericFile, $chimericIndex{$id}, $id));
+
+        }
+
+        @ranges = sort { $a->[0] <=> $b->[0] } (shuffle(@ranges))[0 .. min($#ranges, $maxReads - 1)] if ($maxReads);
+
+        $refIO->forceReopenFh();
+        $sharedData{$id} = shared_clone({ sequence   => $refIO->read($id)->sequence(),
+                                          done       => 0,
+                                          total      => scalar(@ranges) });
+
+        print CLRRET . "  [*] Transcript " . $id . ": " . scalar(@ranges) . " chimeras imported";
+
+        if (@ranges) {
+
+            my ($nRanges, $structure, @pool, @clusters, @clusteredRanges);
+
+            { lock(%stats);
+              $stats{totChimeras} += $sharedData{$id}->{total};
+              $stats{totTranscripts}++; }
+
+            print CLRRET . "  [*] Transcript " . $id . ": clustering reads (this might take a while)";
+
+            @clusters = clusterReads($id, \@ranges);
+
+            print CLRRET . "  [*] Transcript " . $id . ": " . scalar(@clusters) . " clusters detected\n";
+
+            # Updates group number (for SAM file generation) in clustered reads
+            # and create collapsed table
+            foreach my $c (0 .. $#clusters) {
+
+                push(@clusteredRanges, map { [ @{$clusters[$c]->[$_]}, 1, $c + 1 ] } 0 .. $#{$clusters[$c]});
+                push(@centroids, [ collapse(\@{$clusters[$c]}, $transcripts{$id}), $c + 1 ]);
+
+            }
+
+            if ($makeClustersSam) {
+
+                print CLRRET . "  [*] Transcript " . $id . ": generating clustered BAM file";
+                clustersSam($sample, $id, \@clusteredRanges);
+
+            }
+
+            print CLRRET . "  [*] Transcript " . $id . ": identifying base-pairs";
+
+            # Builds most likely base-pairs
+            @ranges = $requireBpSupport ? @clusteredRanges : @centroids;
+            $nRanges = @ranges;
+            @pool = map { threads->create(\&foldChimeras, $id, [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ]) } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+            @basePairs = map { $_->join() } @pool;
+            %basePairs = %{mergeBpHashes(\%basePairs, $_)} for (@basePairs);
+
+            # Merges basePairs from all threads
+            print CLRRET . "  [*] Transcript " . $id . ": calculating base-pair probabilities";
+            @centroids = refineBpAndCentroids(\@centroids, \%basePairs);
+
+            %probTable = probTable(@centroids);
+            %baseProbs = calcBaseProbs(\%probTable, \%basePairs);
+
+            dotPlot($sample, $id, \%baseProbs);
+            $structure = makeConstraint($sample, $id, \%baseProbs) if ($makeConstraint);
+            plotImage($sample, $id, $structure, \%baseProbs) if ($makeImage);
+
+        }
+
+        delete($sharedData{$id});
+
+    }
+
+}
+
+sub mergeBpHashes {
+
+    my ($hash1, $hash2) = @_;
+
+    my $merge = {};
+
+    foreach my $key (keys %{$hash1}) {
+
+        if (ref($hash1->{$key}) eq "HASH") {
+
+            my $h2 = exists $hash2->{$key} ? $hash2->{$key} : {};
+            $merge->{$key} = mergeBpHashes($hash1->{$key}, $h2);
+
+        }
+        else { $merge->{$key} = $hash1->{$key} + $hash2->{$key}; }
+
+        delete($hash2->{$key});
+
+    }
+
+    foreach my $key (keys %{$hash2}) { $merge->{$key} = $hash2->{$key}; }
+
+    return($merge);
+
+}
+
+# Returns a table containing the probability of each cluster
+# The probability is calculated as the n. of reads belonging to the cluster
+# divided by the sum of the n. of reads of all the clsuters that are incompatible with
+# the cluster in analysis
+sub probTable {
+
+    my @ranges = @_;
+
+    my (%probTable);
+
+    foreach my $range (@ranges) {
+
+        my $prob = $range->[4] / sum(map { $_->[4] } grep { !isChimeraCompatible($range, $_) } @ranges);
+
+        next if ($range->[4] < $minReads || $prob < $minProb);
+
+        $probTable{$range->[-1]} = $prob;
+
+    }
+
+    return(%probTable);
+
+}
+
+sub calcBaseProbs {
+
+    my %probTable = %{$_[0]};
+    my %basePairs = %{$_[1]};
+
+    my (%baseProbs);
+
+    foreach my $base1 (keys %basePairs) {
+
+        foreach my $base2 (keys %{$basePairs{$base1}}) {
+
+            for (keys %{$basePairs{$base1}->{$base2}}) { $baseProbs{$base1}->{$base2} += $probTable{$_} if (exists $probTable{$_}); }
+
+        }
+
+    }
+
+    return(%baseProbs);
+
+}
+
+# Centroid start and end position are refined base on the first and last base-pair detected
+sub refineBpAndCentroids {
+
+    my @centroids = @{$_[0]};
+    my $basePairs = $_[1];
+
+    my (@newCentroids, %newBasePairs, %refined, %totReads);
+    %totReads = map { $_->[5] => $_->[4] } @centroids;
+
+    foreach my $base1 (keys %{$basePairs}) {
+
+        foreach my $base2 (keys %{$basePairs->{$base1}}) {
+
+            for (keys %{$basePairs->{$base1}->{$base2}}) {
+
+                my $fracInCluster = $basePairs->{$base1}->{$base2}->{$_} / $totReads{$_};
+
+                if ($fracInCluster <= $minChimeraFrac) { delete($basePairs->{$base1}->{$base2}->{$_}); }
+                else {
+
+                    $refined{$_}->{start1} = $base1 if (!exists $refined{$_}->{start1} || (exists $refined{$_}->{start1} && $refined{$_}->{start1} > $base1));
+                    $refined{$_}->{end1} = $base1 if (!exists $refined{$_}->{end1} || (exists $refined{$_}->{end1} && $refined{$_}->{end1} < $base1));
+                    $refined{$_}->{start2} = $base2 if (!exists $refined{$_}->{start2} || (exists $refined{$_}->{start2} && $refined{$_}->{start2} > $base2));
+                    $refined{$_}->{end2} = $base2 if (!exists $refined{$_}->{end2} || (exists $refined{$_}->{end2} && $refined{$_}->{end2} < $base2));
+
+                }
+
+            }
+
+            delete($basePairs->{$base1}->{$base2}) if (!keys %{$basePairs->{$base1}->{$base2}});
+
+        }
+
+        delete($basePairs->{$base1}) if (!keys %{$basePairs->{$base1}});
+
+    }
+
+    @newCentroids = map { [$refined{$_}->{start1}, $refined{$_}->{end1}, $refined{$_}->{start2}, $refined{$_}->{end2}, $totReads{$_}, $_] } sort {$a <=> $b} keys %refined;
+
+    return(@newCentroids);
+
+}
+
+sub makeConstraint {
+
+    my $sample = shift;
+    my $id = shift;
+    my %baseProbs = %{$_[0]};
+
+    my ($path, @dotbracket);
+    $path = $output . $sample . "/constraints/" . uc(substr($id, 0, 1)) . "/" . $id . ".db";
+    @dotbracket = (".") x $transcripts{$id};
+
+    foreach my $base1 (keys %baseProbs) {
+
+        foreach my $base2 (keys %{$baseProbs{$base1}}) {
+
+            if ($baseProbs{$base1}->{$base2} > $constraintThresh) {
+
+                $dotbracket[$base1] = "(";
+                $dotbracket[$base2] = ")";
+
+            }
+
+        }
+
+    }
+
+    return if (uniq(@dotbracket) == 1);
+
+    open(my $ch, ">", $path);
+    select((select($ch), $|=1)[0]);
+    print $ch ">" . $id . "\n" .
+              $sharedData{$id}->{sequence} . "\n" .
+              join("", @dotbracket) . "\n";
+    close($ch);
+
+    return(join("", @dotbracket));
+
+}
+
+sub initCentroids {
+
+    my @sortedRanges = sort { $a->[0] <=> $b->[0] ||
+                              $a->[1] <=> $b->[1] } @_;
+
+    my ($last, @centroids);
+    $last = $sortedRanges[0];
+
+    for (0 .. $#sortedRanges) {
+
+        if ($sortedRanges[$_]->[0] > $last->[1]) {
+
+            push(@centroids, $last);
+            $last = $sortedRanges[$_];
+
+        }
+
+
+    }
+
+    @centroids = ($last) unless (@centroids);
+
+    return(uniq(@centroids));
+
+}
+
+sub clusterReads {
+
+    my $id = shift;
+    my @ranges = @{$_[0]};
+
+    my ($nRanges, @pool, @allSamples, @i,
+        @sampleClusters, @sampleCentroids);
+    $nRanges = scalar(@ranges);
+
+    @pool = map { threads->create(\&clusterSample, $id, [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ]) } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+    @allSamples = map { $_->join() } @pool;
+    @sampleCentroids = map { @{$_->[0]} } @allSamples;
+    @sampleClusters = map { @{$_->[1]} } @allSamples;
+
+    if ($threads > 1) {
+
+        @i = sort { $sampleCentroids[$a]->[0] <=> $sampleCentroids[$b]->[0] } (0 .. $#sampleClusters);
+        @sampleClusters = @sampleClusters[@i];
+        @sampleCentroids = @sampleCentroids[@i];
+
+        print CLRRET . "  [*] Transcript " . $id . ": merging from " . scalar(@sampleClusters) . " clusters [main thread]";
+
+        for (my $i = 0; $i < $#sampleCentroids; $i++) {
+
+            my (@overlap, @dists);
+
+            for (my $j = $i + 1; $j < @sampleCentroids; $j++) {
+
+                if ($sampleCentroids[$i]->[1] < $sampleCentroids[$j]->[0]) { last; }
+                else { push(@overlap, $j); }
+
+            }
+
+            next if (!@overlap);
+
+            @dists = map { rangeDist($sampleCentroids[$i], $sampleCentroids[$_]) } @overlap;
+
+            if (min(@dists) < 1e308) {
+
+                # to improve by iterating through all the argmin at the same moment, and pushing them in $i
+                my $closeTo = $overlap[(argmin(@dists))[0]];
+                push(@{$sampleClusters[$i]}, @{$sampleClusters[$closeTo]});
+                $sampleCentroids[$i] = mergeRanges(@{$sampleClusters[$i]});
+                splice(@sampleClusters, $closeTo, 1);
+                splice(@sampleCentroids, $closeTo, 1);
+                $i--;
+
+            }
+
+        }
+
+    }
+
+    return(sort { $a->[0]->[0] <=> $b->[0]->[0] } @sampleClusters);
+
+}
+
+sub clusterSample {
+
+    my $id = shift;
+    my @ranges = @{$_[0]};
+
+    return unless(@ranges);
+
+    my (@centroids, @clusters, @i);
+
+    while (@ranges) {
+
+        my ($kmin, $clusterer, @sample, @startCentroids);
+        @sample = splice(@ranges, 0, min(scalar(@ranges), $minSampleSize));
+        @startCentroids = initCentroids(@sample);
+        $kmin = @startCentroids;
+        $clusterer = Cluster::Kmeans->new( data          => \@sample,
+                                           distfunc      => \&rangeDist,
+                                           centroidfunc  => \&mergeRanges,
+                                           maxiterations => $maxIter,
+                                           refine        => 1 );
+        $clusterer->cluster($kmin, \@startCentroids);
+        push(@clusters, $clusterer->clusters());
+        push(@centroids, $clusterer->centroids());
+
+        { lock(%sharedData);
+          $sharedData{$id}->{done} += @sample;
+
+          print CLRRET . "  [*] Transcript " . $id . ": clustering, " . sprintf("%.2f", $sharedData{$id}->{done} / $sharedData{$id}->{total} * 100) . "\% done"; }
+
+    }
+
+    @i = sort { $centroids[$a]->[0] <=> $centroids[$b]->[0] } (0 .. $#clusters);
+    @clusters = @clusters[@i];
+    @centroids = @centroids[@i];
+
+    print CLRRET . "  [*] Transcript " . $id . ": merging from " . scalar(@clusters) . " clusters [thread #" . threads->tid() . "]";
+
+    for (my $i = 0; $i < $#centroids; $i++) {
+
+        my (@overlap, @dists);
+
+        for (my $j = $i + 1; $j < @centroids; $j++) {
+
+            if ($centroids[$i]->[1] < $centroids[$j]->[0]) { last; }
+            else { push(@overlap, $j); }
+
+        }
+
+        next if (!@overlap);
+
+        @dists = map { rangeDist($centroids[$i], $centroids[$_]) } @overlap;
+
+        if (min(@dists) < 1e308) {
+
+            my $closeTo = $overlap[(argmin(@dists))[0]];
+            push(@{$clusters[$i]}, @{$clusters[$closeTo]});
+            $centroids[$i] = mergeRanges(@{$clusters[$i]});
+            splice(@clusters, $closeTo, 1);
+            splice(@centroids, $closeTo, 1);
+            $i--;
+
+        }
+
+    }
+
+    return([\@centroids, \@clusters]);
+
+}
+
+sub rangeDist {
+
+    my ($x, $y) = @_;
+
+    my ($r1x, $r2x, $r1y, $r2y,
+        $i1, $i2);
+    $r1x = abs(diff(@{$x}[0..1])) + 1;
+    $r1y = abs(diff(@{$y}[0..1])) + 1;
+    $r2x = abs(diff(@{$x}[2..3])) + 1;
+    $r2y = abs(diff(@{$y}[2..3])) + 1;
+    $i1 = intersect([@{$x}[0..1]], [@{$y}[0..1]]);
+    $i2 = intersect([@{$x}[2..3]], [@{$y}[2..3]]);
+
+    if ($i1 && $i2) {
+
+        my ($ext1, $ext2, $over1, $over2);
+        $ext1 = abs(diff(@{$i1})) + 1;
+        $ext2 = abs(diff(@{$i2})) + 1;
+        $over1 = $ext1 / min($r1x, $r1y);
+        $over2 = $ext2 / min($r2x, $r2y);
+
+        if ($over1 >= $minOverlapFrac && $over2 >= $minOverlapFrac) { return(1 - ($over1 * $over2)); }
+        else { return(1e308); }
+
+    }
+
+    return(1e308);
+
+}
+
+sub isChimeraCompatible {
+
+    my ($range1, $range2) = @_;
+
+    return if (intersect([$range1->[0], $range1->[1]], [$range2->[0], $range2->[1]]) ||
+               intersect([$range1->[2], $range1->[3]], [$range2->[2], $range2->[3]]) ||
+               intersect([$range1->[2], $range1->[3]], [$range2->[0], $range2->[1]]) ||
+               intersect([$range1->[0], $range1->[1]], [$range2->[2], $range2->[3]]) ||
+               (intersect([$range1->[0], $range1->[3]], [$range2->[0], $range2->[1]]) && !intersect([$range1->[0], $range1->[3]], [$range2->[2], $range2->[3]])) ||
+               (intersect([$range1->[0], $range1->[3]], [$range2->[2], $range2->[3]]) && !intersect([$range1->[0], $range1->[3]], [$range2->[0], $range2->[1]])));
+
+    return(1);
+
+}
+
+sub clustersSam {
+
+    my $sample = shift;
+    my $id = shift;
+    my @reads = @{$_[0]};
+
+    my ($path, $tmpPath);
+    $tmpPath = $tmpDir . $sample . "_" . $id . "_clustered";
+    $path = $output . $sample . "/clustered/" . uc(substr($id, 0, 1)) . "/" . $id . ".bam";
+
+    open(my $bh, ">", $tmpPath . ".sam") or die "\n  [!] Error: Unable to write temporary clustered SAM file (" . $! . ")\n\n";
+    select((select($bh), $|=1)[0]);
+
+    print $bh "\@HD\tVN:1.4\tSO:coordinate\n" .
+              "\@SQ\tSN:" . $id . "\tLN:" . $transcripts{$id} . "\n";
+
+    for (0 .. $#reads) {
+
+         my ($readgroup, @range1, @range2);
+         $readgroup = $reads[$_]->[-1];
+         @range1 = ($reads[$_]->[0] + 1, $reads[$_]->[1] + 1);
+         @range2 = ($reads[$_]->[2] + 1, $reads[$_]->[3] + 1);
+
+         print $bh "read#" . $_ . "\t0\t" . $id . "\t" . $range1[0] . "\t255\t" . ($range1[1] - $range1[0] + 1) . "M" . ($range2[0] - $range1[1] - 1) . "N" .
+                   ($range2[1] - $range2[0] + 1) . "M\t*\t0\t0\t" . substr($sharedData{$id}->{sequence}, $range1[0] - 1, $range1[1] - $range1[0] + 1) . substr($sharedData{$id}->{sequence}, $range2[0] - 1, $range2[1] - $range2[0] + 1) . "\t" .
+                   ("F" x (($range1[1] - $range1[0] + 1) + ($range2[1] - $range2[0] + 1))) . "\tXG:i:" . $readgroup . "\n";
+
+    }
+
+    close($bh);
+
+    system($samtools . " sort --threads " . $threads . " -O BAM -o \"" . $path . "\" -T \"" . $tmpPath . "\" \"" . $tmpPath . ".sam\" 2>/dev/null");
+    print "\n  [!] Error: Sort of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127);
+
+    system($samtools . " index -@ " . $threads . " \"" . $path . "\" 2>/dev/null");
+    print "\n  [!] Error: Indexing of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127);
+
+    unlink($tmpPath . ".sam");
+
+}
+
+sub dotPlot {
+
+    my $sample = shift;
+    my $id = shift;
+    my %baseProbs = %{$_[0]};
+
+    return if (!keys %baseProbs);
+
+    my $path = $output . $sample . "/dotplot/" . uc(substr($id, 0, 1)) . "/" . $id . ".dp";
+
+    open(my $dh, ">", $path);
+    select((select($dh), $|=1)[0]);
+
+    print $dh $transcripts{$id} . "\n" .
+              "i\tj\t-log10(Probability)";
+
+    foreach my $base1 (sort {$a <=> $b} keys %baseProbs) {
+
+        foreach my $base2 (sort {$a <=> $b} keys %{$baseProbs{$base1}}) {
+
+            print $dh "\n" . ($base1 + 1) . "\t" . ($base2 + 1) . "\t" . -logarithm($baseProbs{$base1}->{$base2}, 10);
+
+        }
+
+    }
+
+    close($dh);
+
+}
+
+sub plotImage {
+
+    my $sample = shift;
+    my $id = shift;
+    my $structure = shift;
+    my %baseProbs = %{$_[0]};
+
+    return if (!keys %baseProbs);
+
+    my ($path, $svgIO, $image, $arcPlot,
+        $structPlot, $ruler, $shannon, $minProb,
+        $midProb, $maxProb, @pairs, @shannon,
+        @colors, @allProbs, @i);
+    $path = $output . $sample . "/images/" . uc(substr($id, 0, 1)) . "/" . $id . ".svg";
+    $image = Graphics::Container->new( height  => abs(maprange(0, 1000, $structure !~ m/^\.+$/ ? -750 : -500, -250, min($transcripts{$id}, 1000))), # Min: 500 / Max: 1000px
+                                       width   => 1000,
+                                       spacing => 0.02 );
+    $svgIO = Data::IO->new( file    => $path,
+                            mode    => "w",
+                            binmode => ":encoding(utf-8)" );
+    @shannon = (0) x $transcripts{$id};
+    @allProbs = map { my $i = $_; map { $baseProbs{$i}->{$_} } sort {$a <=> $b} keys %{$baseProbs{$i}} } sort {$a <=> $b} keys %baseProbs;
+    @i = sort { $allProbs[$a] <=> $allProbs[$b] } 0 .. $#allProbs;
+    $minProb = min(@allProbs);
+    $maxProb = max(@allProbs);
+    $midProb = mean($minProb, $maxProb);
+
+    foreach my $base1 (sort {$a <=> $b} keys %baseProbs) {
+
+        foreach my $base2 (sort {$a <=> $b} keys %{$baseProbs{$base1}}) {
+
+            my ($prob, $shannon, @rgb);
+            $prob = $baseProbs{$base1}->{$base2};
+
+            $shannon = -($prob * logarithm($prob, 10));
+            $shannon[$base1] += $shannon;
+            $shannon[$base2] += $shannon;
+
+            push(@pairs, [$base1, $base2]);
+            push(@colors, ($prob < $colorScale[0] ? "rgb(255,255,255" : ($prob < $colorScale[1] ? "rgb(150,150,150)" : ($prob < $colorScale[2] ? "rgb(255,204,0)" : ($prob < $colorScale[3] ? "rgb(71,142,204)" : "rgb(81,183,71)")))));
+
+        }
+
+    }
+
+    @pairs = @pairs[@i];
+    @colors = @colors[@i];
+
+    $arcPlot = Graphics::Object::RNAarcs->new( height    => 5,
+                                               length    => $transcripts{$id},
+                                               flip      => $structure !~ m/^\.+$/ ? "up" : "down",
+                                               basepairs => \@pairs,
+                                               stroke    => \@colors );
+    $structPlot = Graphics::Object::RNAarcs->new( height    => 5,
+                                                  length    => $transcripts{$id},
+                                                  flip      => "down",
+                                                  basepairs => [ listpairs($structure) ],
+                                                  stroke    => "black" ) if (defined $structure && $structure !~ m/^\.+$/);
+    $shannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -20, -10, min($transcripts{$id}, 1000))),
+                                            height   => 2,
+                                            values   => \@shannon,
+                                            fill     => "rgb(145, 106, 40)",
+                                            stroke   => "",
+                                            yname    => "Entropy" ) if (sum(@shannon));
+    $ruler = Graphics::Object::Ruler->new( fontsize => abs(maprange(0, 1000, -20, -10, min($transcripts{$id}, 1000))),
+                                           height   => 2,
+                                           range    => [0, $transcripts{$id}],
+                                           ticksby  => max(1, round($transcripts{$id} / 10)),
+                                           name     => "Position (nt)",
+                                           toend    => 1 );
+
+    $image->addobject($shannon) if (defined $shannon);
+    $image->addobject($arcPlot);
+    $image->addobject($structPlot) if (defined $structPlot);
+    $image->addobject($ruler);
+    $svgIO->write($image->xml());
+
+}
+
+sub foldChimeras {
+
+    my $id = shift;
+    my @ranges = @{$_[0]};
+
+    my (%basePairs);
+
+    while (my $range = shift(@ranges)) {
+
+        my ($seq1, $seq2, $end1, $start2,
+            @pairs);
+        $end1 = $range->[2] <= $range->[1] ? $range->[2] : $range->[1];
+        $start2 = $range->[2] <= $range->[1] ? $range->[1] : $range->[2];
+        $seq1 = substr($sharedData{$id}->{sequence}, $range->[0], $end1 - $range->[0] + 1);
+        $seq2 = substr($sharedData{$id}->{sequence}, $start2, $range->[3] - $start2 + 1);
+
+        if (!$noUseVienna) {
+
+            my @fold = RNA::fold(join("GAAA", $seq1, $seq2), join("xxxx", ("<" x length($seq1)), (">" x length($seq2))));
+            RNA::free_arrays();
+            @pairs = listpairs($fold[0]);
+
+        }
+        else { @pairs = basePairsFromAln($seq1, $seq2); }
+
+        next if ((@pairs * 2) / length($seq1 . $seq2) < $minPairedFrac);
+
+        foreach my $pair (@pairs) {
+
+            $pair->[0] += $range->[0];
+            $pair->[1] = $pair->[1] - 4 - length($seq1) + $start2; # 4 is the length of the fake GAAA tetraloop
+
+            $basePairs{$pair->[0]}->{$pair->[1]}->{$range->[5]} += $range->[4]; # Saves the cluster that base-pair belongs to
+
+        }
+
+    }
+
+    return(\%basePairs);
+
+}
+
+# Quick-and-dirty alternative to the ViennaRNA fold()
+# that has some issues with multithreading
+sub basePairsFromAln {
+
+    my ($seq1, $seq2) = @_;
+
+    my ($aligner, $aln, $qEnd, $rStart,
+        $alnLen, @pairs);
+
+    my $aligner = Align::SmithWaterman->new( reference => $seq1,
+                                             query     => rev($seq2),
+                                             scoring   => { AT => 2,
+                                                            CG => 3,
+                                                            GT => 1 },
+                                             mismatch  => -1,
+                                             gOpen     => 0,
+                                             gExt      => -1 );
+    $aligner->align();
+    $aln = $aligner->read();
+    $qEnd = length($seq2) - $aln->queryStart() - 1 + 4 + length($seq1); # the fake GAAA tetraloop + the first half of the chimera
+    $rStart = $aln->refStart();
+    $alnLen = length($aln->alignment());
+
+    for my $i (0 .. $alnLen - 1) {
+
+        if (substr($aln->alignment(), $i, 1) ne " ") {
+
+         push(@pairs, [$rStart, $qEnd]) if (substr($aln->alignment(), $i, 1) eq "|");
+         $qEnd--;
+         $rStart++;
+
+        }
+        elsif (substr($aln->reference(), $i, 1) eq "-") { $qEnd--; }
+        elsif (substr($aln->query(), $i, 1) eq "-") { $rStart++; }
+
+    }
+
+    return(@pairs);
+
+}
+
+sub parseSam {
+
+    my $file = shift;
+    my $id = shift;
+
+    my (@ranges);
+
+    if (open(my $fh, "samtools view " . $file . " " . $id . " 2>&1 |")) {
+
+        while(<$fh>) {
+
+            my ($range1, $range2, $range, @line,
+                @cigar);
+
+            chomp();
+            @line = split /\t/;
+
+            next if (($line[5] =~ tr/N/N/) != 1); # Skip reads with less or more than 1 gap
+            next if ($line[1] & 16); # Skip reads aligning to reverse strand
+
+            @cigar = parseCigar($line[5]);
+            $range = [ $line[3] - 1, $line[3] - 1 + $cigar[0] - 1,
+                       $line[3] - 1 + $cigar[0] + $cigar[1], $line[3] - 1 + $cigar[0] + $cigar[1] + $cigar[2] - 1 ];
+
+            push(@ranges, $range) if (abs(diff($range->[1] + 1, $range->[2] - 1)) + 1 >= $minGap &&
+                                      abs(diff(@{$range}[0..1])) + 1 >= $minHalfLen &&
+                                      abs(diff(@{$range}[2..3])) + 1 >= $minHalfLen);
+
+        }
+        close($fh);
+
+        @ranges = uniq(@ranges);
+
+    }
+    else { print "\n  [!] Error: Failed to read from BAM file (" . $! . ")"; }
+
+    return(@ranges);
+
+}
+
+sub parseChimeric {
+
+    my $file = shift;
+    my $offset = shift;
+    my $id = shift;
+
+    my (@ranges);
+
+    if (open(my $fh, "<", $file)) {
+
+        seek($fh, $offset, SEEK_SET);
+
+        while(<$fh>) {
+
+            my ($range1, $range2, $range, @line);
+
+            chomp();
+            @line = split /\t/;
+
+            last if ($line[0] ne $id);
+            next if ($line[0] ne $line[3]); # Only keeps intramolecular base-pairs
+            next if ($line[2] ne "+" ||
+                     $line[5] ne "+");      # Only keeps reads mapping same strand of the transcript
+            next if ($line[13] =~ m/N/);    # Skips chimeric reads with gaps
+
+            $range1 = [$line[10] - 1, $line[1] - 1];
+            $range2 = [$line[12] - 1, $line[12] - 1 + parseCigar($line[13]) - 1];
+
+            # Should never happen
+            # next if (intersect($range1, $range2));
+
+            ($range1, $range2) = ($range2, $range1) if ($range1->[0] > $range2->[1]); # Swap intervals if second interval comes first
+
+            $range = [ @{$range1}, @{$range2} ];
+
+            push(@ranges, $range) if (diff($range->[2] - 1, $range->[1] + 1) + 1 >= $minGap &&
+                                      abs(diff(@{$range}[0..1])) + 1 >= $minHalfLen &&
+                                      abs(diff(@{$range}[2..3])) + 1 >= $minHalfLen);
+
+        }
+
+        close($fh);
+
+        @ranges = uniq(@ranges);
+
+    }
+    else { print "\n  [!] Error: Failed to read from chimeric junction file (" . $! . ")"; }
+
+    return(@ranges);
+
+}
+
+sub parseCigar {
+
+    my $cigar = shift;
+
+    my ($gap, @cov, @cigar);
+    $gap = 0;
+    @cov = (0, 0);
+
+    # Remove clipped bases
+    $cigar =~ s/\d+[SH]//g;
+
+    if ($cigar =~ m/(\d+)N/) {
+
+        $gap = $1;
+        @cigar = split($gap . "N", $cigar);
+
+    }
+    else { @cigar = ($cigar); }
+
+    for (0 .. $#cigar) {
+
+        while ($cigar[$_] =~ m/^(\d+)([MIDP=X])/) {
+
+            my ($n, $op) = ($1, $2);
+            $cov[$_] += $n if ($op =~ m/^[DNM=X]$/);
+
+            $cigar[$_] =~ s/^$n$op//;
+
+        }
+
+    }
+
+    return($gap ? ($cov[0], $gap, $cov[1]) : $cov[0]);
+
+}
+
+sub collapse {
+
+    my ($ranges, $length) = @_;
+
+    my $collapsed = mergeRanges(@{$ranges});
+    $length--;
+
+    # Fixes end if exceedes transcript length
+    $collapsed->[1] = min($collapsed->[1], $length);
+    $collapsed->[3] = min($collapsed->[3], $length);
+
+    return(@{$collapsed}, scalar(@{$ranges}));
+
+}
+
+# Given a set of reads, this function finds the midpoint of maximum enrichment on both sides,
+# then enlarges it up/down by 1/2 the median size of each read half
+# Used for both collapsing of reads into read groups and centroid calculation in Kmeans
+sub mergeRanges {
+
+    my @ranges = @_;
+
+    return($ranges[0]) if (@ranges == 1);
+
+    my ($maxr1, $maxr2, $start1, $start2,
+        $halfmedianr1, $halfmedianr2, @r1, @r2);
+    $halfmedianr1 = round(median(map { abs(diff(@{$_}[0..1])) + 1 } @ranges) / 2);
+    $halfmedianr2 = round(median(map { abs(diff(@{$_}[2..3])) + 1 } @ranges) / 2);
+    $start1 = min(map { $_->[0] } @ranges);
+    $start2 = min(map { $_->[2] } @ranges);
+
+    foreach my $range (@ranges) {
+
+        $r1[$_]++ for ($range->[0] - $start1 .. $range->[1] - $start1);
+        $r2[$_]++ for ($range->[2] - $start2 .. $range->[3] - $start2);
+
+    }
+
+    @r1 = map { defined $_ ? $_ : 0 } @r1;
+    @r2 = map { defined $_ ? $_ : 0 } @r2;
+
+    $maxr1 = round(mean(argmax(@r1))) + $start1;
+    $maxr2 = round(mean(argmax(@r2))) + $start2;
+
+    return([ max(0, $maxr1 - $halfmedianr1), $maxr1 + $halfmedianr1,
+             max(0, $maxr2 - $halfmedianr2), $maxr2 + $halfmedianr2 ]);
+
+}
+
+sub fileTypeAndSorting {
+
+    my $file = shift;
+
+    my ($type, $sorted, $fail);
+    $sorted = 1;
+
+    if ($file =~ m/\.([bs]am)$/i) { $type = uc($1); }
+    else {
+
+        my ($header, $eof, @data);
+        $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
+        $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+
+        open(my $fh, $samtools . " view " . $file . " 2>&1|") or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        for (1 .. 10) {
+
+            my ($row, @row);
+
+            $row = <$fh>;
+            @row = split("\t", $row);
+
+            if (@row < 12 || !isint($row[3]) || !isdna($row[9])) {
+
+                $fail = 1;
+
+                last;
+
+            }
+
+        }
+        close($fh);
+
+        if (!$fail) {
+
+            open($fh , "<:raw", $file);
+            read($fh, $data[0], 16);
+            seek($fh, -28, SEEK_END);
+            read($fh, $data[1], 28);
+            close($fh);
+
+            if ($data[0] eq $header &&
+                $data[1] eq $eof) {
+
+                    $type = "BAM";
+
+                    open($fh, $samtools . " view -H " . $file . " | grep '^\@HD'");
+
+                    if (my $row = <$fh>) { $sorted = 0 if ($row !~ m/SO:coordinate/); }
+                    else { $sorted = 0; }
+
+                    close($fh);
+
+            }
+            else {
+
+                $type = "SAM";
+                $sorted = 0;
+
+            }
+
+        }
+
+    }
+
+    if ($fail) { # Not a SAM/BAM, let's try chimeric reads file
+
+        my ($lastId);
+        $fail = 0;
+
+        open(my $fh, "<", $file) or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        for (1 .. 100) {
+
+            my ($row, @row);
+
+            $row = <$fh>;
+            @row = split("\t", $row);
+
+            if (@row < 13 || !isint($row[1], $row[4]) || $row[2] !~ m/^[\+-]$/) {
+
+                $fail = 1;
+
+                last;
+
+            }
+
+            if ($row[0] ne $lastId) {
+
+                $lastId = $row[0] if (!defined $lastId || $lastId lt $row[0]);
+
+                if ($lastId gt $row[0]) {
+
+                    $sorted = 0;
+
+                    last;
+
+                }
+
+            }
+
+        }
+        close($fh);
+
+        die "  [!] Error: Sample file \"" . $file . "\" is not a SAM/BAM file, nor a chimeric junction file\n\n" if ($fail);
+
+        $type = "chimeric";
+
+    }
+
+    return($type, $sorted);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF Duplex (v$Core::Utils::VERSION)
+ RNA Framework [http://www.rnaframework.com]
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Analyzes direct RNA-RNA interaction capture experiments
+
+ Usage:   rf-duplex [Options] Experiment_1:Sample1.bam,Chimeric1.out.junction ... Experiment_n:Samplen.bam,Chimericn.out.junction
+
+ Options                                        Description
+ -p  or --processors             <int>          Number of processors to use (Default: 1)
+ -st or --single-transcript                     Enables multithreading optimization for single trancript analysis
+                                                Note: when active, a single transcript at a time will be analyzed, and multiple processors
+                                                      will be used to speed-up time-comsuming operations such as read clustering and
+                                                      base-pair analysis. This is useful, for example, for the analysis of COMRADES
+                                                      experiments, in which a single target transcript is analyzed at a high sequencing depth
+ -o  or --output-dir             <string>       Output directory (Default: rf_duplex/)
+ -ow or --overwrite                             Overwrites output directory (if the specified path already exists)
+ -f  or --fasta                  <string>       Path to a FASTA file containing the reference transcripts
+                                                Note: Transcripts in this file must match transcripts in SAM/BAM file headers
+ -wl or --whitelist              <string>       A whitelist containing transcript IDs (one per each row) to restrict the analysis to (optional)
+ -mg or --min-gap                <int>          Minimum gap length (in nt) to consider a chimeric read (>0, Default: 1)
+ -mh or --min-half               <int>          Minimum length (in nt) of each half of a chimeric read to consider it (>0, Default: 20)
+ -xr  or --max-reads             <int>          Maximum number of chimeric reads to analyze for each transcript (>0, Default: 100000)
+                                                Note: all chimeric reads are first imported, then a random sample is extracted
+ -c  or --constraint                            Generates a dot-bracket constraint file containing the inferred base-pairs whose probability
+                                                exceeds a given threshold (controlled by -ct or --constraint-theshold)
+ -ct or --constraint-theshold    <float>        Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
+
+ |
+ +- Base-pairs inference options
+ -nv  or --no-use-vienna                        A modified Smith-Waterman local alignment algorithm is used instead of the ViennaRNA package to
+                                                infer base-pairs from chimeric reads
+ -mr  or --min-reads             <int>          Minimum number of chimeric reads to retain a cluster (>0, Default: 2)
+ -mpf or --min-paired-frac       <float>        Minimum fraction of paired bases in a chimeric read to retain it (>0-1, Default: 0.25)
+ -mp  or --min-prob              <float>        Minimum probability to retain an inferred base-pair (>0-1, Default: 0.01)
+ -rmc or --require-min-chimera                  Instead of being inferred from the cluster's centroid, base-pairs are inferred from every single
+                                                chimeric read belonging to the cluster, and only base-pairs common to a certain fraction of the
+                                                reads in the cluster (controlled by -mcf or --min-chimera-frac), are retained
+                                                Note: if no base-pair is supported by at least -mcf chimeric reads, then the cluster is discarded
+ -mcf or --min-chimera-frac      <float>        Sets the minimum fraction of chimeric reads supporting a base-pair (requires -rmc; 0.5-1, Default: 0.5)
+
+ |
+ +- Plotting options
+ -g  or --img                                   Enables the generation of graphical reports reporting the inferred base-pairing probabilities,
+                                                and the Shannon Entropy
+ -cs or --color-scale            <string>       Allows specifying 4 cut-points for the color scale used to report base-pairing probabilities
+                                                (Default: 0.05,0.1,0.4,0.7 for white|grey|yellow|blue|green)
+
+ |
+ +- Clustering options
+ -cb  or --make-clusters-bam                    Generates a BAM file for each transcript being analyzed, with chimeric reads belonging to the same
+                                                cluster grouped together via the XG tag
+ -mss or --min-sample-size       <int>          Minimum number of reads to be considered for each iteration of mini-batch clustering (>0, Default: 1000)
+ -mo  or --min-overlap-frac      <float>        Minimum fractional overlap between the two halves of two chimeric reads to trigger clustering (>0-1,
+                                                Default: 0.05)
+ -mi  or --max-iterations        <int>          Maximum number of iterations for K-means (>0, Default: 5)
+
+HELP
+
+}
