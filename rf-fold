@@ -1151,7 +1151,7 @@ sub pkdetect {
 
             foreach my $subopt (@subopt) {
 
-                foreach my $helix (@{(listhelices($subopt->[0], $nlp ? 0 : 1))[0]}) { 
+                foreach my $helix (@{(listhelices($subopt->[0], $nlp ? 0 : 1))[0]}) {
 
                     my ($pairedinmfe, $h5, $h3, $tmpsubopt,
                         $tmpenergy, @tmpsubopt, @pkbases);
@@ -1255,7 +1255,7 @@ sub pkdetect {
 
                 $il += $lambda{($_ < 2 ? 2 : ($_ > 15 ? 15 : $_))} ** 2 for (@il);
 
-                $pkenergy = $struct->{energy} + ($p1 * logarithm((6.5 ** 2) * $ss + (15 ** 2) * $ne, e) + $p2 * logarithm($il, e));
+                $pkenergy = $struct->{energy} + ($p1 * logarithm((6.5 ** 2) * $ss + (15 ** 2) * $ne, Core::Mathematics::e) + $p2 * logarithm($il, Core::Mathematics::e));
 
                 push(@results, { pkpairs => $pkpairs,
                                  energy  => $pkenergy }) if ($pkenergy < $pktollerance);
