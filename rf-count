@@ -619,7 +619,7 @@ $processmanager->waitall();
 
 print "\n\n[+] Statistics:\n";
 
-while (my $sample = $processmanager->dequeue()) { print "\n" . $sample->exitcode(); }
+while (my $sample = $processmanager->dequeue()) { print "\n" . $sample->exitcode()->[0]; }
 
 print "\n\n[+] Cleaning up temporary files...";
 
@@ -1251,7 +1251,7 @@ sub help {
                                                   Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
                                                         or "A:T") will only count mutation events in which a reference A base has been sequenced as
                                                         a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
-                                                        separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion 
+                                                        separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
                                                         and deletion count
     -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
                                                   Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
