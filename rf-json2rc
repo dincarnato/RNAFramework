@@ -221,7 +221,7 @@ for (0 .. $#jsonin) {
 
             foreach my $cov (@{$window->{coverage}}) { @cumCov = map { $cumCov[$_] + $cov->[$_] } 0 .. $#{$cov}; }
 
-            next if (median(@cumCov) < $medianCov);
+            next if (@cumCov && median(@cumCov) < $medianCov);
 
             # Storing parsed JSON for later
             $jsonData[-1]->{$id}->{windows}->{$start} = { end             => $end,
@@ -577,7 +577,7 @@ foreach my $id (sort keys %commonWins) {
                                             readscount => $jsonData[$i]->{$id}->{nReads} );
 
                 push(@{$rcCache[$i]}, $rc);
-                push(@{$stoichiometryCache[$i]}, 1);
+                push(@{$stoichiometryCache[$i]}, [1]);
 
             }
 
