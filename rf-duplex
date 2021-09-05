@@ -7,6 +7,7 @@ use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use List::Util qw(shuffle);
 use POSIX qw(ceil SEEK_END SEEK_SET);
+use Storable;
 use threads;
 use threads::shared;
 
@@ -33,11 +34,11 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
     $minReads, $minProb, $noUseVienna, $makeImage,
     $makeClustersSam, $reference, $minPairedFrac, $makeConstraint,
     $minHalfLen, $minSampleSize, $maxReads, $requireBpSupport,
-    $refIO, $help, $samtools, $table,
+    $refIO, $help, $samtools, $table, $evalOnly,
     $threads, $tmpDir, $logDir, $error,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
-    $colorScale, $minChimeraFrac, $maxIter, @colorScale,
-    @input, %samples, %transcripts);
+    $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
+    @colorScale, @input, %samples, %transcripts);
 
 my @transcripts : shared;
 my %sharedData : shared;
@@ -53,6 +54,8 @@ do {
                 "p|processors=i"            => \$threads,
                 "c|constraint"              => \$makeConstraint,
                 "ct|constraint-threshold=s" => \$constraintThresh,
+                "es|eval-structures=s"      => \$evalStructures,
+                "eo|eval-only"              => \$evalOnly,
                 "g|img"                     => \$makeImage,
                 "cb|make-clusters-bam"      => \$makeClustersSam,
                 "mh|min-half=i"             => \$minHalfLen,
@@ -96,6 +99,7 @@ $samtools ||= which("samtools");
 $output ||= "rf_duplex/";
 @colorScale = $colorScale ? uniq(sort {$a <=> $b} split(/[:,;]/, $colorScale)) : (0.05, 0.1, 0.4, 0.7);
 $output =~ s/\/?$/\//;
+$evalStructures =~ s/\/?$/\// if (defined $evalStructures);
 $tmpDir = $output . "tmp/";
 $logDir = $output . "logs/";
 
@@ -113,6 +117,7 @@ die "\n  [!] Error: No input file provided\n\n" if (!@input);
 die "\n  [!] Error: No FASTA reference provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Provided FASTA reference does not exist\n\n" if (!-e $reference);
 die "\n  [!] Error: Provided whitelist does not exist\n\n" if (defined $whitelist && !-e $whitelist);
+die "\n  [!] Error: Provided structure folder does not exist\n\n" if (defined $evalStructures && !-d $evalStructures);
 die "\n  [!] Error: Minimum overlap must be comprised between 0 and 1\n\n" if (!inrange($minOverlapFrac, [0, 1]));
 die "\n  [!] Error: Minimum base-pair probability must be comprised between 0 and 1\n\n" if (!inrange($minProb, [0, 1]));
 die "\n  [!] Error: Minimum base-paired fraction must be comprised between 0 and 1\n\n" if (!inrange($minPairedFrac, [0, 1]));
@@ -231,9 +236,9 @@ if ($whitelist) {
 }
 else { print scalar(keys %transcripts) . " imported."; }
 
-@transcripts = map { $_ } sort keys %transcripts;
-
 foreach my $sample (sort keys %samples) {
+
+    @transcripts = map { $_ } sort keys %transcripts;
 
     my ($chimericFile, $bamFile, @pool, %chimericIndex);
     $bamFile = $samples{$sample}->{BAM}->{file} || $samples{$sample}->{SAM}->{file} if (exists $samples{$sample}->{SAM} ||
@@ -251,7 +256,9 @@ foreach my $sample (sort keys %samples) {
     mkpath($output . $sample . "/images/", { mode  => 0755,
                                              error => \$error }) if ($makeImage);
     mkpath($output . $sample . "/constraints/", { mode  => 0755,
-                                                 error => \$error }) if ($makeConstraint);
+                                                  error => \$error }) if ($makeConstraint);
+    mkpath($output . $sample . "/bpcounts/", { mode  => 0755,
+                                               error => \$error }) if ($evalStructures);
 
     die "\n\n  [!] Error: Unable to create output directory for sample \"" . $sample . "\" (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -345,7 +352,7 @@ foreach my $sample (sort keys %samples) {
     }
 
     @pool = map { threads->create(\&processTranscript, $sample, $bamFile, $chimericFile, \%chimericIndex) } 1 .. ($singleTranscript ? 1 : $threads);
-    $_->join() for(@pool);
+    $_->join() for (@pool);
 
     print CLRRET . "  [*] Processing completed [" . $stats{totTranscripts} . " transcripts, " . $stats{totChimeras} . " unique chimeras analyzed]\n";
 
@@ -382,6 +389,7 @@ sub processTranscript {
               mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
               mkpath($output . $sample . "/images/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
               mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
+              mkpath($output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($evalStructures);
 
           } }
 
@@ -411,11 +419,71 @@ sub processTranscript {
                                           done       => 0,
                                           total      => scalar(@ranges) });
 
-        print CLRRET . "  [*] Transcript " . $id . ": " . scalar(@ranges) . " chimeras imported";
+        print CLRRET . "  [*] Transcript " . $id . ": " . $sharedData{$id}->{total} . " chimeras imported";
 
         if (@ranges) {
 
-            my ($nRanges, $structure, @pool, @clusters, @clusteredRanges);
+            # Splits ranges in chunks, that will be processed by each thread
+            my @rangeChunks = splitRanges($id, @ranges);
+            undef(@ranges);
+
+            if ($evalStructures) {
+
+                my $structureFile = -e $evalStructures . $id . ".db" ? $evalStructures . $id . ".db" :
+                                                                       (-e $evalStructures . $id . ".ct" ? $evalStructures . $id . ".ct" : undef);
+
+                if (defined $structureFile) {
+
+                    print CLRRET . "  [*] Transcript " . $id . ": calculating chimeric read support for reference structure";
+
+                    my ($eval, @allPairs);
+                    $eval = do { local $@;
+                                 eval {
+
+                                     my ($structIO, $entry, @bp, @pk);
+                                     $structIO = Data::IO::Sequence->new( file         => $structureFile,
+                                                                          pseudoknots  => 1,
+                                                                          lonelypairs  => 1,
+                                                                          noncanonical => 1 );
+                                     $entry = $structIO->read();
+                                     @bp = $entry->basepairs();
+                                     @pk = $entry->pkpairs();
+                                     @allPairs = sort { $a->[0] <=> $b->[0] } (@bp, @pk);
+
+                                 };
+                                 $@; };
+
+                    if (!$eval) {
+
+                        my (@pool, %pairSupport);
+
+                        @pool = map { threads->create(\&countChimeraSupport, \@allPairs, $_ ) } @rangeChunks;
+                        @allPairs = map { $_->join() } @pool;
+                        %pairSupport = %{mergeBpHashes(\%pairSupport, $_)} for (@allPairs);
+
+                        my $bpcountIO = Data::IO->new( file => $output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)) . "/" . $id . ".bpcount",
+                                                       mode => "w" );
+                        $bpcountIO->write(join("\t", $_, (keys %{$pairSupport{$_}})[0], $pairSupport{$_}->{(keys %{$pairSupport{$_}})[0]}) . "\n") for (sort { $a <=> $b } keys %pairSupport);
+                        $bpcountIO->write(join("\t", "Total", undef, $sharedData{$id}->{total}) . "\n");
+                        $bpcountIO->close();
+
+                    }
+
+                }
+
+                if ($evalOnly) {
+
+                    { lock(%stats);
+                      $stats{totChimeras} += $sharedData{$id}->{total};
+                      $stats{totTranscripts}++; }
+
+                    next;
+
+                }
+
+            }
+
+            my ($structure, @pool, @clusters, @clusteredRanges);
 
             { lock(%stats);
               $stats{totChimeras} += $sharedData{$id}->{total};
@@ -423,7 +491,7 @@ sub processTranscript {
 
             print CLRRET . "  [*] Transcript " . $id . ": clustering reads (this might take a while)";
 
-            @clusters = clusterReads($id, \@ranges);
+            @clusters = clusterReads($id, @rangeChunks);
 
             print CLRRET . "  [*] Transcript " . $id . ": " . scalar(@clusters) . " clusters detected\n";
 
@@ -446,17 +514,19 @@ sub processTranscript {
             print CLRRET . "  [*] Transcript " . $id . ": identifying base-pairs";
 
             # Builds most likely base-pairs
-            @ranges = $requireBpSupport ? @clusteredRanges : @centroids;
-            $nRanges = @ranges;
-            @pool = map { threads->create(\&foldChimeras, $id, [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ]) } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+            @rangeChunks = splitRanges($id, $requireBpSupport ? @clusteredRanges : @centroids);
+            @pool = map { threads->create(\&foldChimeras, $id, $_) } @rangeChunks;
             @basePairs = map { $_->join() } @pool;
             %basePairs = %{mergeBpHashes(\%basePairs, $_)} for (@basePairs);
 
             # Merges basePairs from all threads
-            print CLRRET . "  [*] Transcript " . $id . ": calculating base-pair probabilities";
+            print CLRRET . "  [*] Transcript " . $id . ": refining base-pairs and centroids";
             @centroids = refineBpAndCentroids(\@centroids, \%basePairs);
 
+            print CLRRET . "  [*] Transcript " . $id . ": calculating probability table";
             %probTable = probTable(@centroids);
+
+            print CLRRET . "  [*] Transcript " . $id . ": calculating base-pair probabilities";
             %baseProbs = calcBaseProbs(\%probTable, \%basePairs);
 
             dotPlot($sample, $id, \%baseProbs);
@@ -468,6 +538,47 @@ sub processTranscript {
         delete($sharedData{$id});
 
     }
+
+}
+
+sub splitRanges {
+
+    my $id = shift;
+    my @ranges = @_;
+
+    my ($nRanges, $baseName, @split);
+    $nRanges = @ranges;
+    $baseName = $tmpDir . $id . "_ranges_";
+    @split = map { [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ] } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+
+    unlink(glob($baseName . "*"));
+    store $split[$_], $baseName . $_ . ".tmp" for (0 .. $#split);
+
+    return(map { $baseName . $_ . ".tmp" } 0 .. $#split);
+
+}
+
+sub countChimeraSupport {
+
+    my @allPairs = @{$_[0]};
+    my $ranges = retrieve($_[1]);
+
+    my %pairs;
+
+    foreach my $range (sort { $a->[3] <=> $b->[3] } @{$ranges}) {
+
+        foreach my $pair (@allPairs) {
+
+            if ($range->[3] < $pair->[0]) { last; }
+            elsif ($range->[0] > $pair->[1]) { next; }
+            elsif ($pair->[0] >= $range->[0] && $pair->[0] <= $range->[1] &&
+                   $pair->[1] >= $range->[2] && $pair->[1] <= $range->[3]) { $pairs{$pair->[0]}->{$pair->[1]}++; }
+
+        }
+
+    }
+
+    return(\%pairs);
 
 }
 
@@ -652,13 +763,12 @@ sub initCentroids {
 sub clusterReads {
 
     my $id = shift;
-    my @ranges = @{$_[0]};
+    my @rangeChunks = @_;
 
-    my ($nRanges, @pool, @allSamples, @i,
-        @sampleClusters, @sampleCentroids);
-    $nRanges = scalar(@ranges);
+    my (@pool, @allSamples, @i, @sampleClusters,
+        @sampleCentroids);
 
-    @pool = map { threads->create(\&clusterSample, $id, [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ]) } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+    @pool = map { threads->create(\&clusterSample, $id, $_) } @rangeChunks;
     @allSamples = map { $_->join() } @pool;
     @sampleCentroids = map { @{$_->[0]} } @allSamples;
     @sampleClusters = map { @{$_->[1]} } @allSamples;
@@ -708,17 +818,17 @@ sub clusterReads {
 
 sub clusterSample {
 
-    my $id = shift;
-    my @ranges = @{$_[0]};
+    my $id = $_[0];
+    my $ranges = retrieve $_[1];
 
-    return unless(@ranges);
+    return unless(@{$ranges});
 
     my (@centroids, @clusters, @i);
 
-    while (@ranges) {
+    while (@{$ranges}) {
 
         my ($kmin, $clusterer, @sample, @startCentroids);
-        @sample = splice(@ranges, 0, min(scalar(@ranges), $minSampleSize));
+        @sample = splice(@{$ranges}, 0, min(scalar(@{$ranges}), $minSampleSize));
         @startCentroids = initCentroids(@sample);
         $kmin = @startCentroids;
         $clusterer = Cluster::Kmeans->new( data          => \@sample,
@@ -972,12 +1082,12 @@ sub plotImage {
 
 sub foldChimeras {
 
-    my $id = shift;
-    my @ranges = @{$_[0]};
+    my $id = $_[0];
+    my $ranges = retrieve($_[1]);
 
     my (%basePairs);
 
-    while (my $range = shift(@ranges)) {
+    while (my $range = shift(@{$ranges})) {
 
         my ($seq1, $seq2, $end1, $start2,
             @pairs);
@@ -1370,11 +1480,15 @@ sub help {
  -wl or --whitelist              <string>       A whitelist containing transcript IDs (one per each row) to restrict the analysis to (optional)
  -mg or --min-gap                <int>          Minimum gap length (in nt) to consider a chimeric read (>0, Default: 1)
  -mh or --min-half               <int>          Minimum length (in nt) of each half of a chimeric read to consider it (>0, Default: 20)
- -xr  or --max-reads             <int>          Maximum number of chimeric reads to analyze for each transcript (>0, Default: 100000)
+ -xr or --max-reads              <int>          Maximum number of chimeric reads to analyze for each transcript (>0, Default: 100000)
                                                 Note: all chimeric reads are first imported, then a random sample is extracted
  -c  or --constraint                            Generates a dot-bracket constraint file containing the inferred base-pairs whose probability
                                                 exceeds a given threshold (controlled by -ct or --constraint-theshold)
  -ct or --constraint-theshold    <float>        Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
+ -es or --eval-structures        <string>       Calculates the number of chimeric reads supporting each base-pair of a user-provided set of structures
+                                                Note: structures must be provided as a folder of dot-bracket (or .ct) files, named after their respective
+                                                      reference transcript
+ -eo or --eval-only                             Only calculates the chimeric read support for a reference structure (requires -es), and exits
 
  |
  +- Base-pairs inference options
