@@ -1485,9 +1485,9 @@ sub help {
  -c  or --constraint                            Generates a dot-bracket constraint file containing the inferred base-pairs whose probability
                                                 exceeds a given threshold (controlled by -ct or --constraint-theshold)
  -ct or --constraint-theshold    <float>        Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
- -es or --eval-structures        <string>       Calculates the number of chimeric reads supporting each base-pair of a user-provided set of structures
-                                                Note: structures must be provided as a folder of dot-bracket (or .ct) files, named after their respective
-                                                      reference transcript
+ -es or --eval-structures        <string>       Path to a folder of structure files (in .db or .ct format), for which the number of chimeric reads supporting
+                                                each base-pair will be calculated
+                                                Note: structure files must be named after their respective reference transcript
  -eo or --eval-only                             Only calculates the chimeric read support for a reference structure (requires -es), and exits
 
  |
