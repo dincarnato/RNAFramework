@@ -245,6 +245,8 @@ for (0 .. $#jsonin) {
 
 }
 
+die "\n\n  [!] Error: no window passed the provided filters\n\n" unless (scalar(keys %allWins));
+
 if (!$noMergeOverlapping) {
 
     print "\n[+] Merging concordant overlapping windows...\n";
@@ -374,7 +376,7 @@ if (!$noMergeOverlapping) {
 }
 
 # Initialize common windows with one of the files
-foreach my $id (keys %{$allWins{$jsonin[0]}}) { $commonWins{$id} = [ map { [@$_, { $jsonin[0] => [ @$_[0..1] ] }] } @{$allWins{$jsonin[0]}->{$id}} ]; }
+foreach my $id (keys %{$allWins{$jsonin[0]}}) { print $id . "\n"; $commonWins{$id} = [ map { [@$_, { $jsonin[0] => [ @$_[0..1] ] }] } @{$allWins{$jsonin[0]}->{$id}} ]; }
 delete($allWins{$jsonin[0]});
 
 if (@jsonin > 1) {
@@ -385,7 +387,13 @@ if (@jsonin > 1) {
 
         foreach my $id (keys %commonWins) {
 
-            next if (!exists $allWins{$file}->{$id});
+            if (!exists $allWins{$file}->{$id}) {
+
+                delete($commonWins{$id});
+
+                next;
+
+            }
 
             my (@commonSet);
 
