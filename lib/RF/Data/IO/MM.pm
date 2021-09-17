@@ -244,13 +244,13 @@ sub close {
 
     my $self = shift;
 
+    my $fh = $self->{_fh};
+
+    $self->_updatereadscount();
+
+    print $fh EOF; # EOF Marker
+
     if (defined $self->{index} && !-e $self->{index}) {
-
-        my $fh = $self->{_fh};
-
-        $self->_updatereadscount();
-
-        print $fh EOF; # EOF Marker
 
         open(my $ih, ">:raw", $self->{index}) or $self->throw("Unable to write MMI index (" . $! . ")");
         select((select($ih), $|=1)[0]);
