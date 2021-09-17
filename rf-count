@@ -652,7 +652,7 @@ sub count {
                                    index => $output . "index.rci",
                                    mode  => "w+" );
     $mmio = RF::Data::IO::MM->new( file  => $output . $sample->{file} . ".mm",
-                                   index => $output . "index.mmi",
+                                   index => $output . $sample->{file} . ".mmi",
                                    mode  => "w" ) if ($mutmap);
 
     if (open(my $fh, $samtools . " view " . $sample->{path} . " |")) {
@@ -771,14 +771,34 @@ sub count {
                     @mutations = collapsemutations(@mutations) if ($collapse);
                     $stats{mutated}++ if (@mutations);
 
-                    for (@mutations) {
+                    if (@mutations) {
 
-                        $counts[$_]++;
-                        $stats{substr($last{sequence}, $_, 1)}++;
+                        $stats{mutated}++;
+
+                        for (@mutations) {
+
+                            $counts[$_]++;
+                            $stats{substr($last{sequence}, $_, 1)}++;
+
+                        }
+
+    		            # Applies mask to reads in MM file
+                        if (exists $masks{$row[2]}) {
+
+                            foreach my $mask (@{$masks{$row[2]}}) {
+
+                                @mutations = grep { $_ < $mask->[0] || $_ > $mask->[1] } @mutations;
+
+                                if ($start >= $mask->[0] && $start <= $mask->[1]) { $start = $mask->[1] + 1; }
+                                elsif ($end >= $mask->[0] && $end <= $mask->[1]) { $end = $mask->[0] - 1; }
+
+                            }
+
+                        }
+
+                        $mmio->append_read($start, $end, scalar(@mutations), \@mutations) if ($mutmap && @mutations);
 
                     }
-
-                    $mmio->append_read($start, $end, scalar(@mutations), \@mutations) if ($mutmap);
 
                 }
 
