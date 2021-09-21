@@ -318,11 +318,11 @@ sub correlate {
 
         }
 
-        if (defined $minvalues || @commonidx < 2) {
+        if (defined $minvalues || @commonidx <= 2) {
 
             if (($minvalues < 1 && @commonidx / $nbases < $minvalues) ||
                 ($minvalues >= 1 && @commonidx < $minvalues) ||
-                @commonidx < 2) {
+                @commonidx <= 2) {
 
                 lock(%results);
                 $results{nominvalues}++;

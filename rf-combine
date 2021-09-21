@@ -551,10 +551,10 @@ sub combineall {
 
             if ($logtransform) {
 
-                @current = map { $_ > 0 ? log($_) : log(1e-308) } @current;
+                my @currentLog = map { $_ > 0 ? log($_) : log(1e-308) } @current;
 
-                push(@mean, sprintf("%." . $decimals . "f", exp(mean(@current))));
-                push(@stdev, sprintf("%." . $decimals . "f", exp(stdev(@current))));
+                push(@mean, sprintf("%." . $decimals . "f", exp(mean(@currentLog))));
+                push(@stdev, sprintf("%." . $decimals . "f", stdev(@currentLog)));
 
             }
             else {
