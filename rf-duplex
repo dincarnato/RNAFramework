@@ -1414,7 +1414,13 @@ sub fileTypeAndSorting {
 
             my ($row, @row);
 
+            last if (eof($fh));
+
             $row = <$fh>;
+            chomp($row);
+
+            next if (!defined $row);
+
             @row = split("\t", $row);
 
             if (@row < 13 || !isint($row[1], $row[4]) || $row[2] !~ m/^[\+-]$/) {
