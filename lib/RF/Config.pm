@@ -29,7 +29,16 @@ sub new {
         eval { Config::Simple->import_from($parameters{file}, \%parameters); } or Core::Utils::throw("Malformed configuration file");
 
         # This removes the leading 'default.' prefix added by Config::Simple when parsing 'key=value' pairs
-        %parameters = map { my $par = $_; $par =~ s/^default\.//; lc($par) => $parameters{$_} } keys(%parameters);
+        for (keys %parameters) {
+
+            if ($_ =~ m/^default\.(.+)$/) {
+
+                my $parameter = lc($1);
+                $parameters{$parameter} = $parameters{$_};
+
+            }
+
+        }
 
     }
 
