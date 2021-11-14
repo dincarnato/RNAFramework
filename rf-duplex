@@ -250,7 +250,7 @@ foreach my $sample (sort keys %samples) {
     print "\n[+] Processing sample \"" . $sample . "\"\n";
 
     mkpath($output . $sample . "/dotplot/", { mode  => 0755,
-                                              error => \$error });
+                                              error => \$error }) if (!$evalOnly);
     mkpath($output . $sample . "/clustered/", { mode  => 0755,
                                                 error => \$error }) if ($makeClustersSam);
     mkpath($output . $sample . "/images/", { mode  => 0755,
@@ -385,7 +385,7 @@ sub processTranscript {
 
           if (defined $id && !-e $output . $sample . "/dotplot/" . uc(substr($id, 0, 1))) {
 
-              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 });
+              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if (!$evalOnly);
               mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
               mkpath($output . $sample . "/images/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
               mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
