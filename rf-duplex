@@ -62,8 +62,8 @@ do {
                 "mpf|min-paired-frac=s"     => \$minPairedFrac,
                 "mo|min-overlap-frac=s"     => \$minOverlapFrac,
                 "mg|min-gap=i"              => \$minGap,
-                "mr|min-reads=i"            => \$minReads,
-                "xr|max-reads=i"            => \$maxReads,
+                "mr|min-reads=s"            => \$minReads,
+                "xr|max-reads=s"            => \$maxReads,
                 "mp|min-prob=s"             => \$minProb,
                 "mss|min-sample-size=i"     => \$minSampleSize,
                 "f|fasta=s"                 => \$reference,
@@ -119,6 +119,8 @@ die "\n  [!] Error: Provided FASTA reference does not exist\n\n" if (!-e $refere
 die "\n  [!] Error: Provided whitelist does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 die "\n  [!] Error: Provided structure folder does not exist\n\n" if (defined $evalStructures && !-d $evalStructures);
 die "\n  [!] Error: Minimum overlap must be comprised between 0 and 1\n\n" if (!inrange($minOverlapFrac, [0, 1]));
+die "\n  [!] Error: Minimum number of reads must be an INT > 0\n\n" if (!isint($minReads) || $minReads <= 0);
+die "\n  [!] Error: Maximum number of reads must be an INT > 0\n\n" if (!isint($maxReads) || $maxReads <= 0);
 die "\n  [!] Error: Minimum base-pair probability must be comprised between 0 and 1\n\n" if (!inrange($minProb, [0, 1]));
 die "\n  [!] Error: Minimum base-paired fraction must be comprised between 0 and 1\n\n" if (!inrange($minPairedFrac, [0, 1]));
 die "\n  [!] Error: Minimum chimera support must be comprised between 0.5 and 1\n\n" if ($requireBpSupport && !inrange($minChimeraFrac, [0.5, 1]));
