@@ -554,7 +554,7 @@ for (my $i = 0; $i < @tmp; $i++) {
 
     my ($sample, $total, @stats);
     $sample = $tmp[$i];
-    @stats = bowtie_log($logdir . $sample->{id} . "_mapping.log");
+    @stats = bowtie_log($logdir . $sample->{id} . "_mapping.log", $sample->{paired});
     $total = sum(@stats[0..2]);
 
     die "\n  [!] Bowtie log processing failed." .
@@ -623,6 +623,7 @@ sub cleanup {
 sub bowtie_log {
 
     my $log = shift;
+    my $paired = shift;
 
     my @stats = (0, 0, 0, 0);
 
@@ -631,9 +632,20 @@ sub bowtie_log {
 
         if ($bowtie2) {
 
-            if ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? exactly 1 time/) { $stats[0] = $1; }
-            elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? 0 times/) { $stats[1] = $1; }
-            elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned(?: concordantly)? >1 times/) { $stats[2] = $1; }
+            if ($paired) {
+
+                if ($row =~ m/(\d+) \([\d\.\%]+\) aligned concordantly exactly 1 time/) { $stats[0] = $1; }
+                elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned concordantly 0 times/) { $stats[1] = $1; }
+                elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned concordantly >1 times/) { $stats[2] = $1; }
+
+            }
+            else {
+
+                if ($row =~ m/(\d+) \([\d\.\%]+\) aligned exactly 1 time/) { $stats[0] = $1; }
+                elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned 0 times/) { $stats[1] = $1; }
+                elsif ($row =~ m/(\d+) \([\d\.\%]+\) aligned >1 times/) { $stats[2] = $1; }
+
+            }
 
         }
         else {
