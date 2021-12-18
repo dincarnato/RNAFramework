@@ -69,8 +69,8 @@ sub fold {
 
     for (split(/\n/, $ret)) {
 
-        if ($_ =~ m/^([\.\(\)]+) \(\s?([\d\.-]+)\)$/) { ($structure, $energy) = ($1, $2); }
-        elsif ($_ =~ m/^([\.\(\)]+) \{\s?[\d\.-]+ MEA=[\d\.]+\}$/) { $mea = $1; }
+        if ($_ =~ m/^([\.\(\)]+) \(\s+?([\d\.-]+)\)$/) { ($structure, $energy) = ($1, $2); }
+        elsif ($_ =~ m/^([\.\(\)]+) \{\s+?[\d\.-]+ MEA=[\d\.]+\}$/) { $mea = $1; }
 
     }
 
@@ -81,7 +81,8 @@ sub fold {
                                             structure       => $structure,
                                             mea             => $mea,
                                             bpprobabilities => \%bpprobs,
-                                            energy          => $energy );
+                                            energy          => $energy,
+                                            lonelypairs     => $parameters->{noLonelyPairs} ? 0 : 1 );
 
     return($fold);
 
@@ -206,7 +207,7 @@ sub _checkFoldParams {
                                     constraint        => "." x length($sequence),
                                     maxBPspan         => undef,
                                     enforceConstraint => 0,
-                                    noLonelyPairs     => 1,
+                                    noLonelyPairs     => 0,
                                     noClosingGU       => 0,
                                     partitionFunction => 0,
                                     MEA               => 0,
@@ -295,7 +296,7 @@ sub _checkAliFoldParams {
 
     $parameters = checkparameters({ maxBPspan          => undef,
                                     mostInformativeSeq => 0,
-                                    noLonelyPairs      => 1,
+                                    noLonelyPairs      => 0,
                                     noClosingGU        => 0,
                                     partitionFunction  => 0,
                                     slope              => 1.8,
@@ -322,24 +323,24 @@ sub _makeInputFile {
     my $self = shift;
     my ($sequence, $constraint) = @_;
 
-    my ($id, $nestedbp, $pkpairs);
+    my ($id, $nestedbp, $pkpairs, @unpaired);
+    push(@unpaired, $-[0]) while ($constraint =~ m/x/g);
+    $constraint =~ s/x/./g;
     ($nestedbp, $pkpairs) = rmpseudoknots($sequence, $constraint);
     $id = "." . $self->{_randId};
 
     if ($self->{ssPseudoknots}) {
 
-        my @constraint = split(//, $nestedbp);
-
         for (@{$pkpairs}) {
 
-            $constraint[$_->[0]] = "x";
-            $constraint[$_->[1]] = "x";
+            substr($nestedbp, $_->[0], 1) = "x";
+            substr($nestedbp, $_->[1], 1) = "x";
 
         }
 
-        $nestedbp = join("", @constraint);
-
     }
+
+    substr($nestedbp, $_, 1) = "x" for (@unpaired);
 
     open(my $wh, ">", $self->{tmpdir} . $id . ".fasta") or $self->throw("Unable to write temporary input FASTA file (" . $! . ")");
     select((select($wh), $|=1)[0]);
