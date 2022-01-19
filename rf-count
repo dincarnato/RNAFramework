@@ -268,12 +268,12 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
 
-    push(@qcounter, { path           => $sample,
-                                   file           => $file,
-                                   type           => guess_type($sample),
-                                   head           => undef,
-                                   trim5          => 0,
-                                   hashead        => 0 });
+    push(@qcounter, { path    => $sample,
+                      file    => $file,
+                      type    => guess_type($sample),
+                      head    => undef,
+                      trim5   => 0,
+                      hashead => 0 });
 
     $files{$file} = $#qcounter;
     $spacer{$file} = length($file);
