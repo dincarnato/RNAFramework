@@ -1253,7 +1253,7 @@ sub help {
  -f   or --fasta                   <string>       Path to a FASTA file containing the reference transcripts
                                                   Note: Transcripts in this file must match transcripts in SAM/BAM file headers
  -mf  or --mask-file               <string>       Path to a mask file
- -ndd or --no-discard-duplicates                  Reads marked as PCR/optical duplicates, discarded by default, will also be considered
+ -ndd or --no-discard-duplicates                  Reads marked as PCR/optical duplicates, discarded by default, will be also considered
  -pn  or --primary-only                           Considers only primary alignments (SAM flag != 256)
  -po  or --paired-only                            When processing SAM/BAM files from paired-end experiments, only those reads for which
                                                   both mates are mapped will be considered
