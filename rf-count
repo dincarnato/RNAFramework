@@ -1230,40 +1230,41 @@ sub help {
 
  Usage:   rf-count [Options] Sample1.sam Sample2.bam ... Samplen.sam
 
- Options                                     Description
- -p  or --processors          <int>          Number of processors to use (Default: 1)
- -wt or --working-threads     <int>          Number of working threads to use for each instance of SAMTools (Default: 1).
-                                             Note: RF Count executes 1 instance of SAMTools for each processor specified by -p.
-                                                   At least -p <processors> * -wt <threads> processors are required.
- -t  or --tmp-dir             <string>       Temporary directory (Default: <output>/tmp)
- -o  or --output-dir          <string>       Output directory (Default: rf_count/)
- -ow or --overwrite                          Overwrites output directory (if the specified path already exists)
- -r  or --sorted                             Assumes that the provided SAM/BAM files are already sorted lexicographically by
-                                             transcript ID, and numerically by position
- -t5 or --trim-5prime         <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
-                                             5'-end of reads in the respective sample SAM/BAM files (Default: 0)
-                                             Note: Values must be provided in the same order as the input files.
-                                                   If a single value is specified along with multiple SAM/BAM files, it will
-                                                   be used for all files.
- -fh or --from-header                        Instead of providing the number of bases trimmed from 5'-end of reads through the -t5 (or
-                                             --trim-5prime) parameter, RF Count will try to guess it automatically from the header of
-                                             the provided SAM/BAM files
- -f  or --fasta               <string>       Path to a FASTA file containing the reference transcripts
-                                             Note: Transcripts in this file must match transcripts in SAM/BAM file headers
- -mf or --mask-file           <string>       Path to a mask file
- -pn or --primary-only                       Considers only primary alignments (SAM bitwise flag != 256)
- -po or --paired-only                        When processing SAM/BAM files from paired-end experiments, only those reads for which
-                                             both mates are mapped will be considered
- -pp or --properly-paired                    When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
-                                             proper pair will be considered
- -ic or --include-clipped                    Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops
-                                             Note: The default behavior is to exclude soft/hard-clipped reads.
-                                                   When this option is active, the RT-stop position is considered to be the position
-                                                   preceding the clipped bases.
-                                                   This option has no effect when -m (or --count-mutations) is enabled.
- -mq or --map-quality                        Minimum mapping quality to consider a read (Default: 10)
- -co or --coverage-only                      Only calculates per-base coverage (disables RT-stops/mutations count)
- -m  or --count-mutations                    Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
+ Options                                          Description
+ -p   or --processors              <int>          Number of processors to use (Default: 1)
+ -wt  or --working-threads         <int>          Number of working threads to use for each instance of SAMTools (Default: 1).
+                                                  Note: RF Count executes 1 instance of SAMTools for each processor specified by -p.
+                                                        At least -p <processors> * -wt <threads> processors are required.
+ -t   or --tmp-dir                 <string>       Temporary directory (Default: <output>/tmp)
+ -o   or --output-dir              <string>       Output directory (Default: rf_count/)
+ -ow  or --overwrite                              Overwrites output directory (if the specified path already exists)
+ -r   or --sorted                                 Assumes that the provided SAM/BAM files are already sorted lexicographically by
+                                                  transcript ID, and numerically by position
+ -t5  or --trim-5prime             <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
+                                                  5'-end of reads in the respective sample SAM/BAM files (Default: 0)
+                                                  Note: Values must be provided in the same order as the input files.
+                                                        If a single value is specified along with multiple SAM/BAM files, it will
+                                                        be used for all files.
+ -fh  or --from-header                            Instead of providing the number of bases trimmed from 5'-end of reads through the -t5 (or
+                                                  --trim-5prime) parameter, RF Count will try to guess it automatically from the header of
+                                                  the provided SAM/BAM files
+ -f   or --fasta                   <string>       Path to a FASTA file containing the reference transcripts
+                                                  Note: Transcripts in this file must match transcripts in SAM/BAM file headers
+ -mf  or --mask-file               <string>       Path to a mask file
+ -ndd or --no-discard-duplicates                  Reads marked as PCR/optical duplicates, discarded by default, will also be considered
+ -pn  or --primary-only                           Considers only primary alignments (SAM flag != 256)
+ -po  or --paired-only                            When processing SAM/BAM files from paired-end experiments, only those reads for which
+                                                  both mates are mapped will be considered
+ -pp  or --properly-paired                        When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
+                                                  proper pair will be considered
+ -ic  or --include-clipped                        Include reads that have been soft/hard-clipped at their 5'-end when calculating RT-stops
+                                                  Note: The default behavior is to exclude soft/hard-clipped reads.
+                                                        When this option is active, the RT-stop position is considered to be the position
+                                                        preceding the clipped bases.
+                                                        This option has no effect when -m (or --count-mutations) is enabled.
+ -mq  or --map-quality                            Minimum mapping quality to consider a read (Default: 10)
+ -co  or --coverage-only                          Only calculates per-base coverage (disables RT-stops/mutations count)
+ -m   or --count-mutations                        Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
 
  |
  +- Mutation count mode options
