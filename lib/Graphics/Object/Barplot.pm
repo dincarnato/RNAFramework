@@ -39,7 +39,7 @@ sub _calcplotwidth {
     $self->{_barwidth} = $plotarea / $div;
     $self->{_barspace} = $self->{_barwidth} * 0.25;
     
-    $self->throw("Image width is too small (Required: " . ceil($minwidth) . "px)") if ($minwidth >= $self->{_width});
+    $self->warn("Image width is too small (Required: " . ceil($minwidth) . "px)") if ($minwidth >= $self->{_width});
     
 }
 

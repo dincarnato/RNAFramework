@@ -42,8 +42,8 @@ $|++;
 my ($output, $overwrite, $help, $minvalues,
     $threads, $table, $skipoverall, $spearman,
     $ignoreseq, $singlefile, $isRC, $keepbases,
-    $coverage, $ratio, $minCov, @pool, @files,
-    @overall, %files);
+    $coverage, $ratio, $minCov, $maxReact, 
+    @pool, @files, @overall, %files);
 
 my @ids : shared;
 my @allreactivities1 : shared;
@@ -71,7 +71,8 @@ do {
                 "i|ignore-sequence" => \$ignoreseq,
                 "c|coverage"        => \$coverage,
                 "r|ratio"           => \$ratio,
-                "mc|min-coverage=i" => \$minCov ) or help(1);
+                "mc|min-coverage=i" => \$minCov,
+		 "mr|max-react=s"    => \$maxReact ) or help(1);
 
     @files = uniq(@ARGV);
 
@@ -84,6 +85,7 @@ $output ||= "rf_correlate.csv";
 $threads ||= 1;
 $keepbases ||= "ACGT";
 $minCov ||= 1;
+$maxReact ||= 1e9;
 $output =~ s/(?:\.csv)?$/\.csv/ if (defined $output);
 
 ##
@@ -98,6 +100,7 @@ die "\n  [!] Error: Miminum number of values must be greater than 0\n\n" if (def
                                                                               $minvalues == 0));
 die "\n  [!] Error: Parameters -r and -c are mutually exclusive\n\n" if ($ratio && $coverage);
 die "\n  [!] Error: Invalid bases to keep\n\n" if (!isiupac($keepbases) && $keepbases !~ m/^all$/i);
+die "\n  [!] Error: Maximum reactivity must be positive\n\n" if (!ispositive($maxReact));
 
 $minvalues = round($minvalues) if ($minvalues > 1);
 $singlefile = 1 if (!-d $files[0] && !-d $files[1]);
@@ -304,14 +307,14 @@ sub correlate {
 
             if ($ratio) {
 
-        		my @i = grep { $cov1[$_] } @cov1;
-        	    @i = grep { $cov2[$_] } @i;
-        		@counts1 = @counts1[@i];
+		 my @i = grep { $cov1[$_] } @cov1;
+	        @i = grep { $cov2[$_] } @i;
+		 @counts1 = @counts1[@i];
                 @counts2 = @counts2[@i];
                 @cov1 = @cov1[@i];
                 @cov2 = @cov2[@i];
 
-        	}
+	    }
 
             @reactivity1 = $coverage ? @cov1 : ($ratio ? map { $counts1[$_] / $cov1[$_] } 0 .. $#cov1 : @counts1);
             @reactivity2 = $coverage ? @cov2 : ($ratio ? map { $counts2[$_] / $cov2[$_] } 0 .. $#cov2 : @counts2);
@@ -322,8 +325,8 @@ sub correlate {
         }
         else {
 
-            @reactivity1 = $entry1->reactivity();
-            @reactivity2 = $entry2->reactivity();
+            @reactivity1 = map { isnan($_) ? "NaN" : ($_ > $maxReact ? $maxReact : $_) } $entry1->reactivity();
+            @reactivity2 = map { isnan($_) ? "NaN" : ($_ > $maxReact ? $maxReact : $_) } $entry2->reactivity();
 
             @commonidx = grep { isnumeric($reactivity1[$_]) &&
                                 isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
@@ -404,6 +407,7 @@ sub help {
  -m  or --min-values       <float>        Minimum number of values to calculate correlation (Default: off)
                                           Note: if a value between 0 and 1 is provided, this is interpreted as a
                                                 fraction of the transcript's length
+ -mr or --max-reactivity   <float>        Maximum reactivity value to cap reactivities to (>0, Default: 1e9)
  -s  or --skip-overall                    Skips overall experiment correlation calculation (faster)
  -i  or --ignore-sequences                Ignores sequence differences (e.g. SNVs) between the compared transcripts
  -S  or --spearman                        Uses Spearman instead of Pearson to calculate correlation

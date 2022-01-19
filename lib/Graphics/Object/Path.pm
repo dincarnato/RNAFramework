@@ -44,7 +44,7 @@ sub _calcplotwidth {
     $plotarea = $self->{_width} - $minwidth;
     $self->{_pointdist} = $plotarea / $#{$self->{values}};
     
-    $self->throw("Image width is too small (Required: " . ceil($minwidth) . "px)") if ($minwidth >= $self->{_width});
+    $self->warn("Image width is too small (Required: " . ceil($minwidth) . "px)") if ($minwidth >= $self->{_width});
     
 }
 

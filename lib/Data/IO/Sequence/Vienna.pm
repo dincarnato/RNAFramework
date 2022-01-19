@@ -98,7 +98,7 @@ sub read {
     local $/ = "\n>";
     $stream = <$fh>;
 
-    chomp();
+    chomp($stream);
 
     foreach my $line (split(/\n/, $stream)) {
 

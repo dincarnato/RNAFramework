@@ -772,7 +772,6 @@ sub count {
                     @mutations = uniq(@mutations, @{$ins}) if (!$noins);
                     @mutations = rmconsecutive(@mutations) if ($rmconsecutive);
                     @mutations = collapsemutations(@mutations) if ($collapse);
-                    $stats{mutated}++ if (@mutations);
 
                     if (@mutations) {
 
