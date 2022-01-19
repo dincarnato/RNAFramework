@@ -50,7 +50,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $offset, $threads, $processmanager, $mbfile,
     $madetmp, $table, $mutcount, $seqio,
     $rcio, $includeclip, $covonly, $mutmap,
-    $nodel, $pp, $po, $fromhead,
+    $nodel, $pp, $po, $fromhead, $nodiscarddup,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
@@ -100,7 +100,8 @@ do {
                 "mv|max-coverage=i"          => \$maxcov,
                 "pn|primary-only"            => \$primaryonly,
                 "wl|whitelist=i"             => \$whitelist,
-                "om|only-mut=s"              => \$onlyMut ) or help(1);
+                "om|only-mut=s"              => \$onlyMut,
+                "ndd|no-discard-duplicates"  => \$nodiscarddup ) or help(1);
 
 };
 
@@ -701,6 +702,8 @@ sub count {
                      !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
             next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
             next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
+            next if ($row[1] & 512); # Discard reads that fail platform quality checks
+            next if ($row[1] & 1024 && !$nodiscarddup); # Discard reads that are optical/PCR duplicates
 
             if ($row[2] ne $last{id}) {
 
