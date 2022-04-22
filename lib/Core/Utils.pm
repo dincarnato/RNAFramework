@@ -364,7 +364,7 @@ sub mktree {
     my $path = shift;
     my $mode = shift || 0777;
 
-    Core::Utils::throw("Invalid directory mode \"" . $mode . "\"") if ($mode !~ m/^[0-7]{3}$/);
+    return("Invalid directory mode \"" . $mode . "\"") if ($mode !~ m/^[0-7]{3}$/);
 
     my ($last, @path);
     @path = split(/\//, $path);
@@ -380,10 +380,12 @@ sub mktree {
 
         }
 
-        if (-e $last) { Core::Utils::throw("A file with the same name already exists (" . $last . ")") if (!-d $last); }
-        else { mkdir($last, $mode) or Core::Utils::throw("Unable to create directory (" . $! . ")"); }
+        if (-e $last) { return("A file with the same name already exists (" . $last . ")") if (!-d $last); }
+        else { mkdir($last, $mode) or return("Unable to create directory (" . $! . ")"); }
 
     }
+
+    return();
 
 }
 

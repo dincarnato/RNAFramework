@@ -467,7 +467,7 @@ foreach my $id (sort keys %commonWins) {
             @stoichiometryCache, %coords);
         ($start, $end, $nConfs) = @{$win}[0..2];
 
-        $winSeq = substr($jsonData[0]->{$id}->{sequence}, $start, $end - $start);
+        $winSeq = substr($jsonData[0]->{$id}->{sequence}, $start, $end - $start + 1);
         %coords = %{$win->[3]};
         @rcCache = map { [] } 0 .. $#jsonin; # For storing RC data, before writing it
         @stoichiometryCache = map { [] } 0 .. $#jsonin; # For storing stoichiometries
@@ -480,7 +480,7 @@ foreach my $id (sort keys %commonWins) {
             $newStart = max(0, $start - $extend);
             $newEnd = min(length($jsonData[0]->{$id}->{sequence}) - 1, $end + $extend);
             $upSeq = substr($jsonData[0]->{$id}->{sequence}, $newStart, $start - $newStart);
-            $downSeq = substr($jsonData[0]->{$id}->{sequence}, $end, $newEnd - $end);
+            $downSeq = substr($jsonData[0]->{$id}->{sequence}, $end + 1, $newEnd - $end);
 
         }
 
@@ -496,7 +496,7 @@ foreach my $id (sort keys %commonWins) {
                     @counts, @coverage);
                 $c = 0;
                 $adjStart = $start - $realStart;
-                $adjEnd = $end - $realStart - 1;
+                $adjEnd = $end - $realStart;
                 @counts = map { [ @{$realWin->{counts}->[$_]}[$adjStart .. $adjEnd] ] } 0 .. $nConfs - 1;
                 @coverage = map { [ @{$realWin->{coverage}->[$_]}[$adjStart .. $adjEnd] ] } 0 .. $nConfs - 1;
 

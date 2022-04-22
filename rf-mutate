@@ -363,8 +363,8 @@ sub mutate {
 
         eval { $entry = Data::IO::Sequence->new(file => $input->{file})->read(); };
 
-        if ($@ ||
-            (!$entry->can("structure"))) {
+        if ($@ || !$entry ||
+            ($entry && !$entry->can("structure"))) {
 
             lock(%results);
             $results{parseerr}++;

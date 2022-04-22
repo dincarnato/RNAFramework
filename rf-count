@@ -699,6 +699,7 @@ sub count {
                      !$covonly); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
             next if ($clip5 &&
                      !$mutcount &&
+                     !$covonly &&
                      !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
             next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
             next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
@@ -962,6 +963,8 @@ sub parsemd { # SAM MD flag parser
 
     return if (!defined $md);
 
+    $md = uc($md);
+
     while($md =~ m/^(\d+)/) {
 
         my ($len, $next);
@@ -1086,8 +1089,8 @@ sub parsecigar {
     while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
 
         my ($n, $op) = ($1, $2);
-        $cov += $n if (($includeclip && $op =~ m/^[DNM=XSH]$/) ||
-                       (!$includeclip && $op =~ m/^[DNM=X]$/));
+        $cov += $n if (($includeclip && $op =~ m/^[DM=XSH]$/) ||
+                       (!$includeclip && $op =~ m/^[DM=X]$/));
         $last += $n if ($op =~ m/^[DNM=X]$/);
         $truelen += $n if ($op =~ m/^[MI]$/);
         push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide

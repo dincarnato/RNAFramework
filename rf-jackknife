@@ -77,7 +77,7 @@ do {
                 "kl|keep-lonelypairs"  => \$kl,
                 "m|median"             => \$m,
                 "am|arithmetic-mean"   => \$am,
-                "i|ignore-sequence"    => \$ignoreseq ) or help(1);
+                "g|ignore-sequence"    => \$ignoreseq ) or help(1);
 
     $input = $ARGV[0];
 
@@ -467,7 +467,7 @@ sub help {
  -kn or --keep-noncanonical                   Keeps non-canonical basepairs in reference structure
  -kp or --keep-pseudoknots                    Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs                    Keeps lonely basepairs (helices of length 1 bp) in reference structure
- -i  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
+ -g  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
  -m  or --median                              Reports the median PPV/sensitivity value between all reference structures
                                               Note: by default, the geometric mean of PPV/sensitivity values is reported
  -am or --arithmetic-mean                     Reports the arithmetic mean of PPV/sensitivity values between all reference structures
