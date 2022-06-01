@@ -40,13 +40,21 @@ sub _validate {
                                                              !isna($self->{sequence}));
     $self->throw("Base counts must be provided as an ARRAY reference") if (ref($self->{counts}) ne "ARRAY");
     $self->throw("Coverage must be provided as an ARRAY reference") if (ref($self->{coverage}) ne "ARRAY");
-    $self->throw("Different number of elements for RT-stops and coverage arrays") if (@{$self->{counts}} != @{$self->{coverage}});
-    $self->throw("Number of elements for RT-stops and coverage arrays differs from sequence length") if (@{$self->{counts}} != length($self->{sequence}));
+    $self->throw("Different number of elements for counts and coverage arrays") if (@{$self->{counts}} != @{$self->{coverage}});
     $self->throw("Transcript's mapped reads must be a positive integer") if (!isint($self->{readscount}));
     
 }
 
-sub id { return($_[0]->{id}); }
+sub id {
+
+    my $self = shift;
+    my $id = shift if (@_);
+
+    $self->{id} = $id if (defined $id);
+
+    return($self->{id}); 
+
+}
 
 sub sequence { return($_[0]->{sequence}); }
 
@@ -61,6 +69,16 @@ sub meancoverage { return(mean(@{$_[0]->{coverage}})); }
 sub mediancoverage { return(median(@{$_[0]->{coverage}})); }
 
 sub length { return(length($_[0]->{sequence})); }
+
+sub revcomp {
+
+    my $self = shift;
+
+    $self->{sequence} = dnarevcomp($self->{sequence});
+    $self->{counts} = [ reverse(@{$self->{counts}}) ];
+    $self->{coverage} = [ reverse(@{$self->{coverage}}) ];
+
+}
 
 sub DESTROY {
     

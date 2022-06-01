@@ -38,11 +38,33 @@ $tolerance /= 2 while ((1 + $tolerance / 2) > 1);
 sub pearson {
 
     my @data = @_[0..1];
-    my $rmnan = $_[2] if (@_ == 3);
+    my $rm = checkparameters({ NaN      => 0,
+                               outliers => 0,
+                               cap      => 0 }, $_[2] || {});
 
-    if ($rmnan) {
+    if ($rm->{NaN}) {
 
         my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices];
+
+    }
+
+    if ($rm->{cap}) {
+
+        @{$data[0]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[0]};
+        @{$data[1]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[1]};
+
+    }
+
+    if ($rm->{outliers}) {
+
+        my ($min1, $max1, $min2, $max2, @indices);
+        $min1 = percentile($data[0], 0.05);
+        $max1 = percentile($data[0], 0.95);
+        $min2 = percentile($data[1], 0.05);
+        $max2 = percentile($data[1], 0.95);
+        @indices = grep { inrange($data[0]->[$_], [$min1, $max1]) && inrange($data[1]->[$_], [$min2, $max2]) } 0 .. $#{$data[0]};
         @{$data[0]} = @{$data[0]}[@indices];
         @{$data[1]} = @{$data[1]}[@indices];
 

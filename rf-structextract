@@ -1,0 +1,501 @@
+#!/usr/bin/env perl
+
+##
+# RF StructExtract
+# RNA Framework [http://www.rnaframework.com]
+#
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Extracts low SHAPE - low SHANNON RNA structure elements
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use File::Path qw(mkpath);
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Core::Utils;
+use Data::IO::Sequence;
+use Data::Sequence::Utils;
+use RF::Data::IO::XML;
+use RNA::Utils;
+use Term::Constants qw(:screen);
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my ($help, $output, $overwrite, $minPairedFrac,
+    $minMotifLen, $maxMotifLen, $multiwayOnly, $maxLoopSize,
+    $winSize, $rffoldOut, $xmlFolder, $threads, $onePerFile,
+    $minValueFrac, $ignoreReact, $ignoreShannon, $isViennaInstalled,
+    $minTranscriptLen, $minBelowMedian, $error, $evalEnergy,
+    $pvalue, $nShufflings, $dinuclShuffle, @pool);
+
+$isViennaInstalled = eval { require RNA; 1; };
+
+die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
+    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless($isViennaInstalled);
+
+my $extracted : shared;
+my @ids : shared;
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                => \$help,
+                "o|output=s"            => \$output,
+                "ow|overwrite"          => \$overwrite,
+                "ro|rffoldOut=s"        => \$rffoldOut,
+                "xf|xmlFolder=s"        => \$xmlFolder,
+                "mp|minPairedFrac=s"    => \$minPairedFrac,
+                "mm|minMotifLen=i"      => \$minMotifLen,
+                "xm|maxMotifLen=i"      => \$maxMotifLen,
+                "mo|multiwayOnly"       => \$multiwayOnly,
+                "xl|maxLoopSize=i"      => \$maxLoopSize,
+                "w|winSize=i"           => \$winSize,
+                "mv|minValueFrac=s"     => \$minValueFrac,
+                "ir|ignoreReact"        => \$ignoreReact,
+                "is|ignoreShannon"      => \$ignoreShannon,
+                "ml|minTranscriptLen=i" => \$minTranscriptLen,
+                "mb|minBelowMedian=s"   => \$minBelowMedian,
+                "p|processors=i"        => \$threads,
+                "opf|onePerFile"        => \$onePerFile,
+                "ee|evalEnergy"         => \$evalEnergy,
+                "v|pvalue=s"            => \$pvalue,
+                "ns|nShufflings=s"      => \$nShufflings,
+                "ds|dinuclShuffle"      => \$dinuclShuffle ) or help(1);
+
+};
+
+help() if ($help);
+
+# Default
+$threads ||= 1;
+$minPairedFrac //= 0.45;
+$minValueFrac //= 0.4;
+$minMotifLen //= 50;
+$minBelowMedian ||= 0.7;
+$winSize ||= 50;
+$minTranscriptLen ||= 500;
+$nShufflings ||= 100;
+$pvalue //= 0.05;
+$output ||= "rf_structextract/";
+$extracted = 0;
+
+$output =~ s/\/?$/\//;
+$rffoldOut =~ s/\/?$/\// if (defined $rffoldOut);
+$xmlFolder =~ s/\/?$/\// if (defined $xmlFolder);
+
+if (!$ignoreReact) {
+
+    die "\n  [!] Error: No XML folder specified\n\n" if (!defined $xmlFolder);
+    die "\n  [!] Error: Provided XML folder does not exist\n\n" if (!-d $xmlFolder);
+
+}
+
+die "\n  [!] Error: No RF Fold output folder specified\n\n" if (!defined $rffoldOut);
+die "\n  [!] Error: Provided RF Fold output folder does not exist\n\n" if (!-d $rffoldOut);
+die "\n  [!] Error: Cannot find \"structures\" folder inside RF Fold output directory\n\n" if (!-d $rffoldOut . "structures");
+die "\n  [!] Error: Cannot find \"shannon\" folder inside RF Fold output directory\n\n" if (!-d $rffoldOut . "shannon" && !$ignoreShannon);
+die "\n  [!] Error: Minimum paired fraction must be comprised between 0 and 1\n\n" if (!isnumeric($minPairedFrac) || !inrange($minPairedFrac, [0, 1]));
+die "\n  [!] Error: Minimum fraction of values must be comprised between 0 and 1\n\n" if (!isnumeric($minValueFrac) || !inrange($minValueFrac, [0, 1]));
+die "\n  [!] Error: Minimum motif length cannot exceed maximum motif length\n\n" if (defined $maxMotifLen && $minMotifLen > $maxMotifLen);
+die "\n  [!] Error: Window length must be >= 2\n\n" if ($winSize < 2);
+die "\n  [!] Error: Number of shufflings must be an INT >= 1\n\n" if (!isint($nShufflings) || $nShufflings <= 0);
+die "\n  [!] Error: P-value threshold mut be comprised between 0 and 1\n\n" if (!ispositive($pvalue) || !inrange($pvalue, [0, 1]));
+
+$winSize = round($winSize / 2);
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+mkpath($output, { mode  => 0755,
+                  error => \$error });
+
+die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+print "\n[+] Importing transcripts...";
+
+opendir(my $dh, $rffoldOut . "structures");
+while(my $file = readdir($dh)) {
+
+    next if ($file !~ m/\.(?:db|ct)$/);
+
+    $file =~ s/\.(?:db|ct)$//;
+    push(@ids, $file);
+
+}
+closedir($dh);
+
+print " " . scalar(@ids) . " found.";
+
+if (!@ids) { die "\n\n  [!] Error: No valid transcript found in XML folder\n\n"; }
+
+print "\n[+] Extracting structure elements [Last: none]";
+
+@pool = map{ threads->create(\&extract) } 1 .. $threads;
+$_->join() for (@pool);
+
+print "\n[+] " . $extracted . " structure elements extracted" .
+      "\n[+] All done.\n\n";
+
+sub extract {
+
+    while(1) {
+
+        my ($id, $xmlref, $medianShannon, $medianReact,
+            $structIO, $structFile, $entry, $motifs,
+            @helices, @baseShannon, @winShannon, @baseReact,
+            @winReact);
+
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+
+        last unless($id);
+
+        if (-e $rffoldOut . "structures/" . $id . ".db") { $structFile = $rffoldOut . "structures/" . $id . ".db"; }
+        elsif (-e $rffoldOut . "structures/" . $id . ".ct") { $structFile = $rffoldOut . "structures/" . $id . ".ct"; }
+        else { next; }
+
+        eval { $structIO = Data::IO::Sequence->new(file => $structFile);
+               $entry = $structIO->read(); };
+
+        if ($@) { next; }
+
+        next if (!-e $rffoldOut . "shannon/" . $id . ".wig" && !$ignoreShannon);
+
+        if (!$ignoreReact) {
+
+            eval { $xmlref = RF::Data::IO::XML->new(file => $xmlFolder . $id . ".xml"); };
+
+            if ($@) { next; }
+
+        }
+
+        if ($entry->length() >= $minTranscriptLen) {
+
+            if (!$ignoreShannon) {
+
+                @baseShannon = (0) x $entry->length();
+                @winShannon = ("NaN") x $entry->length();
+
+                open(my $fh, "<", $rffoldOut . "shannon/" . $id . ".wig") or next;
+                while(<$fh>) {
+
+                    next if ($_ !~ m/^\d/);
+
+                    chomp();
+                    my @row = split " ";
+                    $baseShannon[$row[0] - 1] = $row[1];
+
+                }
+                close($fh);
+
+                $medianShannon = median(grep { isnumeric($_) } @baseShannon);
+
+                for(my $i = $winSize; $i < @baseShannon - $winSize; $i += 1) {
+
+                    my (@win, @i);
+                    @win = @baseShannon[$i - $winSize .. $i + $winSize];
+                    @i = grep { isnumeric($win[$_]) } 0 .. $#win;
+
+                    if (@i / @win >= $minValueFrac) {
+
+                        @win = @win[@i];
+                        $winShannon[$i] = median(@win) - $medianShannon;
+
+                    }
+
+                }
+
+            }
+
+            if (!$ignoreReact) {
+
+                @baseReact = $xmlref->reactivity();
+                @winReact = ("NaN") x $entry->length();
+                $medianReact = median(grep { isnumeric($_) } @baseReact);
+
+                for(my $i = $winSize; $i < @baseReact - $winSize; $i += 1) {
+
+                    my (@win, @i);
+                    @win = @baseReact[$i - $winSize .. $i + $winSize];
+                    @i = grep { isnumeric($win[$_]) } 0 .. $#win;
+
+                    if (@i / @win >= $minValueFrac) {
+
+                        @win = @win[@i];
+                        $winReact[$i] = median(@win) - $medianReact;
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        @helices = $entry->helices();
+
+        for(my $i = 0; $i < @helices; $i++) {
+
+            my ($parentStart, $parentEnd, $parentStruct, @parents,
+                @parentHelices, %bpHelixLookup);
+            @parents = $helices[$i]->parents();
+
+            next if (@parents); # If the helix has parents, than it does not delimit an independently folded domain
+
+            $parentStart = $helices[$i]->h5start();
+            $parentEnd = $helices[$i]->h3start();
+            $parentStruct = substr($entry->structure(), $parentStart, $parentEnd - $parentStart + 1);
+            @parentHelices = @{(listhelices($parentStruct))[0]};
+
+            # Populates the base-pair to helix lookup table
+            foreach my $j (0 .. $#parentHelices) { $bpHelixLookup{$_} = $j for (@{$parentHelices[$j]->{h5bases}}, @{$parentHelices[$j]->{h3bases}}); }
+
+            while ($parentStruct =~ m/(\(\.+?\))/g) {
+
+                my ($loop, $j, $belongHelix, $motifStart,
+                    $motifEnd, $motifLen, $motif);
+                $loop = $1;
+                $j = index($parentStruct, $loop, 0);
+                $belongHelix = $parentHelices[$bpHelixLookup{$j}];
+                $motifStart = $belongHelix->{h5start};
+                $motifEnd = $belongHelix->{h3start};
+                $motifLen = $motifEnd - $motifStart + 1;
+
+                next if (defined $maxMotifLen && $motifLen >= $maxMotifLen);
+                next if ($maxLoopSize && length($loop) - 2 > $maxLoopSize);
+                next if (!minPaired($parentStruct, $motifStart, $motifEnd));
+                next if (reactAndShannonFilter($parentStart, $motifStart, $motifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+
+                while(@{$belongHelix->{parents}} && defined (my $k = $belongHelix->{parents}->[-1])) {
+
+                    my ($parentHelix, $parentMotifStart, $parentMotifEnd);
+                    $parentHelix = $parentHelices[$k];
+                    $parentMotifStart = $parentHelix->{h5start};
+                    $parentMotifEnd = $parentHelix->{h3start};
+
+                    last if (defined $maxMotifLen && $parentMotifEnd - $parentMotifStart + 1 >= $maxMotifLen);
+
+                    if (minPaired($parentStruct, $parentMotifStart, $parentMotifEnd)) {
+
+                        last if ($maxLoopSize && loopSize($k, \@parentHelices) > $maxLoopSize);
+                        last if (reactAndShannonFilter($parentStart, $parentMotifStart, $parentMotifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+
+                        $belongHelix = $parentHelix;
+                        $motifStart = $parentMotifStart;
+                        $motifEnd = $parentMotifEnd;
+                        $motifLen = $motifEnd - $motifStart + 1;
+
+                    }
+                    else { last; }
+
+                }
+
+                $motif = substr($parentStruct, $motifStart, $motifLen);
+
+                # Motif's min criteria are met
+                if ($motifLen >= $minMotifLen && (($multiwayOnly && $motif =~ /\)\.*\(/) || !$multiwayOnly)) {
+
+                    my ($realStart, $realEnd, $sequence, $structure,
+                        $motifId);
+                    $realStart = $parentStart + $motifStart;
+                    $realEnd = $parentStart + $motifEnd;
+                    $sequence = substr($entry->sequence(), $realStart, $motifLen);
+                    $structure = substr($parentStruct, $motifStart, $motifLen);
+                    $motifId = $id . "_" . $realStart . "-" . $realEnd;
+
+                    if ($evalEnergy) {
+
+                        my ($energy, $mean, $stdev, $zscore, @randEnergies);
+                        $energy = RNA::energy_of_struct($sequence, $structure);
+
+                        # If there is a lonely pair, than lonely pairs are allowed
+                        $RNA::noLonelyPairs = 1 if ($structure =~ m/\.[\(\)]\./);
+
+                        for (1 .. $nShufflings) {
+
+                            push(@randEnergies, (RNA::fold($dinuclShuffle ? dishuffle($sequence) : nshuffle($sequence)))[1]);
+                            RNA::free_arrays();
+
+                        }
+
+                        $mean = mean(@randEnergies);
+                        $stdev = stdev(@randEnergies);
+                        $zscore = ($energy - $mean) / $stdev;
+
+                        next if (ispositive($zscore) || pnorm($zscore) >= $pvalue);
+
+                    }
+
+                    print CLRRET . "[+] Extracting structure elements [Last: " . $motifId . "]";
+
+                    $motifs .= ">" . $motifId . "\n" .
+                               $sequence . "\n" .
+                               $structure . "\n";
+
+                    if ($onePerFile) {
+
+                        open(my $fh, ">", $output . $motifId . ".db");
+                        print $fh $motifs;
+                        close($fh);
+
+                        undef($motifs)
+
+                    }
+
+                    { lock($extracted);
+                      $extracted++; }
+
+                }
+
+                # Mask the motif and keep looking
+                substr($parentStruct, $motifStart, $motifLen) = "." x $motifLen;
+
+                $j++;
+
+            }
+
+        }
+
+        if ($motifs) {
+
+            open(my $fh, ">", $output . $id . ".db");
+            print $fh $motifs;
+            close($fh);
+
+        }
+
+    }
+
+}
+
+sub reactAndShannonFilter {
+
+    my ($parentStart, $start, $end, $winReact, $winShannon) = @_;
+
+    my ($realStart, $realEnd, $motifLen);
+    $realStart = $parentStart + $start;
+    $realEnd = $parentStart + $end;
+    $motifLen = $realEnd - $realStart + 1;
+
+    if (!$ignoreShannon) {
+
+        my $n = scalar(grep { isnegative($_) } @{$winShannon}[$realStart .. $realEnd]);
+
+        return if ($n / $motifLen < $minBelowMedian);
+
+    }
+
+    if (!$ignoreReact) {
+
+        my $n = scalar(grep { isnegative($_) } @{$winReact}[$realStart .. $realEnd]);
+
+        return if ($n / $motifLen < $minBelowMedian);
+
+    }
+
+}
+
+sub minPaired {
+
+    my ($structure, $start, $end) = @_;
+    $structure = substr($structure, $start, $end - $start + 1);
+
+    my ($unpaired) = $structure =~ tr/././;
+
+    return(1 - $unpaired / length($structure) < $minPairedFrac ? 0 : 1);
+
+}
+
+sub loopSize {
+
+    my ($k, $helices) = @_;
+
+    my ($parent, $length, @children);
+    $parent = $helices->[$k];
+    $length = ($parent->{h3end} - 1) - ($parent->{h5end} + 1) + 1;
+    @children = grep { @{$_->{parents}} && $_->{parents}->[-1] == $k } @$helices;
+
+    $length -= $_->{h3start} - $_->{h5start} + 1 for (@children);
+
+    return($length);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF StructExtract (v$Core::Utils::VERSION beta)
+ RNA Framework [http://www.rnaframework.com]
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Extracts individual structure elements on the basis of specific selection criteria
+
+ Usage:   rf-structextract [Options] --rffoldOut /path/to/rffold_out --xmlFolder /path/to/XML/reactivities
+
+ Options                                        Description
+ -p   or --processors           <int>           Number of processors (threads) to use (Default: 1)
+ -ro  or --rffoldOut            <string>        Path to the output folder generated by rf-fold, containing the structures to be parsed
+ -xf  or --xmlFolder            <string>        Path to the output folder generated by rf-norm, containing the reactivities in XML format
+ -o   or --output               <string>        Output folder (Default: rf_structextract/)
+ -ow  or --overwrite                            Overwrites output folder (if the specified folder already exists)
+ -w   or --winSize              <int>           Window size (in nt) for calculating the median reactivity and Shannon (Default: 50)
+ -ml  or --minTranscriptLen     <int>           Low reactivity - low Shannon calculation will be skipped for transcripts below this length (Default: 500)
+ -ir  or --ignoreReact                          Skips low reactivity evaluation
+ -is  or --ignoreShannon                        Skips low Shannon evaluation
+ -mv  or --minValueFrac         <float>         Windows for which less than this fraction of bases is covered, will be set to NaN (Default: 0.4 [40%])
+ -mb  or --minBelowMedian       <float>         Structure elements having less than this fraction of bases whose Shannon and reactivity are below the
+                                                global transcript median, will be discarded (Default: 0.7 [70%])
+ -mp  or --minPairedFrac        <float>         Structure elements having less than this fraction of paired bases will be discarded (Default: 0.45 [45%])
+ -mm  or --minMotifLen          <int>           Structure elements below this length will be discarded (Default: 50)
+ -xm  or --maxMotifLen          <int>           Structure elements above this length will be discarded (Default: no limit)
+ -xl  or --maxLoopSize          <int>           Structure elements encompassing a loop larger than this number of bases, will be discarded (Default: no limit)
+ -mo  or --multiwayOnly                         Only report structure elements encompassing multiway junctions
+ -opf or --onePerFile                           Extracted structure elements belonging to the same transcript are reported in separate files
+ -ee  or --evalEnergy                           Only structure having a free energy significantly lower than expected by chance will be reported
+                                                Note #1: this is estimated by randomly shuffling the underlying sequence N times (where N is controlled via
+                                                         the --nShufflings parameter) and by calculating the probability associated with the corresponding Z-score
+                                                Note #2: this procedure will significantly slow down the analysis
+ -v   or --pvalue               <float>         P-value threshold for considering the energy of a structure significantly lower than expected by chance
+                                                (0-1, Default: 0.05)
+ -ns  or --nShufflings          <int>           Number of times a sequence must be shuffled (>=1, Default: 100)
+ -ds  or --dinuclShuffle                        Sequences are shuffled taking care to preserve their dinucleotide frequencies (slower)
+
+HELP
+
+}

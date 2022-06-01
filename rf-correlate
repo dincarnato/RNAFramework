@@ -42,7 +42,7 @@ $|++;
 my ($output, $overwrite, $help, $minvalues,
     $threads, $table, $skipoverall, $spearman,
     $ignoreseq, $singlefile, $isRC, $keepbases,
-    $coverage, $ratio, $minCov, $maxReact, 
+    $coverage, $ratio, $minCov, $maxReact,
     @pool, @files, @overall, %files);
 
 my @ids : shared;
@@ -307,14 +307,14 @@ sub correlate {
 
             if ($ratio) {
 
-		 my @i = grep { $cov1[$_] } @cov1;
-	        @i = grep { $cov2[$_] } @i;
-		 @counts1 = @counts1[@i];
+		        my @i = grep { $cov1[$_] } 0 .. $#cov1;
+                @i = grep { $cov2[$_] } @i;
+		        @counts1 = @counts1[@i];
                 @counts2 = @counts2[@i];
                 @cov1 = @cov1[@i];
                 @cov2 = @cov2[@i];
 
-	    }
+	        }
 
             @reactivity1 = $coverage ? @cov1 : ($ratio ? map { $counts1[$_] / $cov1[$_] } 0 .. $#cov1 : @counts1);
             @reactivity2 = $coverage ? @cov2 : ($ratio ? map { $counts2[$_] / $cov2[$_] } 0 .. $#cov2 : @counts2);

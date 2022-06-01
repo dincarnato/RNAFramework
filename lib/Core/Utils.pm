@@ -34,11 +34,11 @@ our ($VERSION, @EXPORT);
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
              mktree ncores blessed unbless shareDataStruct
-	         formatTime);
+	         formatTime isGzipped);
 
 BEGIN {
 
-    $VERSION = "2.7.2";
+    $VERSION = "2.8.0";
     my $reply = HTTP::Tiny->new->get("https://raw.githubusercontent.com/dincarnato/RNAFramework/master/VERSION");
 
     if ($reply->{success}) {
@@ -46,9 +46,18 @@ BEGIN {
         my $latest = $reply->{content};
         chomp($latest);
 
-        if ($latest =~ m/^[\d\.]+$/ && $latest ne $VERSION) {
+        if ($latest =~ m/^[\d\.]+$/) {
 
-            CORE::warn  "\n  [i] Note: RNA Framework v" . $latest . " is available. Issue a 'git pull' to update.\n";
+            my (@VERSION, @latest);
+            @VERSION = split ".", $VERSION;
+            @latest = split ".", $latest;
+
+            if ($VERSION[0] < $latest[0] ||
+                ($VERSION[0] == $latest[0] && ($VERSION[1] < $latest[1] || ($VERSION[1] == $latest[1] && $VERSION[2] < $latest[2])))) {
+
+                CORE::warn  "\n  [i] Note: RNA Framework v" . $latest . " is available. Issue a 'git pull' to update.\n";
+
+            }
 
         }
 
@@ -508,6 +517,27 @@ sub formatTime {
     }
 
     return(join($extended ? ", " : " ", @form) || "0" . ($extended ? " seconds" : "s"));
+
+}
+
+sub isGzipped {
+
+    my $file = shift;
+
+    return if (!-e $file || -d $file || !-B $file);
+
+    my ($data);
+
+    open(my $fh , "<:raw", $file);
+    read($fh, $data, 1);
+
+    return if ($data ne "\x1F");
+
+    read($fh, $data, 1);
+
+    return if ($data ne "\x8B");
+
+    return(1);
 
 }
 

@@ -1,3 +1,28 @@
+## [2.8.0] - 2022-05-31
+### Added
+- Added the rf-structextract module to automatically extract relevant RNA structure elements from larger transcripts (e.g. low reactivity - low Shannon regions, structures with free energy lower than expected by chance, etc.)
+- Added the rf-count-genome module to process genome-level SAM/BAM alignments
+
+### Changed
+- Fixed a bug in rf-correlate when getting the positions of the bases being covered, for ratio calculation
+- Added the "-c" (or "--constraints") parameter to rf-fold to allow providing base-pair constraints
+- Changed rf-fold logic to perform pseudoknot prediction as the last step, after having built the secondary structure model
+- Fixed the "--vienna-rnafold" parameter of rf-mutate to take an argument
+- Fixed a bug in rf-peakcall causing the program to crash with 0 read count in the IP sample
+- ADDED the "extract" command to rf-rctools to allow extracting transcripts, provided a BED or GTF annotation
+- Changed the rf-wiggle module to process RC files in blocks, hence avoiding to keep in memory the full RC entry (useful for genome-level RC files)
+
+## API Changes
+- Added a third argument to the Core::Statistics::pearson() function, to allow removing NaN values, outliers, or capping values to a maximum prior to calculating the correlation
+- Added the Core::Utils::isGzipped() function to evaluate whether a file is gzipped
+- Fixed the read() method of the Data::IO class to automatically skip empty lines
+- Fixed a bug in the \_findFormat() method of the Data::IO::Sequence class causing the whole file to be loaded in memory to guess the file format, rather than just a few lines
+- Renamed the \_validate() method of the Interface::Generic class to \_makeTmpDir()
+- Added the Interface::Aligner::STAR class, in preparation for the next release of RNAFramework
+- Added the id() and revcomp() methods to the RF::Data::RC class
+- Changed the compression/decompression of the sequence in the RF::Data::IO::RC and RF::Data::IO::MM modules for increased speed
+- Added the readBytewis() and writeBytewise() methods to the RF::Data::IO::RC class to allow reading/writing count/coverage data at specific positions of a given transcript/chromosome (useful for the processing of genome-level RC files)
+
 ## [2.7.2] - 2021-07-22
 ### Added
 - Added function "extract" to rf-rctools to extract a set of regions specified in a BED file, from an input RC file

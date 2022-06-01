@@ -94,15 +94,14 @@ sub _loadformat {
 sub _findformat {
     
     my $self = shift;
-    
-    my ($format, $index, $fastalike, @rows);
-    $index = 0;
+
+    my ($format, $fastalike, @rows);
     $fastalike = 0;
     
     # Read nrows lines from the file
     open(my $fh, "<", $self->{data});
-    foreach my $line (<$fh>) {
-        
+    while(my $line = <$fh>) {
+
         chomp($line);
 
         $self->throw("File contains unsupported line endings (\"\\r\")") if ($line =~ m/\r/);
@@ -110,11 +109,9 @@ sub _findformat {
         next unless($line);
         
         push(@rows, $line);
-        
-        $index++;
-        
-        last if ($index > $self->{nrows});
-        
+
+        last if (@rows > $self->{nrows});
+
     }
     close($fh);
     

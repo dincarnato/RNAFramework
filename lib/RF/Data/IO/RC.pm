@@ -4,22 +4,13 @@ use strict;
 use Core::Mathematics;
 use Core::Utils;
 use Fcntl qw(SEEK_SET SEEK_END);
+use POSIX ();
 use RF::Data::RC;
 
 use base qw(Data::IO);
 
 use constant EOF => "\x5b\x65\x6f\x66\x72\x63\x5d";
 use constant VERSION => 1;
-
-our (%bases);
-
-BEGIN {
-
-    my $i = 5;
-    %bases = map { --$i => $_,
-                   $_   => $i } qw(N T G C A);
-
-}
 
 sub new {
 
@@ -30,9 +21,12 @@ sub new {
     $self->_init({ index       => undef,
                    buildindex  => 0,
                    mappedreads => 0,
+                   blockSize   => 10000,
                    _offsets    => {},
                    _lengths    => {},
-                   _lastoffset => 0 }, \%parameters);
+                   _lastoffset => 0,
+                   _lastSeq    => { id       => undef,
+                                    sequence => undef } }, \%parameters);
 
     $self->{binmode} = ":raw";
 
@@ -101,12 +95,8 @@ sub _loadindex {
 
             $self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
 
-            if ($self->mode() eq "w+") {
-
-                read($fh, $data, 4);
-                $self->{_lengths}->{$id} = unpack("L<", $data);
-
-            }
+            read($fh, $data, 4);
+            $self->{_lengths}->{$id} = unpack("L<", $data);
 
         }
         close($ih);
@@ -130,7 +120,7 @@ sub _loadindex {
             $length = unpack("L<", $data);
 
             $self->{_offsets}->{$id} = $offset;
-            $self->{_lengths}->{$id} = $length if ($self->mode() eq "w+");
+            $self->{_lengths}->{$id} = $length;
 
             $offset += 4 * ($length * 2 + 3) + length($id) + 1 + ($length + ($length % 2)) / 2;
 
@@ -165,6 +155,65 @@ sub _loadindex {
     $self->mappedreads(unpack("Q<", $n));
 
     $self->reset();
+
+}
+
+sub readBytewise {
+
+    my $self = shift;
+    my ($id, @ranges) = @_ if (@_);
+
+    return if (!exists $self->{_offsets}->{$id});
+
+    my ($fh, $data, $entry, $length,
+        $beginArray, $sequence, @counts, @coverage);
+    $fh = $self->{_fh};
+    $length = $self->{_lengths}->{$id};
+    $beginArray = $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2;
+
+    # There is no point at reading the sequence multiple times if several
+    # calls have to be made to readBytewise(), so we save it
+    if ($id ne $self->{_lastSeq}->{id}) {
+
+        seek($fh, $self->{_offsets}->{$id} + 4 + length($id) + 1 + 4, SEEK_SET); # sets the fh to the position of sequence
+        read($fh, $data, ($length + ($length % 2)) / 2);
+        $data = unpack("H*", $data);
+        $data =~ tr/43210/NTGCA/;
+
+        $self->{_lastSeq} = { id       => $id,
+                              sequence => substr($data, 0, $length) };
+
+        undef($data);
+
+    }
+
+    foreach my $range (@ranges) {
+
+        $self->throw("Ranges must be ARRAY refs") if (ref($range) ne "ARRAY");
+        $self->throw("Range outside of sequence boundaries") if ($range->[0] >= $length || $range->[1] >= $length);
+
+        my $rangeLen = $range->[1] - $range->[0] + 1;
+        $sequence .= substr($self->{_lastSeq}->{sequence}, $range->[0], $rangeLen);
+        seek($fh, $beginArray + 4 * $range->[0], SEEK_SET);
+        read($fh, $data, 4 * $rangeLen);
+        push(@counts, unpack("L<*", $data));
+        seek($fh, $beginArray + 4 * $length + 4 * $range->[0], SEEK_SET);
+        read($fh, $data, 4 * $rangeLen);
+        push(@coverage, unpack("L<*", $data));
+
+    }
+
+    # Reads mapped read count
+    seek($fh, $beginArray + 4 * $length * 2, SEEK_SET);
+    read($fh, $data, 4);
+
+    $entry = RF::Data::RC->new( id         => $id,
+                                sequence   => $sequence,
+                                counts     => \@counts,
+                                coverage   => \@coverage,
+                                readscount => unpack("L<", $data) );
+
+    return($entry);
 
 }
 
@@ -220,15 +269,10 @@ sub read {
     read($fh, $data, 4);
     $length = unpack("L<", $data);
 
-    for (0 .. ($length + ($length % 2)) / 2 - 1) {
-
-        read($fh, $data, 1);
-
-        foreach my $i (1, 0) { $sequence .= $bases{vec($data, $i, 4)}; }
-
-    }
-
-    $sequence = substr($sequence, 0, $length);
+    read($fh, $data, ($length + ($length % 2)) / 2);
+    $data = unpack("H*", $data);
+    $data =~ tr/43210/NTGCA/;
+    $sequence = substr($data, 0, $length);
 
     read($fh, $data, 4 * $length);
     @stops = unpack("L<*", $data);
@@ -246,6 +290,42 @@ sub read {
                                 readscount => $mappedreads );
 
     return($entry);
+
+}
+
+sub writeBytewise {
+
+    my $self = shift;
+    my ($id, $pos, $counts, $coverage, $readCount) = @_ if (@_);
+
+    $self->throw("Filehandle isn't in append mode") unless ($self->mode() eq "w+");
+
+    my ($fh, $length, $beginArray, @undef);
+    $fh = $self->{_fh};
+    $length = $self->{_lengths}->{$id} if (exists $self->{_lengths}->{$id});
+
+    # An undefined issue exists with Perl's threads, that sometimes causes
+    # failure in index loading, thus we make a check and reload the index (just in case)
+    if (!keys %{$self->{_offsets}}) { $self->_loadindex(); }
+
+    $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!$length);
+    $self->throw("Position exceeds sequence's length (" . $pos . " >= " . $self->{_lengths}->{$id} . ")") if ($pos >= $length);
+    $self->throw("Data exceeds sequence's length") if ($pos + @$counts - 1 >= $length);
+    $self->throw("Counts and coverage arrays have unequal lengths") if (@$counts != @$coverage);
+
+    # If there are missing values, we will set them to 0
+    @undef = grep { !defined $counts->[$_] } 0 .. $#{$counts};
+    @{$counts}[@undef] = (0) x scalar(@undef) if (@undef);
+    @undef = grep { !defined $coverage->[$_] } 0 .. $#{$coverage};
+    @{$coverage}[@undef] = (0) x scalar(@undef) if (@undef);
+
+    $beginArray = $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2;
+    seek($fh, $beginArray + 4 * $pos, SEEK_SET);
+    print $fh pack("L<*", @{$counts});
+    seek($fh, $beginArray + 4 * $length + 4 * $pos, SEEK_SET);
+    print $fh pack("L<*", @{$coverage});
+    seek($fh, $beginArray + 4 * $length * 2, SEEK_SET);
+    print $fh pack("L<", $readCount);
 
 }
 
@@ -270,19 +350,18 @@ sub write {
 
         }
 
-        my ($id, $seq, $length, $mappedreads,
-            @counts, @coverage);
+        my ($id, $length, $mappedreads, @counts,
+            @coverage);
         $id = $entry->id();
-        $seq = join("", map{sprintf("%x", $bases{$_})} split(//, $entry->sequence()));
-        $length = length($seq);
+        $length = $entry->length();
         $mappedreads = $entry->readscount();
         @counts = $entry->counts();
         @coverage = $entry->coverage();
 
-        if (!defined $seq ||
-            !defined $id ||
-            !@counts ||
-            !@coverage) {
+        $self->throw("Counts and coverage arrays have different lengths (" . scalar(@counts) . " != " . scalar(@coverage) . ")") if (@counts != @coverage);
+        $self->throw("Counts/coverage array length differs from sequence length (" . scalar(@counts) . " != " . $length . ")") if (@counts && @counts != $length);
+
+        if (!$length || !defined $id) {
 
             $self->warn("Empty RF::Data::RC object");
 
@@ -299,16 +378,53 @@ sub write {
             $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!exists $self->{_lengths}->{$id});
             $self->throw("Sequence \"" . $id . "\" length differs from sequence in file \"" . $self->{file} . "\"") if ($length != $self->{_lengths}->{$id});
 
-            seek($fh, $self->{_offsets}->{$id}, SEEK_SET);
+            seek($fh, $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2, SEEK_SET);
+
+        }
+        else {
+
+            my $compressedSeq = $entry->sequence;
+            $compressedSeq =~ tr/NTGCA/43210/;
+
+            print $fh pack("L<", length($id) + 1) .             # len_transcript_id (uint32_t)
+                      $id . "\0" .                              # transcript_id (char[len_transcript_id])
+                      pack("L<", $length) .                     # len_seq (uint32_t)
+                      pack("H*", $compressedSeq);               # seq (uint8_t[(len_seq+1)/2])
 
         }
 
-        print $fh pack("L<", length($id) + 1) .             # len_transcript_id (uint32_t)
-                  $id . "\0" .                              # transcript_id (char[len_transcript_id])
-                  pack("L<", length($seq)) .                # len_seq (uint32_t)
-                  pack("H*", $seq) .                        # seq (uint8_t[(len_seq+1)/2])
-                  pack("L<*", @counts, @coverage),          # stops, cov (uint32_t[len_seq x 2])
-                  pack("L<", $mappedreads);
+        if (@counts) {
+
+            print $fh pack("L<*", @counts, @coverage);          # stops, cov (uint32_t[len_seq x 2])
+
+        }
+        else {
+
+            # This is meant for very large sequences (i.e. an entire chromosome)
+            if ($length > $self->{blockSize}) {
+
+                my ($nBlocks, $left);
+                $nBlocks = POSIX::floor($length / $self->{blockSize});
+                $left = $length - ($self->{blockSize} * $nBlocks);
+
+                for (0 .. 1) {
+
+                    print $fh pack("L<*", (0) x $self->{blockSize}) for (1 .. $nBlocks);
+                    print $fh pack("L<*", (0) x $left);
+
+                }
+
+            }
+            else {
+
+                @counts = (0) x ($length * 2);
+                print $fh pack("L<*", @counts);
+
+            }
+
+        }
+
+        print $fh pack("L<", $mappedreads);                     # mapped_reads (uint32_t)
 
         if ($self->{buildindex} &&
             $self->{mode} ne "w+") {
@@ -384,6 +500,36 @@ sub ids {
     my @ids = sort keys %{$self->{_offsets}};
 
     return(wantarray() ? @ids : \@ids);
+
+}
+
+sub length {
+
+    my $self = shift;
+    my $id = shift if (@_);
+
+    return() if (!defined $id || !exists $self->{_lengths}->{$id});
+
+    return($self->{_lengths}->{$id});
+
+}
+
+sub sequence {
+
+    my $self = shift;
+    my $id = shift if (@_);
+
+    return() if (!defined $id || !exists $self->{_lengths}->{$id});
+
+    my ($fh, $length, $sequence);
+    $fh = $self->{_fh};
+    $length = $self->{_lengths}->{$id};
+    seek($fh, $self->{_offsets}->{$id} + 4 + length($id) + 1 + 4, SEEK_SET); # sets the fh to the position of sequence
+    read($fh, $sequence, ($length + ($length % 2)) / 2);
+    $sequence = unpack("H*", $sequence);
+    $sequence =~ tr/43210/NTGCA/;
+
+    return(substr($sequence, 0, $length));
 
 }
 

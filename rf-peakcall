@@ -274,7 +274,7 @@ if ($metacoding &&
      !$metaonlyenriched)) {
 
     my (@icov, @ccov, @pcov);
-    @icov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ipnreads : $iprc->mappedreads()) * (10 ** 6) } @metaipcod;
+    @icov = map { ($_ / $results{cov}) / (($metaonlyenriched ? $ipnreads : $iprc->mappedreads()) || 1) * (10 ** 6) } @metaipcod;
     @ccov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ctrlnreads : $ctrlrc->mappedreads()) * (10 ** 6) } @metactrlcod if ($control);
     @pcov = map { $_ / $results{codpeaks} * 100 } @metapeakscod if ($results{codpeaks});
 

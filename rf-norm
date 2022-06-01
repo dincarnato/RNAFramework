@@ -73,7 +73,7 @@ do {
                 "dw|dynamic-window"      => \$dynwin,
                 "rb|reactive-bases=s"    => \$reactive,
                 "ni|norm-independent"    => \$independent,
-                "pc|pseudocount=s"	   => \$pseudocount,
+                "pc|pseudocount=s"	     => \$pseudocount,
                 "s|max-score=s"          => \$maxscore,
                 "mc|mean-coverage=s"     => \$meancov,
                 "ec|median-coverage=s"   => \$mediancov,

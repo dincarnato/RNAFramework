@@ -32,7 +32,7 @@ use Term::Constants qw(:screen);
 $|++;
 
 my ($coverage, $overwrite, $ratio, $help,
-    $keepbases, %stats);
+    $keepbases, $blockSize, %stats);
 %stats = ( processed => 0,
            failed    => 0 );
 
@@ -48,6 +48,7 @@ do {
 
 };
 
+$blockSize ||= 1000000;
 help() if ($help);
 
 # Default
@@ -70,8 +71,7 @@ print "\n[+] Processing input file(s) [Current: none]";
 
 foreach my $input (@ARGV) {
 
-    my ($name, $rcio, $isxml, $output,
-        @input);
+    my ($name, $isxml, $output, @input);
     $name = $input;
     $name =~ s/\/$//;
     $name = fileparse($name, qr/\.[^.]*/);
@@ -164,6 +164,8 @@ foreach my $input (@ARGV) {
         }
         else {
 
+            my ($rcio);
+
             eval { $rcio = RF::Data::IO::RC->new(file => $input); };
 
             if ($@) {
@@ -176,35 +178,48 @@ foreach my $input (@ARGV) {
 
             }
 
-            while(my $entry = $rcio->read()) {
+            foreach my $id ($rcio->ids()) {
 
-                next if (($coverage && !sum($entry->coverage())) ||
-                         (!$coverage && !sum($entry->counts())));
+                my $length = $rcio->length($id);
 
-                my ($i, $sequence, @counts, @coverage);
-                $i = 0;
-                $sequence = $entry->sequence();
-                @counts = $entry->counts();
-                @coverage = $entry->coverage();
+                print $wh "variableStep chrom=" . $id . "\n";
 
-                print $wh "variableStep chrom=" . $entry->id() . "\n";
+                for(my $i = 0; $i < $length; $i += $blockSize) {
 
-                while($sequence =~ m/[^$keepbases]/g) {
+                    print CLRRET . "[+] Processing input file(s) [Current: " . $name . ", " . $id . " (" . sprintf("%.2f", $i / $length * 100) . "% done)]";
 
-                    undef($counts[$-[0]]);
-                    undef($coverage[$-[0]]);
+                    my ($j, $end, $entry, $sequence,
+                        @counts, @coverage);
+                    $end = $i + $blockSize - 1;
+                    $end = $length - 1 if ($end >= $length);
+                    $entry = $rcio->readBytewise($id, [$i, $end]);
 
-                }
+                    next if (($coverage && !sum($entry->coverage())) ||
+                             (!$coverage && !sum($entry->counts())));
 
-                for (0 .. $#coverage) {
+                    $j = $i;
+                    $sequence = $entry->sequence();
+                    @counts = $entry->counts();
+                    @coverage = $entry->coverage();
 
-                    $i++;
+                    while($sequence =~ m/[^$keepbases]/g) {
 
-                    if ($coverage[$_]) {
+                        undef($counts[$-[0]]);
+                        undef($coverage[$-[0]]);
 
-                        if ($coverage) { print $wh $i . " " . $coverage[$_] . "\n"; }
-                        elsif ($ratio) { print $wh $i . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($counts[$_]); }
-                        else { print $wh $i . " " . $counts[$_] . "\n" if ($counts[$_]); }
+                    }
+
+                    for (0 .. $#coverage) {
+
+                        $j++;
+
+                        if ($coverage[$_]) {
+
+                            if ($coverage) { print $wh $j . " " . $coverage[$_] . "\n"; }
+                            elsif ($ratio) { print $wh $j . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($counts[$_]); }
+                            else { print $wh $j . " " . $counts[$_] . "\n" if ($counts[$_]); }
+
+                        }
 
                     }
 

@@ -33,7 +33,8 @@ $|++;
 
 my ($output, $overwrite, $command, $help,
     $tmp, $tmpdir, $madetmp, $index,
-    $tab, $bedFile, @index, @rc, %commands);
+    $tab, $annoFile, $GTFfeature, $GTFattribute,
+    @index, @rc, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge stats extract);
 
@@ -41,13 +42,15 @@ do {
 
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"         => \$help,
-                "o|output=s"     => \$output,
-                "ow|overwrite"   => \$overwrite,
-                "i|index=s"      => \$index,
-                "t|tab"          => \$tab,
-                "T|tmp-dir=s"    => \$tmpdir,
-                "b|bed=s"        => \$bedFile ) or help(1);
+    GetOptions( "h|help"           => \$help,
+                "o|output=s"       => \$output,
+                "ow|overwrite"     => \$overwrite,
+                "i|index=s"        => \$index,
+                "t|tab"            => \$tab,
+                "T|tmp-dir=s"      => \$tmpdir,
+                "a|annotation=s"   => \$annoFile,
+                "f|GTFfeature=s"   => \$GTFfeature,
+                "b|GTFattribute=s" => \$GTFattribute ) or help(1);
 
     $command = shift(@ARGV);
     @rc = uniq(@ARGV);
@@ -60,10 +63,13 @@ help() if ($help);
 $tmpdir ||= "/tmp";
 $tmp = randalphanum(0xf);
 $command = lc($command);
+$GTFfeature ||= "exon";
+$GTFattribute ||= "transcript_id";
 undef($index) if ($command eq "index");
 @index = split(/,/, $index);
 
 $tmpdir =~ s/\/?$/\//;
+$GTFattribute = quotemeta($GTFattribute);
 
 ##
 # Input validation
@@ -73,18 +79,26 @@ die "\n  [!] Error: No command specified\n\n" unless($command);
 die "\n  [!] Error: Invalid command \"" . $command . "\"\n\n" unless(exists $commands{$command});
 die "\n  [!] Error: No RC file specified\n\n" unless(@rc);
 
+if ($command eq "extract") {
+
+    if ($rc[0] =~ m/\.rc$/) { die "\n  [!] Error: Provided RC file \"" . $rc[0] . "\" does not exist\n\n" if (!-e $rc[0]); }
+    else { die "\n  [!] Error: RC file \"" . $rc[0] . ".plus.rc\" does not exist\n\n" if (!-e $rc[0] . ".plus.rc"); }
+
+}
+else { for (0 .. ($command =~ /^view|stats$/ ? 0 : $#rc)) { die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]); } }
+
 $SIG{__DIE__} = \&cleanup;
 
 if (!@index) {
 
     mktmpdir();
 
-    for (0 .. ($command =~ /^view|stats$/ ? 0 : $#rc)) {
+    for (0 .. ($command =~ /^view|stats|extract$/ ? 0 : $#rc)) {
 
         my ($file, $rc, $rci);
         $file = (fileparse($rc[$_], qr/((\.[^.\s]+)+)$/))[0];
         $rci = $tmpdir . $tmp . "_" . $file . ".rci";
-        $rc = RF::Data::IO::RC->new( file       => $rc[$_],
+        $rc = RF::Data::IO::RC->new( file       => $rc[$_] =~ m/\.rc$/ ? $rc[$_] : $rc[$_] . ".plus.rc",
                                      buildindex => 1,
                                      index      => $rci );
 
@@ -103,8 +117,6 @@ for (0 .. $#index) {
     #die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]);
 
 }
-
-for (0 .. ($command =~ /^view|stats$/ ? 0 : $#rc)) { die "\n  [!] Error: Provided RC file \"" . $rc[$_] . "\" does not exist\n\n" if (!-e $rc[$_]); }
 
 if ($command eq "index") {
 
@@ -213,57 +225,141 @@ elsif ($command eq "merge") {
 }
 elsif ($command eq "extract") {
 
-    die "\n  [!] Error: No BED file provided\n\n" if (!defined $bedFile);
-    die "\n  [!] Error: Provided BED file does not exist\n\n" if (!-e $bedFile);
+    die "\n  [!] Error: No annotation file provided\n\n" if (!defined $annoFile);
+    die "\n  [!] Error: Provided annotation file does not exist\n\n" if (!-e $annoFile);
 
-    $output = (fileparse($bedFile, ".bed"))[0] . ".rc" if (!$output);
+    $output = (fileparse($annoFile, qr/\.(?:bed|gtf)/i))[0] . ".rc" if (!$output);
     $output =~ s/(?:\.rc)?$/.rc/;
 
     die "\n  [!] Error: Output RC file already exists." .
         "\n      Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output &&
                                                                                     !$overwrite);
 
-    my ($rcin, $rcout, $mappedreads);
+    my ($rcout, $mappedreads, $annoType, $lastChr,
+        %chr, %rcin, %ids);
+    ($annoType) = $annoFile =~ m/\.(gtf|bed)$/i;
+
+    die "\n  [!] Error: Annotation must have .gtf or .bed extension\n\n" if (!defined $annoType);
+
+    $annoType = lc($annoType);
     $mappedreads = 0;
-    $rcin = RF::Data::IO::RC->new( file  => $rc[0],
-                                   index => $index[0] );
+    $rcin{"+"} = RF::Data::IO::RC->new( file  => $rc[0] =~ m/\.rc$/ ? $rc[0] : $rc[0] . ".plus.rc",
+                                        index => $index[0] );
+
+    if ($rc[0] !~ m/\.rc$/ && -e $rc[0] . ".minus.rc") {
+
+        $rcin{"-"} = RF::Data::IO::RC->new( file  => $rc[0] . ".minus.rc",
+                                            index => $index[0] );
+
+    }
+    else { $rcin{"-"} = $rcin{"+"}; }
+
+    %ids = map { $_ => $rcin{"+"}->length($_) } $rcin{"+"}->ids();
+
     $rcout = RF::Data::IO::RC->new( file       => $output,
                                     index      => $output . ".rci",
                                     buildindex => 1,
                                     mode       => "w",
                                     overwrite  => $overwrite );
 
-    open(my $fh, "<", $bedFile) or die "\n  [!] Error: unable to read from BED file (" . $! . ")\n\n";
+    open(my $fh, "<", $annoFile) or die "\n  [!] Error: Unable to read from annotation file (" . $! . ")\n\n";
     while(<$fh>) {
 
-        chomp();
+	chomp();
 
-        my @row = split(/\t/, $_);
+        next if ($_ =~ m/^\#/);
 
-        next if (@row < 3 || !ispositive(@row[1..2]));
+        my ($id, @row);
+        @row = split /\t/;
 
-        if (my $entry = $rcin->read($row[0])) {
+        next if (!exists $ids{$row[0]});
 
-            next if ($row[1] >= $entry->length() || $row[2] >= $entry->length());
+        if ($annoType eq "gtf") {
 
-            my ($new, @counts, @coverage);
-            @counts = $entry->counts();
-            @coverage = $entry->coverage();
-            $new = RF::Data::RC->new( id         => $row[0] . "_" . $row[1] . "-" . $row[2],
-                                      sequence   => substr($entry->sequence(), $row[1], $row[2] - $row[1] + 1),
-                                      counts     => [ @counts[$row[1] .. $row[2]] ],
-                                      coverage   => [ @coverage[$row[1] .. $row[2]] ],
-                                      readscount => $entry->readscount() );
+            next if ($row[2] ne $GTFfeature);
+            next if ($row[4] > $ids{$row[0]}); # GTF is 1-based
 
-            $rcout->write($new);
-            $mappedreads += $new->readscount();
+            $row[3]--;
+            $row[4]--;
+
+            if (defined $GTFattribute) { ($id) = $row[8] =~ m/$GTFattribute "(.+?)"/; }
+            
+            $id = $row[0] . "_" . $row[3] . "-" . $row[4] if (!defined $id);
+
+        }
+        else {
+
+            next if ($row[2] >= $ids{$row[0]});
+
+            $id = @row < 4 ? $row[0] . "_" . $row[1] . "-" . $row[2] : $row[3];
+
+        }
+
+        if ($lastChr ne $row[0]) {
+
+            if (defined $lastChr) {
+
+                foreach my $strand (sort keys %chr) {
+
+                    foreach my $transcript (sort keys %{$chr{$strand}}) {
+
+                        my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
+                        $rc->revcomp() if ($strand eq "-");
+                        $rc->id($transcript);
+                        $rcout->write($rc);
+
+                    }
+
+                }
+
+            }
+
+            $lastChr = $row[0];
+            undef(%chr);
+
+        }
+
+        if ($annoType eq "gtf") { push(@{$chr{$row[6] eq "-" ? "-" : "+"}->{$id}}, [$row[3], $row[4]]); }
+        else {
+
+            next if ($row[1] == $row[2]);
+
+            my $strand = @row >= 6 && $row[5] eq "-" ? "-" : "+";
+
+            if (@row < 12) { push(@{$chr{$strand}->{$id}}, [$row[1], $row[2]]); }
+            else {
+
+                my (@exonSizes, @exonStarts);
+                @exonSizes = split ",", $row[10];
+                @exonStarts = split ",", $row[11];
+
+                push(@{$chr{$strand}->{$id}}, [$row[1] + $exonStarts[$_], $row[1] + $exonStarts[$_] + $exonSizes[$_] - 1]) for (0 .. $row[9] - 1);
+
+            }
 
         }
 
     }
     close($fh);
 
-    $rcout->mappedreads($mappedreads);
+    if (defined $lastChr) {
+
+        foreach my $strand (sort keys %chr) {
+
+            foreach my $transcript (sort keys %{$chr{$strand}}) {
+
+                my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
+                $rc->revcomp() if ($strand eq "-");
+                $rc->id($transcript);
+                $rcout->write($rc);
+
+            }
+
+        }
+
+    }
+
+    $rcout->mappedreads($rcin{"+"}->mappedreads());
     $rcout->close();
 
 }
@@ -382,12 +478,17 @@ HELP
         die <<HELP;
 
  Description: Generates an RC file by extracting a user-defined set of regions from an input RC file
- Usage:       rf-rctools extract -b regions.bed Sample.rc
+ Usage:       rf-rctools extract -a annotation.gtf Sample.rc     # Will only use the specified file
+              rf-rctools extract -a annotation.gtf Sample        # Will look for .plus.rc and .minus.rc files
 
- Options                          Description
- -o  or --output     <string>     Output RC filename (Default: merge.rc)
- -ow or --overwrite               Overwrites output file if already exists
- -b  or --bed        <string>     BED file of regions to be extracted (mandatory)
+ Options                           Description
+ -o  or --output      <string>     Output RC filename (Default: <annotation>.rc)
+ -ow or --overwrite                Overwrites output file if already exists
+ -a  or --annotation  <string>     BED/GTF file containing a list of regions to be extracted (mandatory)
+ -f  or --GTFfeature  <string>     If a GTF file is provided, only entries corresponding to this feature type
+                                   will be extracted (Default: exon)
+ -b  o --GTFattribute <string>     If a GTF file is provided, this attribute will be used as the entry ID in
+                                   the output RC file (Default: transcript_id)
 
 HELP
 

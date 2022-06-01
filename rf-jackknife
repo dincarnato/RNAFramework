@@ -65,8 +65,8 @@ do {
                 "o|output-dir=s"       => \$output,
                 "t|tmp-dir=s"          => \$tmpdir,
                 "ow|overwrite"         => \$overwrite,
-                "s|slope=s"            => \$slope,
-                "i|intercept=s"        => \$intercept,
+                "sl|slope=s"           => \$slope,
+                "in|intercept=s"       => \$intercept,
                 "ss|slope-step=s"      => \$sstep,
                 "is|intercept-step=s"  => \$istep,
                 "rf|rf-fold=s"         => \$rffold,
@@ -77,7 +77,7 @@ do {
                 "kl|keep-lonelypairs"  => \$kl,
                 "m|median"             => \$m,
                 "am|arithmetic-mean"   => \$am,
-                "g|ignore-sequence"    => \$ignoreseq ) or help(1);
+                "i|ignore-sequence"    => \$ignoreseq ) or help(1);
 
     $input = $ARGV[0];
 
@@ -459,15 +459,15 @@ sub help {
  -o  or --output-dir       <string>           Output directory (Default: rf_jackknife/)
  -t  or --tmp-dir          <string>           Temporary directory (Default: <output>/tmp)
  -ow or --overwrite                           Overwrites output directory (if the specified path already exists)
- -s  or --slope            <float>,<float>    Range of slope values to test (Default: 0,5)
- -i  or --intercept        <float>,<float>    Range of intercept values to test (Default: -3,0)
+ -sl or --slope            <float>,<float>    Range of slope values to test (Default: 0,5)
+ -in or --intercept        <float>,<float>    Range of intercept values to test (Default: -3,0)
  -ss or --slope-step       <float>            Step for testing slope values (Default: 0.2)
  -is or --intercept-step   <float>            Step for testing intercept values (Default: 0.2)
  -x  or --relaxed                             Uses relaxed criteria (described in Deigan et al., 2009) to calculate PPV and sensitivity
  -kn or --keep-noncanonical                   Keeps non-canonical basepairs in reference structure
  -kp or --keep-pseudoknots                    Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs                    Keeps lonely basepairs (helices of length 1 bp) in reference structure
- -g  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
+ -i  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
  -m  or --median                              Reports the median PPV/sensitivity value between all reference structures
                                               Note: by default, the geometric mean of PPV/sensitivity values is reported
  -am or --arithmetic-mean                     Reports the arithmetic mean of PPV/sensitivity values between all reference structures

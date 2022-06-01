@@ -31,8 +31,6 @@ sub _validate {
 
     my $self = shift;
 
-    $self->SUPER::_validate();
-
     for (qw(RNAfold RNAsubopt RNAalifold)) { $self->throw($_ . " is not executable (" . $self->{$_} . ")") if (defined $self->{$_} && !-x $self->{$_}); }
 
 }

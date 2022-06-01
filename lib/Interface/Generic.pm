@@ -15,18 +15,19 @@ sub new {
                    _madetmpdir => 0,
                    _randId     => randalphanum(0x16) }, \%parameters);
 
+    $self->_makeTmpDir();
+
     return($self);
 
 }
 
-sub _validate {
+sub _makeTmpDir {
 
     my $self = shift;
 
-    $self->throw("Provided temporary directory is not a folder") if (-e $self->{tmpdir} &&
-                                                                     !-d $self->{tmpdir});
+    $self->throw("Provided path to temporary directory does not point to a folder") if (-e $self->{tmpdir} && !-d $self->{tmpdir});
 
-    if (!-e $self->{tmpdir}) {
+    if (defined $self->{tmpdir} && !-e $self->{tmpdir}) {
 
         my $error = mktree($self->{tmpdir});
 

@@ -179,7 +179,7 @@ sub read {
     $row = <$fh>;
     chomp($row);
 
-    return($row);
+    return($row ? $row : $self->read());
 
 }
 
