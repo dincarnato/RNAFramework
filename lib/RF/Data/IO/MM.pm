@@ -10,16 +10,6 @@ use constant EOF => "\x5b\x6d\x6d\x65\x6f\x66\x5d";
 
 use base qw(Data::IO);
 
-our (%bases);
-
-BEGIN {
-
-    my $i = 5;
-    %bases = map { --$i => $_,
-                   $_   => $i } qw(N T G C A);
-
-}
-
 sub new {
 
     my $class = shift;
@@ -141,15 +131,10 @@ sub read {
     read($fh, $data, 4);
     $length = unpack("L<", $data);
 
-    for (0 .. ($length + ($length % 2)) / 2 - 1) {
-
-        read($fh, $data, 1);
-
-        foreach my $i (1, 0) { $sequence .= $bases{vec($data, $i, 4)}; }
-
-    }
-
-    $sequence = substr($sequence, 0, $length);
+    read($fh, $data, ($length + ($length % 2)) / 2);
+    $data = unpack("H*", $data);
+    $data =~ tr/43210/NTGCA/;
+    $sequence = substr($data, 0, $length);
 
     read($fh, $data, 4);
     $mappedreads = unpack("L<", $data);
@@ -187,7 +172,7 @@ sub append_transcript {
     $self->_updatereadscount();
 
     $self->{_offsets}->{$id} = tell($fh);  # Saves offset for index generation
-    $sequence = join("", map{sprintf("%x", $bases{$_})} split(//, $sequence));
+    $sequence =~ tr/NTGCA/43210/;
 
     print $fh pack("S<", length($id) + 1) .             # len_transcript_id (uint16_t)
               $id . "\0" .                              # transcript_id (char[len_transcript_id])

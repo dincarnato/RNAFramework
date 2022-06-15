@@ -300,7 +300,7 @@ print "\n";
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-                                             #stderr     => "/dev/null",
+                                             stderr     => "/dev/null",
                                              verbosity  => 1 );
 
 ##
@@ -547,9 +547,8 @@ sub count {
 
     my $sample = shift;
 
-    my ($covered, $stats, $readscount, %counts,
-        %coverage, %stats, %rcIO);
-    $covered = 0;
+    my ($stats, $readscount, %counts, %coverage,
+        %stats, %rcIO, %covered);
     %last = ( id        => undef,
               sequence  => undef,
               start     => undef,
@@ -670,7 +669,7 @@ sub count {
                     if ($last{id} ne $row[2] ||
                         ($last{id} eq $row[2] && $last{start} + $#{$counts{"+"}} <= $start)) {
 
-			            $covered++ if ($last{id} ne $row[2]);
+			            $covered{$last{id}} = 1;
 
                         $rcIO{"+"}->writeBytewise($last{id}, $last{start}, $counts{"+"}, $coverage{"+"}, $readscount);
                         $counts{"+"} = [];
@@ -806,6 +805,8 @@ sub count {
         # Writes the last entry after EOF has been reached
         if (defined $last{id}) {
 
+            $covered{$last{id}} = 1;
+
             # For comodity, we make sure that the plus and minus strand arrays are aligned (same size)
             my $maxSize = max(scalar(@{$counts{"+"}}), scalar(@{$counts{"-"}}), scalar(@{$coverage{"+"}}), scalar(@{$coverage{"-"}}));
             push(@{$counts{"+"}}, (0) x ($maxSize - scalar(@{$counts{"+"}})));
@@ -860,7 +861,7 @@ sub count {
 
         }
 
-        $stats = "  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . $covered . " chromosomes covered";
+        $stats = "  [*] Sample \"" . $sample->{file} . "\":" . (" " x $spacer{$sample->{file}}) . scalar(keys %covered) . " chromosomes covered";
 
         if (!$covonly) {
 
