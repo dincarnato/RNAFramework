@@ -650,7 +650,7 @@ sub bowtie_log {
         }
         else {
 
-            if ($row =~ m/reads with at least one reported alignment: (\d+) /) { $stats[0] = $1; }
+            if ($row =~ m/reads with at least one (?:reported )?alignment: (\d+) /) { $stats[0] = $1; }
             elsif ($row =~ m/reads that failed to align: (\d+) /) { $stats[1] = $1; }
             elsif ($row =~ m/reads with alignments suppressed due to -m: (\d+) /) { $stats[2] = $1; }
 
