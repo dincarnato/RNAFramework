@@ -609,8 +609,8 @@ sub count {
             if ($sample->{library} eq "unstranded") { $realStrand = "+"; }
             else {
 
-                if ($sample->{library} eq "second-strand") { $realStrand = $row[1] & 16 ? ($row[1] & 64 ? "-" : "+") : ($row[1] & 64 ? "+" : "-"); }
-                else { $realStrand = $row[1] & 16 ? ($row[1] & 64 ? "+" : "-") : ($row[1] & 64 ? "-" : "+"); }
+                if ($sample->{library} eq "second-strand") { $realStrand = $row[1] & 16 ? ($row[1] & 1 ? ($row[1] & 64 ? "-" : "+") : "-") : ($row[1] & 1 ? ($row[1] & 64 ? "+" : "-") : "+"); }
+                else { $realStrand = $row[1] & 16 ? ($row[1] & 1 ? ($row[1] & 64 ? "+" : "-") : "+") : ($row[1] & 1 ? ($row[1] & 64 ? "-" : "+") : "-"); }
 
             }
 
