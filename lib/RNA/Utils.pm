@@ -528,7 +528,7 @@ sub rmpseudoknots {
 
 		my (@pkpairs, @structure);
 
-		for my $helix (@{(listhelices($pairs))[1]}) { push(@pkpairs, map { [$helix->{h5bases}->[$_], $helix->{h3bases}->[$_]]} 0 .. $#{$helix->{h5bases}}); }
+		for my $helix (@{(listhelices($pairs, 1))[1]}) { push(@pkpairs, map { [$helix->{h5bases}->[$_], $helix->{h3bases}->[$_]]} 0 .. $#{$helix->{h5bases}}); }
 
 		$pairs =~ s/[^\(\)\.]/./g; # Remove pseudoknotted base-pairs from original structure
 
