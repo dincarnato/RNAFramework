@@ -1104,7 +1104,7 @@ sub pkdetect {
     if (!$ignore) { return unless(xml2shape($parameters{file}, $parameters{reactivity})); }
     return unless(applyhardconstraint($parameters{file}, \@hardconstraint, $parameters{constraint}, $pkmethod == 2 ? 2 : $method));
 
-    foreach my $helix (@{(listhelices($parameters{constraint}))[0]}) { %mfepaired = (%mfepaired, map { $_ => 1 } (@{$helix->{h5bases}}, @{$helix->{h3bases}})); }
+    foreach my $helix (@{(listhelices($parameters{constraint}, 1))[0]}) { %mfepaired = (%mfepaired, map { $_ => 1 } (@{$helix->{h5bases}}, @{$helix->{h3bases}})); }
 
     if ($pkmethod == 1) {
 
