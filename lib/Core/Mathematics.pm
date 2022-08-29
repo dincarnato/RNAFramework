@@ -18,6 +18,7 @@ package Core::Mathematics;
 
 use strict;
 use POSIX;
+use Scalar::Util qw(looks_like_number);
 use Core::Utils;
 
 use constant e    => exp(1);
@@ -76,7 +77,7 @@ sub isinf {
 
     my @values = @_;
 
-    for (@values) { return if ($_ !~ m/^[+-]?Inf$/i); }
+    for (@values) { return if ($_ ne "inf" && $_ ne "-inf"); }
 
     return(1);
 
@@ -86,7 +87,7 @@ sub isnan {
 
     my @values = @_;
 
-    for (@values) { return if ($_ !~ m/^[+-]?NaN?$/i); }
+    for (@values) { return if ($_ == $_); }
 
     return(1);
 
@@ -96,7 +97,7 @@ sub isreal {
 
     my @values = @_;
 
-    for (@values) { return if ($_ !~ m/^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/); }
+    for (@values) { return if (!looks_like_number($_) || isinf($_) || isnan($_)); }
 
     return(1);
 

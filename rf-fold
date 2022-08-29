@@ -1198,7 +1198,7 @@ sub pkdetect {
 
             my ($constraint, $constfile, @pkbases, %seen);
             @pkbases = grep { !exists $mfepaired{$_} } (@{$candidatepk{$pk}->{bases}->[0]}, @{$candidatepk{$pk}->{bases}->[1]});
-            $constfile = $parameters{id} . "_pkconstraint_" . $count;
+            $constfile = $parameters{file} . "_pkconstraint_" . $count;
 
             return unless(seq2fasta($constfile, $constfile, $parameters{sequence}));
             return unless(applyhardconstraint($constfile, [@hardconstraint, @pkbases], $parameters{constraint}, 1));
