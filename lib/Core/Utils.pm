@@ -49,8 +49,8 @@ BEGIN {
         if ($latest =~ m/^[\d\.]+$/) {
 
             my (@VERSION, @latest);
-            @VERSION = split ".", $VERSION;
-            @latest = split ".", $latest;
+            @VERSION = split /\./, $VERSION;
+            @latest = split /\./, $latest;
 
             if ($VERSION[0] < $latest[0] ||
                 ($VERSION[0] == $latest[0] && ($VERSION[1] < $latest[1] || ($VERSION[1] == $latest[1] && $VERSION[2] < $latest[2])))) {
