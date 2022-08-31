@@ -1,7 +1,7 @@
 package RF::Data::IO::RC;
 
 use strict;
-use Core::Mathematics;
+use Core::Mathematics qw(:all);
 use Core::Utils;
 use Fcntl qw(SEEK_SET SEEK_END);
 use POSIX ();
@@ -309,6 +309,7 @@ sub writeBytewise {
     if (!keys %{$self->{_offsets}}) { $self->_loadindex(); }
 
     $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!$length);
+    $self->throw("Position is negative") if ($pos < 0);
     $self->throw("Position exceeds sequence's length (" . $pos . " >= " . $self->{_lengths}->{$id} . ")") if ($pos >= $length);
     $self->throw("Data exceeds sequence's length") if ($pos + @$counts - 1 >= $length);
     $self->throw("Counts and coverage arrays have unequal lengths") if (@$counts != @$coverage);
@@ -326,6 +327,50 @@ sub writeBytewise {
     print $fh pack("L<*", @{$coverage});
     seek($fh, $beginArray + 4 * $length * 2, SEEK_SET);
     print $fh pack("L<", $readCount);
+
+}
+
+sub updateBytewise {
+
+    my $self = shift;
+    my ($id, $pos, $counts, $coverage, $code) = @_ if (@_);
+
+    $self->throw("Filehandle isn't in append mode") unless ($self->mode() eq "w+");
+
+    my ($fh, $length, $beginArray, $entry,
+        @undef, @counts, @coverage);
+    $fh = $self->{_fh};
+    $length = $self->{_lengths}->{$id} if (exists $self->{_lengths}->{$id});
+    $code ||= sub { return(sum(@_)); };
+
+    # An undefined issue exists with Perl's threads, that sometimes causes
+    # failure in index loading, thus we make a check and reload the index (just in case)
+    if (!keys %{$self->{_offsets}}) { $self->_loadindex(); }
+
+    $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!$length);
+    $self->throw("Position is negative") if ($pos < 0);
+    $self->throw("Position exceeds sequence's length (" . $pos . " >= " . $self->{_lengths}->{$id} . ")") if ($pos >= $length);
+    $self->throw("Data exceeds sequence's length") if ($pos + @$counts - 1 >= $length);
+    $self->throw("Counts and coverage arrays have unequal lengths") if (@$counts != @$coverage);
+    $self->throw("Code is not a CODE reference") if (ref($code) ne "CODE");
+
+    # If there are missing values, we will set them to 0
+    @undef = grep { !defined $counts->[$_] } 0 .. $#{$counts};
+    @{$counts}[@undef] = (0) x scalar(@undef) if (@undef);
+    @undef = grep { !defined $coverage->[$_] } 0 .. $#{$coverage};
+    @{$coverage}[@undef] = (0) x scalar(@undef) if (@undef);
+
+    $entry = $self->readBytewise($id, [$pos, $pos + $#{$counts}]);
+    @counts = $entry->counts();
+    @coverage = $entry->coverage();
+    @counts = map { $code->($counts[$_], $counts->[$_]) } 0 .. $#counts;
+    @coverage = map { $code->($coverage[$_], $coverage->[$_]) } 0 .. $#coverage;
+
+    $beginArray = $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2;
+    seek($fh, $beginArray + 4 * $pos, SEEK_SET);
+    print $fh pack("L<*", @counts);
+    seek($fh, $beginArray + 4 * $length + 4 * $pos, SEEK_SET);
+    print $fh pack("L<*", @coverage);
 
 }
 

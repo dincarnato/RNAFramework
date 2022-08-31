@@ -174,9 +174,9 @@ sub extract {
     while(1) {
 
         my ($id, $xmlref, $medianShannon, $medianReact,
-            $structIO, $structFile, $entry, $motifs,
-            @helices, @baseShannon, @winShannon, @baseReact,
-            @winReact);
+            $structIO, $structFile, $entry, @helices,
+            @baseShannon, @winShannon, @baseReact, @winReact,
+            @motifs);
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
@@ -361,19 +361,7 @@ sub extract {
 
                     print CLRRET . "[+] Extracting structure elements [Last: " . $motifId . "]";
 
-                    $motifs .= ">" . $motifId . "\n" .
-                               $sequence . "\n" .
-                               $structure . "\n";
-
-                    if ($onePerFile) {
-
-                        open(my $fh, ">", $output . $motifId . ".db");
-                        print $fh $motifs;
-                        close($fh);
-
-                        undef($motifs)
-
-                    }
+                    push(@motifs, [$realStart, $realEnd, $sequence, $structure]);
 
                     { lock($extracted);
                       $extracted++; }
@@ -389,11 +377,57 @@ sub extract {
 
         }
 
-        if ($motifs) {
+        if (@motifs) {
 
-            open(my $fh, ">", $output . $id . ".db");
-            print $fh $motifs;
-            close($fh);
+            @motifs = sort { $a->[0] <=> $b->[0] } @motifs;
+
+            for (my $i = 0; $i < $#motifs; $i++) {
+
+                if (intersect([@{$motifs[$i]}[0..1]], [@{$motifs[$i + 1]}[0..1]])) {
+
+                    my ($newStart, $newEnd, $newSeq, $newStruct);
+                    ($newStart, $newEnd) = (min($motifs[$i]->[0], $motifs[$i + 1]->[0]), max($motifs[$i]->[1], $motifs[$i + 1]->[1]));
+                    $newSeq = substr($entry->sequence(), $newStart, $newEnd - $newStart + 1);
+                    $newStruct = substr($entry->structure(), $newStart, $newEnd - $newStart + 1);
+
+                    splice(@motifs, $i + 1, 1);
+                    $motifs[$i] = [$newStart, $newEnd, $newSeq, $newStruct];
+                    $i--;
+
+                    { lock($extracted);
+                      $extracted--; }
+
+                }
+
+            }
+
+            if ($onePerFile) {
+
+                for (@motifs) {
+
+                    my $motifId = $id . "_" . $_->[0] . "-" . $_->[1];
+
+                    open(my $fh, ">", $output . $motifId . ".db");
+                    print $fh join("\n", ">" . $motifId, @{$_}[2..3]) . "\n";
+                    close($fh);
+
+                }
+
+            }
+            else {
+
+                open(my $fh, ">", $output . $id . ".db");
+
+                for (@motifs) {
+
+                    my $motifId = $id . "_" . $_->[0] . "-" . $_->[1];
+                    print $fh join("\n", ">" . $motifId, @{$_}[2..3]) . "\n";
+
+                }
+
+                close($fh);
+
+            }
 
         }
 

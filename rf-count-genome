@@ -300,7 +300,7 @@ print "\n";
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-                                             stderr     => "/dev/null",
+
                                              verbosity  => 1 );
 
 ##
@@ -622,6 +622,7 @@ sub count {
             $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
 
             next if (!exists $transcripts{$id});
+            next if ($start < 0 || (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0));
             next if ($mutcount && $truelen < $discardshorter);
             next if ($mutcount && $editdist / $cov > $maxmut);
             next if ($mutcount && median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
@@ -663,8 +664,7 @@ sub count {
 
                         push(@{$counts{"-"}}, (0) x ($maxSize - scalar(@{$counts{"-"}})));
                         push(@{$coverage{"-"}}, (0) x ($maxSize - scalar(@{$coverage{"-"}})));
-
-                    }
+		            }
 
                     if ($last{id} ne $row[2] ||
                         ($last{id} eq $row[2] && $last{start} + $#{$counts{"+"}} <= $start)) {
@@ -711,13 +711,23 @@ sub count {
 
                 }
 
-                $last{start} = $mutcount || $covonly || $realStrand eq "-" ? $start : $start - $sample->{trim5};
+                $last{start} = $start;
 
-            }
+        }
 
             $start -= $last{start};
 
-            next if ((($mutcount || $covonly || $realStrand eq "-") && $start < 0) || (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0));
+            next if (($mutcount || $covonly || $realStrand eq "-") && $start < 0);
+
+            # This happens when we are at the beginning of the block and the rt-stop is before the
+            # beginning of the block, then we update directly on the file
+            if (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0) {
+
+                $rcIO{"+"}->updateBytewise($last{id}, $start + $last{start} - 1, [1], [1]);
+
+                next;
+
+            }
 
             if ($mutcount) {  # Mutations count
 

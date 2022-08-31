@@ -38,7 +38,7 @@ our @EXPORT = qw(isint isfloat isexp isinf
 our %EXPORT_TAGS = ( constants => [ qw() ],
                      functions => [ qw(logarithm min max mean
                                        geomean midrange stdev popStdev
-                                       mode median round sum
+                                       mmode median round sum
                                        diff product maprange intersect
                                        variance inrange haspositive hasnegative
                                        hasnan haszero absolute euclideandist
@@ -383,7 +383,7 @@ sub stdev { return(sqrt(variance(\@_, 1))); }
 
 sub popStdev { return(sqrt(variance(\@_, 0))); }
 
-sub mode {
+sub mmode {
 
     my @values = @_;
 
