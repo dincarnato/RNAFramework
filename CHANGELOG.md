@@ -1,3 +1,19 @@
+## [2.8.2] - 2022-09-01
+### Changed
+- Fixed a bug in rf-json2rc introduced in the last version, causing the last base of a transcript to be omitted
+- Fixed the count of covered chromosomes in the rf-count-genome output
+- Fixed strandedness of paired-end reads in rf-count-genome
+- Fixed handling of RT-stops falling before the current memory block
+- Fixed a bug in rf-fold introduced in the last version, causing pseudoknots of lenght 1 bp to be discarded
+- Fixed a bug in rf-fold during the evaluation of pseudoknotted helices when overlapping with lonely pairs in the MFE structure
+- Fixed a naming issue in rf-fold temporary pseudoknot constraint files
+- Fixed parsing of Bowtie logs by rf-map, which would have caused rf-map to erroneously report 0% mapped reads with newer versions of Bowtie due to a change in the output log format
+- Fixed rf-structextract to avoid redundancies in the output motifs
+
+## API Changes
+- Added the updateBytewise() method to RF::Data::IO::RC 
+- Updated the Core::Mathematics::isreal() function to use Scalar::Util::looks_like_number() for improved performances
+
 ## [2.8.0] - 2022-05-31
 ### Added
 - Added the rf-structextract module to automatically extract relevant RNA structure elements from larger transcripts (e.g. low reactivity - low Shannon regions, structures with free energy lower than expected by chance, etc.)
