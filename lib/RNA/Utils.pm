@@ -301,7 +301,7 @@ sub rmlonelypairs {
                !isdbbalanced($db));
 
     my ($helices, $pkhelices, @db);
-    ($helices, $pkhelices) = listhelices($db);
+    ($helices, $pkhelices) = listhelices($db, 1);
     @db = split(//, $db);
 
     for (@{$helices}) {

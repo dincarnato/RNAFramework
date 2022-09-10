@@ -740,7 +740,7 @@ sub fold { # Threads
 
             $subseq = substr($sequence, $start, $end - $start + 1);
             @winreact = @reactivity[$start .. $end];
-            $winconst = fixdotbracket(substr($constraint, $start, $end - $start + 1));
+            $winconst = rmlonelypairs(fixdotbracket(substr($constraint, $start, $end - $start + 1)));
             $tmpfile = $id . "_" . $start . "-" . $end . "_" . threads->tid();
 
             my $win = winfold( file       => $tmpfile,
