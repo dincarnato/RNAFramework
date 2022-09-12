@@ -69,7 +69,8 @@ my ($output, $ct, $input, $method,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $skparams, $keeptmp,
     $pkpercentmfe, $nozuker, $zukersubopt, $pkslope,
-    $pkintercept, $constraintDir, @pool, %lambda, %constraints);
+    $pkintercept, $constraintDir, $plotMedianShape, $plotMedianShannon,
+    @pool, %lambda, %constraints);
 
 my %results : shared;
 my @xml : shared;
@@ -149,7 +150,9 @@ do {
                 "km|pseudoknot-method=i"     => \$pkmethod,
                 "sk|shapeknots=s"            => \$shapeknots,
                 "nz|no-zuker"                => \$nozuker,
-                "zs|zuker-suboptimal=i"      => \$zukersubopt ) or help(1);
+                "zs|zuker-suboptimal=i"      => \$zukersubopt,
+                "pmr|plot-median-react"      => \$plotMedianShape,
+                "pms|plot-median-shannon"    => \$plotMedianShannon ) or help(1);
 
     $input = $ARGV[0];
 
@@ -989,13 +992,15 @@ sub fold { # Threads
 
             my ($file, $image, $io, $reactivity,
                 $shannon, $mea, $pairprob, $ruler,
-                $ticksby, $minheight, $maxheight, $sum);
+                $ticksby, $minheight, $maxheight, $sum,
+                $medianShape, $medianShannon, $winSize);
 
             # Plot only base-pairing probabilities >= 5%
             @dotplot = grep { $_->[2] >= 0.05 } sort { $a->[2] <=> $b->[2] } @dotplot;
             $sum = sum(grep { isnumeric($_) } @reactivity);
             $minheight = 250;
             $maxheight = 500;
+            $winSize = 25;
 
             if ($windowed ||
                 $dp ||
@@ -1026,6 +1031,39 @@ sub fold { # Threads
                                                               barfill   => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ],
                                                               barstroke => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @reactivity ] );
 
+                if ($plotMedianShape) {
+
+                    if (2 * $winSize + 1 < $length) {
+
+                        my ($medianReact, @winReact);
+                        @winReact = ("NaN") x $length;
+                        $medianReact = median(grep { isnumeric($_) } @reactivity);
+
+                        for(my $i = $winSize; $i < @reactivity - $winSize; $i += 1) {
+
+                            my (@win, @i);
+                            @win = @reactivity[$i - $winSize .. $i + $winSize];
+                            @i = grep { isnumeric($win[$_]) } 0 .. $#win;
+
+                            if (@i / @win >= 0.25) {
+
+                                @win = @win[@i];
+                                $winReact[$i] = median(@win) - $medianReact;
+
+                            }
+
+                        }
+
+                        $medianShape = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
+                                                                    height   => 1,
+                                                                    values   => \@winReact,
+                                                                    yname    => "Median reactivity",
+                                                                    fill     => "black" );
+
+                    }
+
+                }
+
             }
 
             $mea = Graphics::Object::RNAarcs->new( height    => 2,
@@ -1051,20 +1089,49 @@ sub fold { # Threads
                                                         values   => \@shannon,
                                                         fill     => "rgb(145, 106, 40)",
                                                         stroke   => "",
-                                                        yname    => "Shannon entropy" );
+                                                        yname    => "Shannon" );
                 $pairprob = Graphics::Object::RNAarcs->new( height    => 2,
                                                             length    => $length,
                                                             flip      => "down",
                                                             basepairs => [ map { [$_->[0], $_->[1]] } @dotplot ],
                                                             stroke    => [ map { $_->[2] < 0.1 ? "rgb(150,150,150)" : ($_->[2] < 0.4 ? "rgb(255,204,0)" : ($_->[2] < 0.7 ? "rgb(71,142,204)" : "rgb(81,183,71)")) } @dotplot ] );
 
-                if ($sum) { $image->addobjects($reactivity, 0, $mea, $shannon, 0, $pairprob, 0.05, $ruler); }
-                else { $image->addobjects($mea, $shannon, 0, $pairprob, 0.05, $ruler); }
+                if ($plotMedianShannon && 2 * $winSize + 1 < $length) {
+
+                    my ($medianShan, @winShannon);
+                    @winShannon = ("NaN") x $length;
+                    $medianShan = median(grep { isnumeric($_) } @shannon);
+
+                    for(my $i = $winSize; $i < @shannon - $winSize; $i += 1) {
+
+                        my (@win, @i);
+                        @win = @shannon[$i - $winSize .. $i + $winSize];
+                        @i = grep { isnumeric($win[$_]) } 0 .. $#win;
+
+                        if (@i / @win >= 0.25) {
+
+                            @win = @win[@i];
+                            $winShannon[$i] = median(@win) - $medianShan;
+
+                        }
+
+                    }
+
+                    $medianShannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
+                                                                  height   => 1,
+                                                                  values   => \@winShannon,
+                                                                  yname    => "Shannon",
+                                                                  fill     => "rgb(145, 106, 40)" );
+
+                }
+
+                if ($sum) { $image->addobjects($reactivity, ($plotMedianShape && $medianShape ? $medianShape : 0), $mea, $shannon, ($plotMedianShannon && $medianShannon ? $medianShannon : 0), $pairprob, 0.05, $ruler); }
+                else { $image->addobjects($mea, $shannon, ($plotMedianShannon && $medianShannon ? $medianShannon : 0), $pairprob, 0.05, $ruler); }
 
             }
             else {
 
-                if ($sum) { $image->addobjects($reactivity, 0, $mea, 0.05, $ruler); }
+                if ($sum) { $image->addobjects($reactivity, ($plotMedianShape && $medianShape ? $medianShape : 0), $mea, 0.05, $ruler); }
                 else { $image->addobjects($mea, 0.05, $ruler); }
 
             }
