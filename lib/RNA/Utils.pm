@@ -232,7 +232,7 @@ sub ppv {
 
     if (my $common = _commonpairs($reference, $structure, $relaxed)) { return($common / @{listpairs($structure)}); }
 
-    return();
+    return(0);
 
 }
 
@@ -242,7 +242,7 @@ sub sensitivity {
 
     if (my $common = _commonpairs($reference, $structure, $relaxed)) { return($common / @{listpairs($reference)}); }
 
-    return();
+    return(0);
 
 }
 
