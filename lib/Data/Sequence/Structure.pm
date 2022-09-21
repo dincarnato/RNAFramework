@@ -265,7 +265,7 @@ sub bpprobability {
             $self->throw("End base must be numeric") if (!isnumeric($base2));
 
             if (exists $self->{bpprobabilities}->{$base1}->{$base2}) { return($self->{bpprobabilities}->{$base1}->{$base2}); }
-            else { $self->warn("Base-pair " . $base1 . "-" . $base2 . " does not exist"); }
+            else { return(0); }
 
         }
         else {
