@@ -191,8 +191,8 @@ sub combine {
             $norm, $xmlio, $mean1, $stdev1,
             $mean2, $stdev2, $attributes, $offset,
             $win, $remap, $tool, $reactive2,
-            $algorithm, $xml, $nbases, @values1,
-            @values2);
+            $algorithm, $xml, $nbases, $length,
+            @values1, @values2);
 
         foreach my $dir (@xml) {
 
@@ -413,6 +413,8 @@ sub combine {
         { lock(%results);
           $results{combined}++; }
 
+        $length = length($sequence);
+
         # For nicer formatting
         $sequence =~ s/(\w{60})/$1\n/g;
         $mean1 = join(",", @{$mean1});
@@ -455,7 +457,7 @@ sub combine {
 
         $xml->opentag("data", $attributes);
         $xml->opentag("transcript", { id     => $id,
-                                      length => length($sequence) });
+                                      length => $length });
         $xml->opentag("sequence");
         $xml->addtext($sequence);
         $xml->closelasttag();
