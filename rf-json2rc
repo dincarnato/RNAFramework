@@ -332,7 +332,7 @@ if (!$noMergeOverlapping) {
                                     @mergedStoichiometries = mergeStoichiometries($lastWin->{stoichiometries}, [@{$win->{stoichiometries}}[@sortedConfs] ]);
 
                                     # Updates window's data in jsonData
-                                    $lastWin->{end} = $win->{end};
+                                    $lastWin->{end} = max($lastWin->{end}, $win->{end});
                                     $lastWin->{counts} = \@mergedCounts;
                                     $lastWin->{coverage} = \@mergedCoverage;
                                     $lastWin->{stoichiometries} = \@mergedStoichiometries;

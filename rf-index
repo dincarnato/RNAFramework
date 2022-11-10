@@ -92,7 +92,7 @@ if ($list ||
 
     my ($xmlref, $table, %indexes);
 
-    eval { $xmlref = XML::LibXML->load_xml(location => "http://www.rnaframework.com/data/indexes.xml"); };
+    eval { $xmlref = XML::LibXML->load_xml(location => "http://www.incarnatolab.com/datasets/RNAframework/indexes.xml"); };
 
     if ($@) { die "\n  [!] Error: Unable to retrieve prebuilt indexes list (" . $! . ")\n\n"; }
 
@@ -127,7 +127,7 @@ if ($list ||
             "\n             Please use -l (or --list) to list available indexes\n\n" if (!exists $indexes{$prebuilt});
 
         my ($url, $ua, $downloaded, $reply);
-        $url = "http://www.rnaframework.com/data/indexes/" . ($bowtie2 ? "bowtie2/" : "bowtie/") . $indexes{$prebuilt}->{file};
+        $url = "http://www.incarnatolab.com/datasets/RNAframework/indexes/" . ($bowtie2 ? "bowtie2/" : "bowtie1/") . $indexes{$prebuilt}->{file};
         $ua = HTTP::Tiny->new(timeout => $timeout);
         $downloaded = 0;
 
@@ -208,6 +208,10 @@ if ($list ||
 
         die "\n\n  [!] Error: Index decompression failed." .
             "\n             Please check the log file and ensure that the \"tar\" utility is in PATH.\n\n" if ($ret);
+
+        $indexes{$prebuilt}->{folder} .= $bowtie2 ? "_bt2" : "_bt";
+        $ret = system("cd " . $output . " && mv " . $indexes{$prebuilt}->{folder} . "/* . && " .
+                      "rm -R " . $indexes{$prebuilt}->{folder} . " > /dev/null 2>&1");
 
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [DONE]";
 
