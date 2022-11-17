@@ -170,6 +170,7 @@ sub readBytewise {
     $fh = $self->{_fh};
     $length = $self->{_lengths}->{$id};
     $beginArray = $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2;
+    @ranges = sort { $a->[0] <=> $b->[0] } @ranges;
 
     # There is no point at reading the sequence multiple times if several
     # calls have to be made to readBytewise(), so we save it
