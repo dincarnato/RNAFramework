@@ -460,6 +460,8 @@ sub reactAndShannonFilter {
 
     }
 
+    return(1);
+
 }
 
 sub minPaired {
