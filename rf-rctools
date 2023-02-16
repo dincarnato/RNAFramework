@@ -107,8 +107,7 @@ if (!@index) {
     }
 
 }
-elsif (@index > 1 &&
-       @index != @rc) { die "\n  [!] Error: Different number of RC files and RCI index files provided\n\n" }
+elsif (@index > 1) { die "\n  [!] Error: Different number of RC files and RCI index files provided\n\n" if (@index != @rc); }
 else { @index = ($index) x @rc; }
 
 for (0 .. $#index) {
