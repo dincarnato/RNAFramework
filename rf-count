@@ -1314,6 +1314,8 @@ sub help {
  +- Mutation count mode options
     -orc or --out-raw-counts                       Generates a text file reporting raw (unfiltered) mutation counts, broken down by class
                                                    (single nucleotide mutations, insertions, deletions)
+                                                   Note: the reported counts are affected by the -nd, -na, -mq and -md parameters, but not 
+                                                         by deletion realignment options
     -om  or --only-mut                <string>     Only the specified mutations will be counted
                                                    Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
                                                          or "A:T") will only count mutation events in which a reference A base has been sequenced as

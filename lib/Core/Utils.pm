@@ -38,7 +38,7 @@ our ($VERSION, @EXPORT);
 
 BEGIN {
 
-    $VERSION = "2.8.2";
+    $VERSION = "2.8.3";
     my $reply = HTTP::Tiny->new->get("https://raw.githubusercontent.com/dincarnato/RNAFramework/master/VERSION");
 
     if ($reply->{success}) {

@@ -1801,6 +1801,9 @@ sub help {
  -wt  or --window-trim           <int>       Number of bases to trim from both ends of the partition windows to avoid end biases (Default: 100)
  -dp  or --dotplot                           Enables generation of dot-plots of base-pairing probabilities
  -sh  or --shannon-entropy                   Enables generation of a WIGGLE track file with per-base Shannon entropies
+ -pmr or --plot-median-react                 Plots the difference between the transcript's median reactivity and the median reactivity in sliding windows
+ -pms or --plot-median-shannon               Plots the difference between the transcript's median Shannon entropy and the median Shannon entropy 
+                                             in sliding windows
  -pk  or --pseudoknots                       Enables detection of pseudoknots (computationally intensive)
  -ksl or --pseudoknot-slope      <float>     Sets slope used for pseudoknots prediction (Default: same as -sl <slope>)
  -kin or --pseudoknot-intercept  <float>     Sets intercept used for pseudoknots prediction (Default: same as -in <intercept>)

@@ -1,3 +1,24 @@
+## [2.8.3] - 2023-03-28
+### Added
+- Added the --plot-median-react and --plot-median-shannon options to rf-fold to plot smoothed median reactivity and Shannon entropy
+- Added binomialTest() to Core::Statistics
+- Added the --out-raw-counts option to rf-count (feature request by Rhiju Das) to report raw mutation counts per base, broken down by type
+
+### Changed
+- Lonely base-pairs are now ignored when defining the constraints in windowed folding mode in rf-fold (including them sometimes caused ViennaRNA RNAfold to fail backtrack)
+- Fixed a bug in Interface::ViennaRNA preventing the structure from being correctly parsed
+- Fixed a bug in rf-combine leading to reporting a wrong length of the sequence in the new XML file
+- Fixed a bug in rf-json2rc causing the program to crash when attempting to merge windows with different numbers of conformations
+- Fixed a bug in rf-json2rc causing certain windows not to be merged
+- Fixed a bug in RF::Data::IO::RC::readBytewise() caused by the wrong assumption that enon coordinates were aways provided sorted
+- Fixed a bug in rf-structextract causing the low SHAPE - low Shannon filter to be ignored
+- Fixed a bug in rf-rctools merge when multiple RCI files are provided (thanks to Asperatus22 for reporting)
+
+## API Changes
+- Altered RNA::Utils::ppv() and RNA::Utils::sensitivity() to return 0 instead of undef when no base-pairs are common between reference and provided structure
+- Data::Sequence::Structure::bpprobability() now returns 0 and does not raise any warning if the requested base-pair does not exist
+- Added the rmNaN, rmOutliers and cap parameters to Core::Statistics::pearson() and Core::Statistics::spearman() to automatically remove NaNs or outliers (values below the 5th percentile and above the 95th percentile) and to cap values to a maximum, when calculating correlations
+
 ## [2.8.2] - 2022-09-01
 ### Changed
 - Fixed a bug in rf-json2rc introduced in the last version, causing the last base of a transcript to be omitted
