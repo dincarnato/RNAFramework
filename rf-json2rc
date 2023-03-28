@@ -649,8 +649,14 @@ sub sortConformations {
     # For each combination, we calculate the correlation and we replace the arrays with the correlation coefficient + index of the conformations
     foreach my $comb (@combinations) {
 
-        my @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]} - 1;
-        $comb = [(_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]]))[0], $comb->[0]->[-1], $comb->[1]->[-1]];
+        my ($r, @i);
+        @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]} - 1;
+        $r = (_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]]))[0];
+
+        # This handles those cases in which the stdev of the values in one of the arrays is 0 and the correlation is NaN
+        return() if (isnan($r));
+
+        $comb = [$r, $comb->[0]->[-1], $comb->[1]->[-1]];
 
     }
 

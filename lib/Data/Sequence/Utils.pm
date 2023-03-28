@@ -58,8 +58,8 @@ sub complement {
 
     return if (!isna($sequence, "BDHKMNRSVWY-"));
 
-    if (isdna($sequence, "BDHKMNRSVWY-")) { return(dnarevcomp($sequence)); }
-    else { return(rnarevcomp($sequence)); }
+    if (isdna($sequence, "BDHKMNRSVWY-")) { return(dnacomp($sequence)); }
+    else { return(rnacomp($sequence)); }
 
     return($sequence);
 

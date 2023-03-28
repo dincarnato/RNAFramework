@@ -40,37 +40,11 @@ $tolerance /= 2 while ((1 + $tolerance / 2) > 1);
 sub pearson {
 
     my @data = @_[0..1];
-    my $rm = checkparameters({ NaN      => 0,
-                               outliers => 0,
-                               cap      => 0 }, $_[2] || {});
+    my $rm = checkparameters({ rmNaN      => 0,
+                               rmOutliers => 0,
+                               cap        => 0 }, $_[2] || {});
 
-    if ($rm->{NaN}) {
-
-        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
-        @{$data[0]} = @{$data[0]}[@indices];
-        @{$data[1]} = @{$data[1]}[@indices];
-
-    }
-
-    if ($rm->{cap}) {
-
-        @{$data[0]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[0]};
-        @{$data[1]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[1]};
-
-    }
-
-    if ($rm->{outliers}) {
-
-        my ($min1, $max1, $min2, $max2, @indices);
-        $min1 = percentile($data[0], 0.05);
-        $max1 = percentile($data[0], 0.95);
-        $min2 = percentile($data[1], 0.05);
-        $max2 = percentile($data[1], 0.95);
-        @indices = grep { inrange($data[0]->[$_], [$min1, $max1]) && inrange($data[1]->[$_], [$min2, $max2]) } 0 .. $#{$data[0]};
-        @{$data[0]} = @{$data[0]}[@indices];
-        @{$data[1]} = @{$data[1]}[@indices];
-
-    }
+    @data = _fixCorrData(@data, $rm);
 
     my ($avgx, $avgy, $stdevx, $stdevy,
         $n, $r, $t, $p, $size);
@@ -88,7 +62,7 @@ sub pearson {
     $stdevy = stdev(@{$data[1]});
 
     if (!$stdevx ||
-	!$stdevy) {
+	    !$stdevy) {
 
 		Core::Utils::warn("Standard deviation is 0");
 
@@ -107,15 +81,11 @@ sub pearson {
 sub spearman {
 
     my @data = @_[0..1];
-    my $rmnan = $_[2] if (@_ == 3);
+    my $rm = checkparameters({ rmNaN      => 0,
+                               rmOutliers => 0,
+                               cap        => 0 }, $_[2] || {});
 
-    if ($rmnan) {
-
-        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
-        @{$data[0]} = @{$data[0]}[@indices];
-        @{$data[1]} = @{$data[1]}[@indices];
-
-    }
+    @data = _fixCorrData(@data, $rm);
 
     my ($squareddiff, $n, $rho, $t,
         $p, @rank1, @rank2);
@@ -145,6 +115,43 @@ sub spearman {
     $p = _pcorr($rho, scalar(@{$data[0]}));
 
     return(wantarray() ? ($rho, $p) : $rho);
+
+}
+
+sub _fixCorrData {
+
+    my @data = @_[0..1];
+    my $rm = $_[2];
+
+    if ($rm->{rmNaN}) {
+
+        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices];
+
+    }
+
+    if ($rm->{cap}) {
+
+        @{$data[0]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[0]};
+        @{$data[1]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[1]};
+
+    }
+
+    if ($rm->{rmOutliers}) {
+
+        my ($min1, $max1, $min2, $max2, @indices);
+        $min1 = percentile($data[0], 0.05);
+        $max1 = percentile($data[0], 0.95);
+        $min2 = percentile($data[1], 0.05);
+        $max2 = percentile($data[1], 0.95);
+        @indices = grep { inrange($data[0]->[$_], [$min1, $max1]) && inrange($data[1]->[$_], [$min2, $max2]) } 0 .. $#{$data[0]};
+        @{$data[0]} = @{$data[0]}[@indices];
+        @{$data[1]} = @{$data[1]}[@indices];
+
+    }
+
+    return(@data);
 
 }
 
@@ -638,7 +645,7 @@ sub _padjust_bh { # Benjamini-Hochberg
         for (my $j = $i; $j > $lasti; $j--) { $sort[$j]->{fdr} = $fdr; }
 
         $lastfdr = $fdr;
-	$lasti = $i;
+	    $lasti = $i;
 
     }
 
@@ -804,8 +811,8 @@ sub qnorm {
 
     }
 
-    return(Core::Mathematics::inf) if ($p == 1);
-    return(Core::Mathematics::ninf) if ($p == 0);
+    return("inf") if ($p == 1);
+    return("-inf") if ($p == 0);
 
     my ($split, $q, $r, $ppnd,
         @a, @b, @c, @d);
@@ -1073,7 +1080,7 @@ sub fact {
 
         Core::Utils::warn("Factorial out of range");
 
-        return(Core::Mathematics::inf);
+        return("inf");
 
     }
     else { return(reduce { $a * $b } 1 .. $n); }

@@ -1,20 +1,5 @@
 #!/usr/bin/env perl
 
-##
-# RF Count
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-# Summary: Calculates per-base RT-stops/mutations and coverage
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 use strict;
 use Config;
 use Fcntl qw(SEEK_SET);
@@ -55,8 +40,9 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $maxcov, $primaryonly, $whitelist, $onlyMut, @bam_trim5,
-    @pool, @qcounter, %transcripts, %spacer, %files,
+    $maxcov, $primaryonly, $whitelist, $onlyMut, 
+    $outRawCounts, @mutClasses, @bam_trim5, @pool, 
+    @qcounter, %transcripts, %spacer, %files,
     %masks, %realid, %onlyMut);
 
 do {
@@ -74,6 +60,7 @@ do {
                 "p|processors=i"             => \$threads,
                 "f|fasta=s"                  => \$multifasta,
                 "m|count-mutations"          => \$mutcount,
+                "orc|out-raw-counts"         => \$outRawCounts,
                 "mf|mask-file=s"             => \$mbfile,
                 "ic|include-clipped"         => \$includeclip,
                 "co|coverage-only"           => \$covonly,
@@ -125,6 +112,7 @@ $maxmut ||= 0.15;
 $discardshorter //= 1;
 $rmconsecutive //= 0;
 $samtools ||= which("samtools");
+@mutClasses = qw(AC AG AT CA CG CT GA GC GT TA TC TG ins del);
 
 $tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
@@ -162,6 +150,7 @@ die "\n  [!] Error: Whitelist must be an integer > 0\n\n" if (defined $whitelist
 die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter &&
                                                                               ((isint($discardshorter) && $discardshorter < 1) &&
                                                                                $discardshorter !~ m/^median$/i));
+die "\n  [!] Error: Parameter -orc requires parameter -m\n\n" if ($outRawCounts && !$mutcount);
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if ($mutcount && $onlyMut) {
@@ -235,6 +224,8 @@ mkpath($output . "whitelists/", { mode  => 0755,
                                   error => \$error }) if ($whitelist);
 mkpath($output . "frequencies/", { mode  => 0755,
                                    error => \$error }) if ($onlyMut);
+mkpath($output . "raw_counts/", { mode  => 0755,
+                                  error => \$error }) if ($outRawCounts);
 
 if (!-e $tmpdir) {
 
@@ -635,8 +626,8 @@ sub count {
     $seqio->forceReopenFh(); # On fork() filehandle is cloned. With this we close it and reopen it for all children.
 
     my ($covered, $rcio, $stats, $readscount,
-        $mmio, $readsToMaxCov, $wh, @lastPos, @counts,
-        @coverage, %last, %stats);
+        $mmio, $readsToMaxCov, $wh, $rh, @lastPos, @counts,
+        @coverage, %last, %stats, %rawCounts);
     $covered = 0;
     %last = ( id       => undef,
               sequence => undef );
@@ -662,6 +653,13 @@ sub count {
 
             open($wh, ">", $output . "whitelists/" . $sample->{file} . ".txt");
             select((select($wh), $|=1)[0]);
+
+        }
+
+        if ($outRawCounts) {
+
+            open($rh, ">", $output . "raw_counts/" . $sample->{file} . ".txt");
+            select((select($rh), $|=1)[0]);
 
         }
 
@@ -728,6 +726,14 @@ sub count {
                     $covered++;
                     print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
+                    if ($outRawCounts) {
+
+                        print $rh $last{id} . "\n";
+                        foreach my $mut (@mutClasses) { print $rh $mut . "\t" . join(",", @{$rawCounts{$mut}}) . "\n"; }
+                        print $rh "\n";
+
+                    }
+
                 }
 
                 my $entry = $seqio->read($row[2]);
@@ -740,6 +746,7 @@ sub count {
                 @lastPos = (0, 0); # position, count
                 @counts = (0) x $transcripts{$id};
                 @coverage = (0) x $transcripts{$id};
+                %rawCounts = map { $_ => [ (0) x $transcripts{$id} ] } @mutClasses if ($outRawCounts);
 
                 $mmio->append_transcript($last{id}, $last{sequence}) if ($mutmap);
 
@@ -767,18 +774,25 @@ sub count {
                 if ($mutcount &&
                     $row !~ m/NM:i:0/) {
 
-                    my ($end, @mutations, @uniqmutations);
+                    my ($end, $muts, $rawMuts);
                     $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
-                    @mutations = parsemd(\@row, $last{sequence});
-                    @mutations = uniq(@mutations, @{$ins}) if (!$noins);
-                    @mutations = rmconsecutive(@mutations) if ($rmconsecutive);
-                    @mutations = collapsemutations(@mutations) if ($collapse);
+                    ($muts, $rawMuts) = parsemd(\@row, $last{sequence});
+                    @$muts = uniq(@$muts, @{$ins}) if (!$noins);
+                    @$muts = rmconsecutive(@$muts) if ($rmconsecutive);
+                    @$muts = collapsemutations(@$muts) if ($collapse);
 
-                    if (@mutations) {
+                    if ($outRawCounts) {
+
+                        foreach my $mut (keys %{$rawMuts}) { $rawCounts{$mut}->[$_]++ for (@{$rawMuts->{$mut}}); }
+                        $rawCounts{ins}->[$_]++ for (@{$ins});
+
+                    }
+
+                    if (@$muts) {
 
                         $stats{mutated}++;
 
-                        for (@mutations) {
+                        for (@$muts) {
 
                             $counts[$_]++;
                             $stats{substr($last{sequence}, $_, 1)}++;
@@ -790,7 +804,7 @@ sub count {
 
                             foreach my $mask (@{$masks{$row[2]}}) {
 
-                                @mutations = grep { $_ < $mask->[0] || $_ > $mask->[1] } @mutations;
+                                @$muts = grep { $_ < $mask->[0] || $_ > $mask->[1] } @$muts;
 
                                 if ($start >= $mask->[0] && $start <= $mask->[1]) { $start = $mask->[1] + 1; }
                                 elsif ($end >= $mask->[0] && $end <= $mask->[1]) { $end = $mask->[0] - 1; }
@@ -799,7 +813,7 @@ sub count {
 
                         }
 
-                        $mmio->append_read($start, $end, scalar(@mutations), \@mutations) if ($mutmap && @mutations);
+                        $mmio->append_read($start, $end, scalar(@$muts), $muts) if ($mutmap && @$muts);
 
                     }
 
@@ -851,9 +865,18 @@ sub count {
             $covered++;
             print $wh $last{id} . "\n" if (defined $whitelist && median(@coverage) >= $whitelist);
 
+            if ($outRawCounts) {
+
+                print $rh $last{id} . "\n";
+                foreach my $mut (@mutClasses) { print $rh $mut . "\t" . join(",", @{$rawCounts{$mut}}) . "\n"; }
+                print $rh "\n";
+
+            }
+
         }
 
         close($wh) if ($whitelist);
+        close($rh) if ($outRawCounts);
         close($fh);
 
         $rcio->mappedreads($stats{total});
@@ -953,7 +976,8 @@ sub parsemd { # SAM MD flag parser
 
     my ($row, $reference) = @_;
 
-    my ($md, $llen, @pos, %quals);
+    my ($md, $llen, @pos, %pos, 
+        %quals);
     $llen = $row->[3] - 1;
     %quals = quality($row);
 
@@ -1007,10 +1031,15 @@ sub parsemd { # SAM MD flag parser
                             $before = $truedel - length($del);
                             $after = $truedel + 1;
                             @truedel = $rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel));
-                            push(@pos, @truedel) if (($evalsurround &&
-                                                      ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
-                                                      ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
-                                                     !$evalsurround);
+                            if (($evalsurround &&
+                                ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
+                                ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
+                                !$evalsurround) { 
+                                    
+                                push(@pos, @truedel);
+                                push(@{$pos{del}}, @truedel) if ($outRawCounts);
+                                
+                            }
 
                         }
 
@@ -1020,10 +1049,15 @@ sub parsemd { # SAM MD flag parser
                         $before = $collapsed{$real}->[0] - length($del);
                         $after = $collapsed{$real}->[0] + 1;
                         @truedel = $rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]));
-                        push(@pos, @truedel) if (($evalsurround &&
-                                                  ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
-                                                  ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
-                                                 !$evalsurround);
+                        if (($evalsurround &&
+                            ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
+                            ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
+                            !$evalsurround) {
+
+                            push(@pos, @truedel);
+                            push(@{$pos{del}}, @truedel) if ($outRawCounts);
+
+                        }
 
                     }
 
@@ -1041,12 +1075,17 @@ sub parsemd { # SAM MD flag parser
 
                     # Include the mutation if both the mutated base and the bases immediately surroundinding
                     # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
-                    push(@pos, $len + $llen) if ($quals{$llen + $len} >= $minqual &&
-                                                 (($evalsurround &&
-                                                   ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
-                                                   ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
-                                                  !$evalsurround) &&
-                                                  (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut));
+                    if ($quals{$llen + $len} >= $minqual &&
+                        (($evalsurround &&
+                         ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
+                         ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
+                         !$evalsurround) &&
+                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) {
+
+                        push(@pos, $len + $llen);
+                        push(@{$pos{$next . $readBase}}, $len + $llen) if ($outRawCounts);
+
+                    }
 
                     $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
 
@@ -1063,7 +1102,7 @@ sub parsemd { # SAM MD flag parser
 
     }
 
-    return(@pos);
+    return(\@pos, \%pos);
 
 }
 
@@ -1273,36 +1312,38 @@ sub help {
 
  |
  +- Mutation count mode options
-    -om or --only-mut                <string>     Only the specified mutations will be counted
-                                                  Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
-                                                        or "A:T") will only count mutation events in which a reference A base has been sequenced as
-                                                        a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
-                                                        separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
-                                                        and deletion count
-    -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
-                                                  Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
-    -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
-    -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
-                                                  Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
-    -nd or --no-deletions                         Ignores deletions
-    -ni or --no-insertions                        Ignores insertions
-    -na or --no-ambiguous                         Ignores ambiguously mapped deletions
-                                                  Note: The default behavior is to re-align them to their right-most valid position (or to their
-                                                        left-most valid position if -la has been specified)
-    -la or --left-align                           Re-aligns ambiguously mapped deletions to their left-most valid position
-                                                  Note: by default, ambiguously mapped deletion are re-aligned to their right-most valid position
-    -rd or --right-deletion                       Only the right-most base in a deletion is marked as mutated
-    -ld or --left-deletion                        Only the left-most base in a deletion is marked as mutated
-    -md or --max-deletion-len        <int>        Ignores deletions longer than this number of nucleotides (Default: 10)
-    -me or --max-edit-distance       <float>      Discards reads with editing distance frequency higher than this threshold (0<m<=1, Default: 0.15 [15%])
-    -eq or --median-quality          <int>        Median quality score threshold for discarding low-quality reads (Phred+33, Default: 20)
-    -dc or --discard-consecutive     <int>        Discards consecutive mutations within this distance from eachothers
-    -cc or --collapse-consecutive                 Collapses consecutive mutations/indels toward the 3'-most one
-    -mc or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
-    -mv or --max-coverage            <int>        Downsamples reads to achieve this maximum mean per-base coverage (>=1000, Default: off)
-    -mm or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution with DRACO
-    -wl or --whitelist               <int>        Generates a DRACO-compatible whitelist file, containing the IDs of transcripts with median
-                                                  coverage >= to the specified value
+    -orc or --out-raw-counts                       Generates a text file reporting raw (unfiltered) mutation counts, broken down by class
+                                                   (single nucleotide mutations, insertions, deletions)
+    -om  or --only-mut                <string>     Only the specified mutations will be counted
+                                                   Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
+                                                         or "A:T") will only count mutation events in which a reference A base has been sequenced as
+                                                         a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
+                                                         separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
+                                                         and deletion count
+    -ds  or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
+                                                   Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
+    -q   or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
+    -es  or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
+                                                   Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
+    -nd  or --no-deletions                         Ignores deletions
+    -ni  or --no-insertions                        Ignores insertions
+    -na  or --no-ambiguous                         Ignores ambiguously mapped deletions
+                                                   Note: The default behavior is to re-align them to their right-most valid position (or to their
+                                                         left-most valid position if -la has been specified)
+    -la  or --left-align                           Re-aligns ambiguously mapped deletions to their left-most valid position
+                                                   Note: by default, ambiguously mapped deletion are re-aligned to their right-most valid position
+    -rd  or --right-deletion                       Only the right-most base in a deletion is marked as mutated
+    -ld  or --left-deletion                        Only the left-most base in a deletion is marked as mutated
+    -md  or --max-deletion-len        <int>        Ignores deletions longer than this number of nucleotides (Default: 10)
+    -me  or --max-edit-distance       <float>      Discards reads with editing distance frequency higher than this threshold (0<m<=1, Default: 0.15 [15%])
+    -eq  or --median-quality          <int>        Median quality score threshold for discarding low-quality reads (Phred+33, Default: 20)
+    -dc  or --discard-consecutive     <int>        Discards consecutive mutations within this distance from eachothers
+    -cc  or --collapse-consecutive                 Collapses consecutive mutations/indels toward the 3'-most one
+    -mc  or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
+    -mv  or --max-coverage            <int>        Downsamples reads to achieve this maximum mean per-base coverage (>=1000, Default: off)
+    -mm  or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution with DRACO
+    -wl  or --whitelist               <int>        Generates a DRACO-compatible whitelist file, containing the IDs of transcripts with median
+                                                   coverage >= to the specified value
 
 HELP
 
