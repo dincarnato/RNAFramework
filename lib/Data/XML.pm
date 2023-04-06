@@ -1,7 +1,6 @@
 package Data::XML;
 
 use strict;
-use XML::LibXML;
 use Core::Mathematics;
 
 use base qw(Core::Base);
@@ -255,7 +254,9 @@ sub addxmlblock {
     
     if (defined $xml) {
         
-        if ($validate) {
+        my $islibXMLinstalled = eval { require XML::LibXML; 1; };
+
+        if ($islibXMLinstalled && $validate) {
             
             eval { my $dom = XML::LibXML->load_xml(string => $xml); };
             
