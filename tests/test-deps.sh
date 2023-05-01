@@ -1,0 +1,9 @@
+#! /bin/bash
+python --version
+perl --version
+bowtie --version
+bowtie2 --version
+samtools --version
+bedtools --version
+cutadapt --version
+RNAalifold --version
