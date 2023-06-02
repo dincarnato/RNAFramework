@@ -1,4 +1,4 @@
-![RNAFramework logo](http://www.rnaframework.com/images/logo_black.png)
+![RNAFramework logo](https://www.incarnatolab.com/images/software/rnaframework.png)
 <br />  
 <br />  
 

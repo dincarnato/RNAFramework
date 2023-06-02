@@ -41,8 +41,8 @@ $|++;
 
 my ($output, $overwrite, $stdev, $help,
     $error, $threads, $decimals, $mincorr,
-    $minvalues, $logtransform, $spearman, @pool,
-    @xml, %xml);
+    $minvalues, $logtransform, $spearman, $ignoreNaNs,
+    @pool, @xml, %xml);
 
 my @ids : shared;
 my %results : shared;
@@ -70,7 +70,8 @@ do {
                 "m|min-values=s"      => \$minvalues,
                 "c|min-correlation=s" => \$mincorr,
                 "l|log-transform"     => \$logtransform,
-                "S|spearman"          => \$spearman ) or help(1);
+                "S|spearman"          => \$spearman,
+                "i|ignore-NaNs"       => \$ignoreNaNs ) or help(1);
 
     @xml = uniq(@ARGV);
 
@@ -348,7 +349,7 @@ sub combine {
 
         }
 
-        if (defined $minvalues || @commonidx1 < 2) {
+        if ((defined $minvalues || @commonidx1 < 2) && !$ignoreNaNs) {
 
             if (($minvalues < 1 && @commonidx1 / $nbases < $minvalues) ||
                 ($minvalues >= 1 && @commonidx1 < $minvalues) ||
@@ -548,8 +549,9 @@ sub combineall {
     foreach my $i (0 .. $#{$values[0]}) {
 
         my @current = map { $values[$_]->[$i] } 0 .. $#values;
+        @current = grep { isnumeric($_) } @current if ($ignoreNaNs);
 
-        if (isnumeric(@current)) {
+        if (@current && isnumeric(@current)) {
 
             if ($logtransform) {
 
@@ -610,6 +612,9 @@ sub help {
                                                 to be satisfied by all pairwise comparisons
  -S  or --spearman                              Uses Spearman instead of Pearson to calculate correlation
  -l  or --log-transform                         Log transforms values before averaging replicates
+ -i  or --ignore-NaNs                           NaNs are ignored when calculating mean reactivities
+                                                Note: this parameter enables combining XML files from experiments with different sets of
+                                                      reactive bases (e.g., A/C and G/U)
 
 HELP
 

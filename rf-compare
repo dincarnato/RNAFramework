@@ -112,10 +112,13 @@ $refio = Data::IO::Sequence->new( file         => $reference,
                                   noncanonical => $kn,
                                   pseudoknots  => $kp,
                                   lonelypairs  => $kl );
+
 $table = Term::Table->new(indent => 2);
 $table->head("Transcript", "PPV", "Sensitivity");
 
 while(my $ref = $refio->read()) {
+
+    die "\n\n  [!] Error: File does not look like a valid Vienna or CT file\n\n" if (!$ref->can("structure"));
     
     my ($file, $refid, $refseq, $refstruct,
         $queryio, $queryseq, $querystruct, $format);
@@ -143,7 +146,7 @@ while(my $ref = $refio->read()) {
         $format =~ s/^\.//;
         $file = $input;
         
-        next if ($fileid ne $refid);
+        #next if ($fileid ne $refid);
         
     }
     
@@ -178,7 +181,7 @@ while(my $ref = $refio->read()) {
     }
     
     if ($queryseq ne $refseq &&
-	!$ignoreseq) {
+	    !$ignoreseq) {
         
         $results{diffseq}++;
         
