@@ -42,7 +42,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
     $maxcov, $primaryonly, $whitelist, $onlyMut, 
     $outRawCounts, @mutClasses, @bam_trim5, @pool, 
-    @qcounter, %transcripts, %spacer, %files,
+    @qcounter, %transcripts, %spacer, %files, 
     %masks, %realid, %onlyMut);
 
 do {
@@ -260,12 +260,13 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
 
-    push(@qcounter, { path    => $sample,
-                      file    => $file,
-                      type    => guess_type($sample),
-                      head    => undef,
-                      trim5   => 0,
-                      hashead => 0 });
+    push(@qcounter, { path      => $sample,
+                      file      => $file,
+                      type      => guess_type($sample),
+                      head      => undef,
+                      trim5     => 0,
+                      hashead   => 0,
+                      missingMD => 0 });
 
     $files{$file} = $#qcounter;
     $spacer{$file} = length($file);
@@ -774,9 +775,18 @@ sub count {
                 if ($mutcount &&
                     $row !~ m/NM:i:0/) {
 
-                    my ($end, $muts, $rawMuts);
+                    my ($end, $muts, $rawMuts, $missingMD);
                     $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
-                    ($muts, $rawMuts) = parsemd(\@row, $last{sequence});
+                    ($muts, $rawMuts, $missingMD) = parsemd(\@row, $last{sequence});
+
+                    if ($missingMD && !$sample->{missingMD}) {
+
+                        print "\n  [!] Warning: Missing MD tag encountered in sample \"" . $sample->{file} . "\"." .
+                              "\n               Consider running \"samtools calmd\" to fix.\n";
+                        $sample->{missingMD} = 1;
+
+                    }
+
                     @$muts = uniq(@$muts, @{$ins}) if (!$noins);
                     @$muts = rmconsecutive(@$muts) if ($rmconsecutive);
                     @$muts = collapsemutations(@$muts) if ($collapse);
@@ -892,7 +902,7 @@ sub count {
 
             for (sort keys %onlyMut) {
 
-                print $mh $_ . "\t" . sprintf("%.6f", $onlyMut{$_}->{count} / $totMuts) . "\n";
+                print $mh $_ . "\t" . ($totMuts ? sprintf("%.6f", $onlyMut{$_}->{count} / $totMuts) : "NaN") . "\n";
                 $onlyMut{$_}->{count} = 0; # Clears it for next file
 
             }
@@ -981,11 +991,11 @@ sub parsemd { # SAM MD flag parser
     $llen = $row->[3] - 1;
     %quals = quality($row);
 
-    return if (@{$row} < 11);
+    return([], {}, 1) if (@{$row} < 11);
 
     for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
 
-    return if (!defined $md);
+    return([], {}, 1) if (!defined $md);
 
     $md = uc($md);
 
@@ -1102,7 +1112,7 @@ sub parsemd { # SAM MD flag parser
 
     }
 
-    return(\@pos, \%pos);
+    return(\@pos, \%pos, 0);
 
 }
 
