@@ -22,7 +22,8 @@ sub new {
                    tmpDir       => "/tmp",
                    _children    => 0,
                    _processes   => {},
-                   _queue       => [] }, \%parameters);
+                   _queue       => [],
+                   _done        => {} }, \%parameters);
 
     $self->_validate();
 
@@ -87,6 +88,8 @@ sub start {
 
                 my $pid = wait();
                 $self->{_children}--;
+                $self->{parentOnExit}->();
+                $self->{_done}->{$pid} = 1;
 
             }
 
@@ -117,7 +120,7 @@ sub waitall {
         for (values %{$self->{_processes}}) {
 
             $_->wait();
-            $self->{parentOnExit}->();
+            $self->{parentOnExit}->() if (!exists $self->{_done}->{$_->pid()});
 
         }
 

@@ -46,7 +46,7 @@ sub isalignment { return(is($_[0], $_[1] . " |*.")); }
 
 sub rev {
 
-    my $sequence = reverse(uc(shift));
+    my $sequence = scalar reverse(uc(shift));
 
     return($sequence);
 
