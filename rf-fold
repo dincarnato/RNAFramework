@@ -194,9 +194,9 @@ $pkmethod ||= 1;
 $pkpercentmfe ||= 0.5;
 $viennarna = File::Spec->rel2abs($viennarna || which("RNAfold"));
 $rnasubopt = File::Spec->rel2abs($rnasubopt || which("RNAsubopt"));
-$rnastructure = File::Spec->rel2abs($rnastructure || which("Fold-smp") || which("Fold"));
-$shapeknots = File::Spec->rel2abs($shapeknots || which("ShapeKnots-smp") || which("ShapeKnots"));
-$partition = File::Spec->rel2abs($partition || which("partition-smp") || which("partition"));
+$rnastructure = File::Spec->rel2abs($rnastructure || which("Fold") || which("Fold-smp"));
+$shapeknots = File::Spec->rel2abs($shapeknots || which("ShapeKnots") || which("ShapeKnots-smp"));
+$partition = File::Spec->rel2abs($partition || which("partition") || which("partition-smp"));
 $probplot = File::Spec->rel2abs($probplot || which("ProbabilityPlot"));
 $data ||= $ENV{DATAPATH};
 $installed = eval { require RNA; 1; };
@@ -606,11 +606,11 @@ sub fold { # Threads
             $foldwins[-1]->[3] = 0;
 
             # Calculate window partition function
-            for (@foldwins) {
+            foreach my $win (@foldwins) {
 
                 my ($start, $end, $trim5, $trim3,
                     $winconst, $subseq, $tmpfile, @winreact);
-                ($start, $end, $trim5, $trim3) = @{$_};
+                ($start, $end, $trim5, $trim3) = @{$win};
 
                 $subseq = substr($sequence, $start, $end - $start + 1);
                 $winconst = fixdotbracket(substr($constraint, $start, $end - $start + 1));
@@ -735,11 +735,11 @@ sub fold { # Threads
         else { push(@foldwins, [0, $length - 1]); }
 
         # Calculate MFE folding in window
-        for (@foldwins) {
+        foreach my $win (@foldwins) {
 
             my ($start, $end, $subseq, $winconst,
                 $tmpfile, @winreact);
-            ($start, $end) = @{$_};
+            ($start, $end) = @{$win};
 
             $subseq = substr($sequence, $start, $end - $start + 1);
             @winreact = @reactivity[$start .. $end];
@@ -851,11 +851,11 @@ sub fold { # Threads
             else { push(@foldwins, [0, $length - 1]); }
 
             # Predict pseudoknot in window
-            for (@foldwins) {
+            foreach my $win (@foldwins) {
 
                 my ($start, $end, $subseq, $tmpfile,
                     $winconst, @winreact);
-                ($start, $end) = @{$_};
+                ($start, $end) = @{$win};
 
                 $subseq = substr($sequence, $start, $end - $start + 1);
                 $winconst = fixdotbracket(substr($entry->structure(), $start, $end - $start + 1));
