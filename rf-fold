@@ -804,6 +804,8 @@ sub fold { # Threads
 
         }
 
+        undef(@foldwins);
+
         ######### End of MFE folding block ##########
 
         ######### Pseudoknots detection block ##########
