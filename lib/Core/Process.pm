@@ -14,15 +14,17 @@ sub new {
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ tmpDir       => "/tmp",
-                   id           => randalphanum(0xf), # Random generated alphanumeric ID if not specified
+                   id           => undef,
                    stdout       => undef,
                    stderr       => undef,
                    onstart      => sub {},
                    onexit       => sub {},
+                   _tmpId       => randalphanum(0xf),
                    _pid         => undef,
                    _exitcode    => undef,
                    _tmpDataFile => undef }, \%parameters);
 
+    $self->{id} = $self->{_tmpId} if (!defined $self->{id});
     $self->_validate();
 
     return($self);
@@ -39,13 +41,13 @@ sub _validate {
     $self->throw("Provided temporary directory does not exist") if (!-d $self->{tmpDir});
 
     $self->{tmpDir} =~ s/\/?$/\//;
-    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{id} . ".tmp";
+    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId} . ".tmp";
 
     my $i = 0;
 
     while(-e $self->{_tmpDataFile}) { # To avoid clashes with other processes
 
-        $self->{_tmpDataFile} = $self->{tmpDir} . $self->{id} . "_" . $i . ".tmp";
+        $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId} . "_" . $i . ".tmp";
         $i++;
 
     }
