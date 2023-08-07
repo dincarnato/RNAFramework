@@ -41,16 +41,9 @@ sub _validate {
     $self->throw("Provided temporary directory does not exist") if (!-d $self->{tmpDir});
 
     $self->{tmpDir} =~ s/\/?$/\//;
-    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId} . ".tmp";
+    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId};
 
     my $i = 0;
-
-    while(-e $self->{_tmpDataFile}) { # To avoid clashes with other processes
-
-        $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId} . "_" . $i . ".tmp";
-        $i++;
-
-    }
 
 }
 
@@ -97,6 +90,7 @@ sub start {
             if (ref($command) eq "CODE") { $exitcode = [$command->(@parameters)]; }
             else { $exitcode = [ system($command, @parameters) ]; }
 
+            $self->{_tmpDataFile} .= "_" . $$ . ".tmp";
             store($exitcode, $self->{_tmpDataFile});
 
             $self->{onexit}->($self->{id}, $$, $exitcode) if (defined $self->{onexit});
@@ -104,6 +98,7 @@ sub start {
             exit(0);
 
         }
+        else { $self->{_tmpDataFile} .= "_" . $self->{_pid} . ".tmp"; }
 
     }
 
