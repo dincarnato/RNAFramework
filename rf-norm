@@ -47,7 +47,8 @@ my ($help, $output, $overwrite, $configfile,
     $index, $config, $error, $threads,
     $rc, $hasctrl, $decimals, $nan,
     $remap, $raw, $suffix, $maxumut,
-    $denatured, $dynwin, $maxmutrate, @index, @pool);
+    $denatured, $dynwin, $maxmutrate, $normfactor,
+    $ignoreLower, @index, @pool, @normfactor);
 
 my @ids : shared;
 my %results : shared;
@@ -62,32 +63,34 @@ do {
 
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"                 => \$help,
-                "o|output-dir=s"         => \$output,
-                "ow|overwrite"           => \$overwrite,
-                "c|config-file=s"        => \$configfile,
-                "sm|scoring-method=s"    => \$scoremethod,
-                "nm|norm-method=s"       => \$normmethod,
-                "nw|norm-window=s"       => \$normwin,
-                "wo|window-offset=s"     => \$winoffset,
-                "dw|dynamic-window"      => \$dynwin,
-                "rb|reactive-bases=s"    => \$reactive,
-                "ni|norm-independent"    => \$independent,
-                "pc|pseudocount=s"	     => \$pseudocount,
-                "s|max-score=s"          => \$maxscore,
-                "mc|mean-coverage=s"     => \$meancov,
-                "ec|median-coverage=s"   => \$mediancov,
-                "u|untreated=s"          => \$untreated,
-                "t|treated=s"            => \$treated,
-                "d|denatured=s"          => \$denatured,
-                "i|index=s"              => \$index,
-                "D|decimals=i"           => \$decimals,
-                "p|processors=i"         => \$threads,
-                "n|nan=i"                => \$nan,
-                "rm|remap-reactivities"  => \$remap,
-                "r|raw"                  => \$raw,
-                "mu|max-untreated-mut=s" => \$maxumut,
-                "mm|max-mutation-rate=s" => \$maxmutrate ) or help(1);
+    GetOptions( "h|help"                         => \$help,
+                "o|output-dir=s"                 => \$output,
+                "ow|overwrite"                   => \$overwrite,
+                "c|config-file=s"                => \$configfile,
+                "sm|scoring-method=s"            => \$scoremethod,
+                "nm|norm-method=s"               => \$normmethod,
+                "nw|norm-window=s"               => \$normwin,
+                "wo|window-offset=s"             => \$winoffset,
+                "dw|dynamic-window"              => \$dynwin,
+                "rb|reactive-bases=s"            => \$reactive,
+                "ni|norm-independent"            => \$independent,
+                "pc|pseudocount=s"	             => \$pseudocount,
+                "s|max-score=s"                  => \$maxscore,
+                "mc|mean-coverage=s"             => \$meancov,
+                "ec|median-coverage=s"           => \$mediancov,
+                "u|untreated=s"                  => \$untreated,
+                "t|treated=s"                    => \$treated,
+                "d|denatured=s"                  => \$denatured,
+                "i|index=s"                      => \$index,
+                "D|decimals=i"                   => \$decimals,
+                "p|processors=i"                 => \$threads,
+                "n|nan=i"                        => \$nan,
+                "rm|remap-reactivities"          => \$remap,
+                "r|raw"                          => \$raw,
+                "mu|max-untreated-mut=s"         => \$maxumut,
+                "mm|max-mutation-rate=s"         => \$maxmutrate,
+                "nf|norm-factor=s"               => \$normfactor,
+                "il|ignore-lower-than-untreated" => \$ignoreLower ) or help(1);
 
 };
 
@@ -136,6 +139,24 @@ $hasctrl = $config->scoremethod() =~ /^[24]$/ ? 0 : 1;
 
 die "\n\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 die "\n\n  [!] Error: Provided treated sample RC file doesn't exist\n\n" if (!-e $treated);
+
+print "\n\n  [!] Warning: Parameter --ignore-lower-than-untreated will have no effect in the absence of an untreated sample\n" if ($ignoreLower && !$hasctrl);
+
+if (defined $normfactor) {
+
+    if ($config->normmethod() == 2) { 
+        
+        @normfactor = split(/,/, @normfactor);
+
+        die "\n  [!] Error: 90\% Winsorizing requires two values for normalization factor\n\n" if (@normfactor != 2);
+        
+    }
+    else { @normfactor = ($normfactor); }
+
+    die "\n  [!] Error: Normalization factor must be >= 0\n\n" if ($normfactor[0] < 0);
+    die "\n  [!] Error: Normalization factor must be > 0\n\n" if ($normfactor[-1] <= 0);
+
+}
 
 if (defined $untreated) { print "\n  [!] Warning: " . $config->scoremethod(1) . " scoring method has been chosen. Ignoring untreated sample file...\n" if (!$hasctrl); }
 else {
@@ -385,6 +406,8 @@ sub norm {
                         $tcounts[$_] = $tcounts[$_] / $tcov[$_];
                         $dcounts[$_] = $dcounts[$_] / $dcov[$_] if (defined $denatured);
 
+                        $seqmask[$_] = "X" if ($ignoreLower && $tcounts[$_] < $ucounts[$_]);
+
                     }
 
                 }
@@ -419,7 +442,16 @@ sub norm {
 
                 }
 
-                $tcounts[$_] = max(0, ($tcounts[$_] / $tmean) - ($ucounts[$_] / $umean)) for (0 .. $#tcounts);
+                for (0 .. $#tcounts) {
+
+                    my ($tcount, $ucount);
+                    $tcount = $tcounts[$_] / $tmean;
+                    $ucount = $ucounts[$_] / $umean;
+                    $tcounts[$_] = max(0, $tcount - $ucount);
+
+                    $seqmask[$_] = "X" if ($ignoreLower && $tcount < $ucount);
+
+                }
 
             }
 
@@ -685,10 +717,16 @@ sub winsor_90 {  # 90% Winsorizing
     return if (!@reactivity);
 
     my ($percentile5, $percentile95);
-    $percentile5 = percentile(\@reactivity, 0.05) || 0; # 5th percentile
-    $percentile95 = percentile(\@reactivity, 0.95); # 95th percentile
 
-    return() unless($percentile95);
+    if (!defined $normfactor) {
+
+        $percentile5 = percentile(\@reactivity, 0.05) || 0; # 5th percentile
+        $percentile95 = percentile(\@reactivity, 0.95); # 95th percentile
+
+        return() unless($percentile95);
+
+    }
+    else { ($percentile5, $percentile95) = @normfactor; }
 
     @reactivity = map { min(($_ < $percentile5 ? $percentile5 : $_) / $percentile95, 1) } @reactivity;
 
@@ -702,18 +740,25 @@ sub norm_28 {  # 2-8% Normalization
 
     return if (!@reactivity);
 
-    my ($p2, $p8, $avg, @norm);
-    $p2 = round(@reactivity * 0.02);
-    $p8 = round(@reactivity * 0.08);
+    my ($avg, @norm);
 
-    return() unless($p8);
+    if (!defined $normfactor) {
+        
+        my ($p2, $p8);
+        $p2 = round(@reactivity * 0.02);
+        $p8 = round(@reactivity * 0.08);
 
-    @norm = sort {$b <=> $a} @reactivity;
+        return() unless($p8);
 
-    $avg += $norm[$_] for ($p2 .. ($p2 + $p8));
-    $avg /= $p8;
+        @norm = sort {$b <=> $a} @reactivity;
 
-    return() if ($avg == 0);
+        $avg += $norm[$_] for ($p2 .. ($p2 + $p8));
+        $avg /= $p8;
+
+        return() if ($avg == 0);
+
+    }
+    else { $avg = $normfactor[0]; }
 
     @reactivity = map { max(0, $_ / $avg) } @reactivity;
 
@@ -727,27 +772,33 @@ sub boxplot {  # Box-plot Normalization
 
     return if (!@reactivity);
 
-    my ($iqrange, $max, $p10, $avg,
-        $outliers, @norm);
-    $iqrange = percentile(\@reactivity, 0.75) - percentile(\@reactivity, 0.25); # Interquartile range
-    $max = percentile(\@reactivity, 0.75) + ($iqrange * 1.5);                   # Above this value, data points are considered outliers
-    @norm = sort {$b <=> $a} @reactivity;
-    $p10 = @norm < 100 && @norm >= 50 ? 10 : round(@norm * 0.1);
+    my ($avg, @norm);
 
-    if (@norm < 50) { $outliers = round(@norm * 0.02); }
-    else { for (@norm) { $outliers++ if ($_ > $max); } }
+    if (!defined $normfactor) {
 
-    $outliers = 1 if (!$outliers);
+        my ($iqrange, $max, $p10, $outliers);
+        $iqrange = percentile(\@reactivity, 0.75) - percentile(\@reactivity, 0.25); # Interquartile range
+        $max = percentile(\@reactivity, 0.75) + ($iqrange * 1.5);                   # Above this value, data points are considered outliers
+        @norm = sort {$b <=> $a} @reactivity;
+        $p10 = @norm < 100 && @norm >= 50 ? 10 : round(@norm * 0.1);
 
-    # If there are 0 outliers, we consider the highest value an outlier
-    shift(@norm) for (0 .. $outliers - 1);
+        if (@norm < 50) { $outliers = round(@norm * 0.02); }
+        else { for (@norm) { $outliers++ if ($_ > $max); } }
 
-    return unless($p10);
+        $outliers = 1 if (!$outliers);
 
-    $avg += $norm[$_] for (0 .. $p10 - 1);
-    $avg /= $p10;
+        # If there are 0 outliers, we consider the highest value an outlier
+        shift(@norm) for (0 .. $outliers - 1);
 
-    return() if ($avg == 0);
+        return unless($p10);
+
+        $avg += $norm[$_] for (0 .. $p10 - 1);
+        $avg /= $p10;
+
+        return() if ($avg == 0);
+
+    }
+    else { $avg = $normfactor[0]; }
 
     # Values will range between 0 and ~1.5 according to
     # "SHAPE-Directed RNA Secondary Structure Prediction" (Low et al., 2010)
@@ -836,18 +887,26 @@ sub help {
  -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -dw or --dynamic-window                            When enabled, the normalization window is dynamically resized to include at least that number of reactive bases
                                                     (e.g. "-rb AC -nw 50 -dw" instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
+ -nf or --norm-factor         <float>               When provided, this will be used as the normalization factor for all transcripts (default behavior is to
+                                                    calculate the normalization factor independently for each transcript)
+                                                    Note: 90% Winsorizing requires 2 normalization factors, provided as a comma-separated list, respectively corresponding
+                                                          to the 5th and 95th percentiles of the distribution of raw reactivities
  -mc or --mean-coverage       <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
  -ec or --median-coverage     <float>               Discards any transcript with median coverage below this threshold (>=0, Default: 0)
  -D  or --decimals            <int>                 Number of decimals for reporting reactivities (1-10, Default: 3)
  -n  or --nan                 <int>                 Transcript positions with read coverage behind this threshold will be reported as NaN in
                                                     the reactivity profile (>0, Default: 10)
 
- Scoring method #1 options (Ding et al., 2014)
+ Scoring method #1 options (Ding et al., 2014) options
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)
  -s  or --max-score           <float>               Score threshold for capping raw reactivities (>0, Default: 10)
 
- Scoring method #3 options (Siegfried et al., 2014)
+ Scoring method #3 options (Siegfried et al., 2014) options
  -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (0<=r<=1, Default: 0.05 [5%])
+
+ Scoring methods #1 and #3 (Ding et al., 2014 & Siegfried et al., 2014)
+ -il or --ignore-lower-than-untreated               Bases having raw reactivity in the treated sample lower than the untreated control, will
+                                                    be ignored (not used during reactivity normalization) and will be reported as NaNs
 
  Scoring methods #3 and #4 (mutational profiling) options
  -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 0.2 [20%])

@@ -41,7 +41,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
     $maxcov, $primaryonly, $whitelist, $onlyMut, 
-    $outRawCounts, @mutClasses, @bam_trim5, @pool, 
+    $outRawCounts, $fast, @mutClasses, @bam_trim5, @pool, 
     @qcounter, %transcripts, %spacer, %files, 
     %masks, %realid, %onlyMut);
 
@@ -50,6 +50,7 @@ do {
     local $SIG{__WARN__} = sub { };
 
     GetOptions( "h|help"                     => \$help,
+                "a|fast"                     => \$fast,                    
                 "t|tmp-dir=s"                => \$tmpdir,
                 "o|output-dir=s"             => \$output,
                 "ow|overwrite"               => \$overwrite,
@@ -328,7 +329,7 @@ while (my $entry = $seqio->read()) {
     ($offset) = $rcio->write($rentry);
 
     # Store length for later steps
-    $transcripts{$id} = $entry->length();
+    $transcripts{$id} = $fast ? $entry->sequence() : $entry->length();
     $realid{$id} = $realid;
 
 }
@@ -365,8 +366,10 @@ foreach my $sample (@qcounter) {
 
             if (exists $transcripts{$id}) {
 
-                die "\n\n  [!] Error: Transcript \"" . $id . "\" length from sample \"" . $sample->{file} . "\" header (" . $length . " nt) differs from reference (" . $transcripts{$id} . " nt)." .
-                    "\n             Please re-map your dataset using the same reference, and try again.\n\n" if ($transcripts{$id} != $length);
+                my $trueLen = $fast ? length($transcripts{$id}) : $transcripts{$id};
+
+                die "\n\n  [!] Error: Transcript \"" . $id . "\" length from sample \"" . $sample->{file} . "\" header (" . $length . " nt) differs from reference (" . $trueLen . " nt)." .
+                    "\n             Please re-map your dataset using the same reference, and try again.\n\n" if ($trueLen != $length);
 
                 $inheader++;
 
@@ -405,7 +408,7 @@ if ($hashead != @qcounter) {
     open(my $hh, ">", $tmphead) or die "\n\n  [!] Error: Unable to write temporary SAM header (" . $! . ")\n\n";
     select((select($hh), $|=1)[0]);
 
-    $header .= "\@SQ\tSN:" . $realid{$_} . "\tLN:" . $transcripts{$_} . "\n" for (sort keys %transcripts);
+    $header .= "\@SQ\tSN:" . $realid{$_} . "\tLN:" . ($fast ? length($transcripts{$_}) : $transcripts{$_}) . "\n" for (sort keys %transcripts);
 
     print $hh $header;
 
@@ -575,11 +578,12 @@ if (-e $mbfile) {
             elsif ($line[$i] =~ m/^(\d+)-(\d+)$/) {
 
                 my ($start, $end) = ($1, $2);
+                my $trueLen = $fast ? length($transcripts{$line[0]}) : $transcripts{$line[0]};
 
                 next if (!ispositive($start) ||
                          $start > $end ||
-                         $start > $transcripts{$line[0]} - 1 ||
-                         $end > $transcripts{$line[0]} - 1);
+                         $start > $trueLen - 1 ||
+                         $end > $trueLen - 1);
 
                 push(@{$masks{$line[0]}}, [$start, $end]);
                 $masked++;
@@ -667,7 +671,8 @@ sub count {
         while (!eof($fh)) {
 
             my ($row, $clip5, $cov, $ins,
-                $editdist, $truelen, $id, @row);
+                $editdist, $truelen, $id, $tsLen,
+                @row);
             $row = <$fh>;
             chomp($row);
             @row = split(/\t/, $row);
@@ -705,6 +710,8 @@ sub count {
             next if ($row[1] & 512); # Discard reads that fail platform quality checks
             next if ($row[1] & 1024 && !$nodiscarddup); # Discard reads that are optical/PCR duplicates
 
+            $tsLen = $fast ? length($transcripts{$id}) : $transcripts{$id};
+
             if ($row[2] ne $last{id}) {
 
                 if (defined $last{id}) {
@@ -737,17 +744,23 @@ sub count {
 
                 }
 
-                my $entry = $seqio->read($row[2]);
-                $entry->unmask();
                 $last{id} = $id;
-                $last{sequence} = $entry->sequence();
+
+                if ($fast) { $last{sequence} = $transcripts{$id}; }
+                else {
+
+                    my $entry = $seqio->read($row[2]);
+                    $entry->unmask();
+                    $last{sequence} = $entry->sequence();
+
+                }
 
                 $readscount = 0;
-                $readsToMaxCov = $transcripts{$id} < $sample->{medianReadLen} ? $maxcov : round(($transcripts{$id} * $maxcov / $sample->{medianReadLen}) / ($transcripts{$id} - $sample->{medianReadLen} + 1)) if ($maxcov);
+                $readsToMaxCov = $tsLen < $sample->{medianReadLen} ? $maxcov : round(($tsLen * $maxcov / $sample->{medianReadLen}) / ($tsLen - $sample->{medianReadLen} + 1)) if ($maxcov);
                 @lastPos = (0, 0); # position, count
-                @counts = (0) x $transcripts{$id};
-                @coverage = (0) x $transcripts{$id};
-                %rawCounts = map { $_ => [ (0) x $transcripts{$id} ] } @mutClasses if ($outRawCounts);
+                @counts = (0) x $tsLen;
+                @coverage = (0) x $tsLen;
+                %rawCounts = map { $_ => [ (0) x $tsLen ] } @mutClasses if ($outRawCounts);
 
                 $mmio->append_transcript($last{id}, $last{sequence}) if ($mutmap);
 
@@ -760,8 +773,8 @@ sub count {
 
                 if ($maxcov) {
 
-                    next if ($transcripts{$id} >= $sample->{medianReadLen} &&
-                             $start > $transcripts{$id} - $sample->{medianReadLen});
+                    next if ($tsLen >= $sample->{medianReadLen} &&
+                             $start > $tsLen - $sample->{medianReadLen});
 
                     if ($lastPos[0] == $start && $lastPos[1] == $readsToMaxCov) { next; }
                     elsif ($lastPos[0] < $start) { @lastPos = ($start, 0); }
@@ -776,7 +789,7 @@ sub count {
                     $row !~ m/NM:i:0/) {
 
                     my ($end, $muts, $rawMuts, $missingMD);
-                    $end = $row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2;
+                    $end = $row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2;
                     ($muts, $rawMuts, $missingMD) = parsemd(\@row, $last{sequence});
 
                     if ($missingMD && !$sample->{missingMD}) {
@@ -831,7 +844,7 @@ sub count {
 
                 $lastPos[1]++;
                 map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
-                                       ($row[3] + $cov - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov - 2);
+                                       ($row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2);
 
 
             }
@@ -843,7 +856,7 @@ sub count {
                     $counts[$row[3]]++;
                     $stats{substr($last{sequence}, $row[3], 1)}++;
 
-                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $transcripts{$id} - 1 ? $transcripts{$id} - 1 : $row[3] + $cov + $clip5 - 2);
+                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov + $clip5 - 2);
 
                     $readscount++ unless ($row[1] & 256);
                     $stats{total}++;
@@ -1289,6 +1302,9 @@ sub help {
  -wt  or --working-threads         <int>          Number of working threads to use for each instance of SAMTools (Default: 1).
                                                   Note: RF Count executes 1 instance of SAMTools for each processor specified by -p.
                                                         At least -p <processors> * -wt <threads> processors are required.
+ -a   or --fast                                   Reference sequences are kept in memory instead of being loaded on the fly
+                                                  Note: this can significantly decrease the runtime when processing large sets of 
+                                                        transcripts, but increases memory usage
  -t   or --tmp-dir                 <string>       Temporary directory (Default: <output>/tmp)
  -o   or --output-dir              <string>       Output directory (Default: rf_count/)
  -ow  or --overwrite                              Overwrites output directory (if the specified path already exists)

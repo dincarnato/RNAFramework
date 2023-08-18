@@ -1,3 +1,21 @@
+## [2.8.4] - 2023-08-16
+### Added
+- Added a check to rf-count to handle cases in which the MD tag is missing from a BAM file in mutation count mode
+- Added the --fast parameter to rf-count to enable faster processing of experiments covering a large set of transcripts with relatively low coverage (feature request by Rhiju Das for the EteRNA project)
+- Added the --ignore-NaNs parameter to rf-combine to allow combining probing experiments with different sets of reactive bases (e.g., DMS and CMCT)
+- Added a tweak to allow Mac users to use rf-fold even when XML::LibXML is not installed
+- Added the --norm-factor parameter to rf-norm to allow providing a normalization factor to be used for all transcripts (default behaviour is to calculate the normalization factor on each transcript separately)
+- Added the --ignore-lower-than-untreated parameter to rf-norm to allow excluding from normalization those bases having raw reactivity in the treated sample lower than in the untreated control
+
+### Changed
+- Fixed a minor bug in rf-fold pseudoknot prediction resulting in an extra window, of the length of the transcript, being evaluated, which led to significantly longer computation times
+- Fixed a bug in rf-fold causing pseudoknot prediction to fail when using RNAstructure
+- Fixed a minor bug in rf-fold preventing Fold-smp, ShapeKnots-smp and partition-smp from being automatically picked
+- Fixed Core::Process:Queue onParentExit call
+
+## API Changes
+- Fixed Core::Process to avoid clashes between process with identical IDs (huge thanks to Rhiju Das for reporting the issue!!)
+
 ## [2.8.3] - 2023-03-28
 ### Added
 - Added the --plot-median-react and --plot-median-shannon options to rf-fold to plot smoothed median reactivity and Shannon entropy
