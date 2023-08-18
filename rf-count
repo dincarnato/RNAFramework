@@ -1315,6 +1315,7 @@ sub help {
                                                   Note: Values must be provided in the same order as the input files.
                                                         If a single value is specified along with multiple SAM/BAM files, it will
                                                         be used for all files.
+                                                        This parameter has no effect when -m (or --count-mutations) is enabled
  -fh  or --from-header                            Instead of providing the number of bases trimmed from 5'-end of reads through the -t5 (or
                                                   --trim-5prime) parameter, RF Count will try to guess it automatically from the header of
                                                   the provided SAM/BAM files

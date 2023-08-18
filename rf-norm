@@ -887,7 +887,7 @@ sub help {
  -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -dw or --dynamic-window                            When enabled, the normalization window is dynamically resized to include at least that number of reactive bases
                                                     (e.g. "-rb AC -nw 50 -dw" instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
- -nf or --norm-factor         <float>               When provided, this will be used as the normalization factor for all transcripts (default behavior is to
+ -nf or --norm-factor         <float>[,<float>]     When provided, this will be used as the normalization factor for all transcripts (default behavior is to
                                                     calculate the normalization factor independently for each transcript)
                                                     Note: 90% Winsorizing requires 2 normalization factors, provided as a comma-separated list, respectively corresponding
                                                           to the 5th and 95th percentiles of the distribution of raw reactivities
