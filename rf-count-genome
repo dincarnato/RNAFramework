@@ -158,9 +158,9 @@ if ($mutcount && $onlyMut) {
         die "\n  [!] Error: Invalid format for -mo parameter's argument \"" . $mutation . "\"\n\n" if (@bases != 2);
         die "\n  [!] Error: Mutation in -mo parameter's argument \"" . $mutation . "\" contains a non-IUPAC character\n\n" if (!isiupac(join("", @bases)));
 
-        foreach my $base1 (iupac2nt($bases[0])) {
+        foreach my $base1 (split //, (iupac2nt($bases[0]))[0]) {
 
-            foreach my $base2 (iupac2nt($bases[1])) { $onlyMut{$base1 . $base2}->{take} = 1; }
+            foreach my $base2 (split //, (iupac2nt($bases[1]))[0]) { $onlyMut{$base1 . $base2}->{take} = 1; }
 
         }
 
