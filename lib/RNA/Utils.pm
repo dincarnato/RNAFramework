@@ -213,6 +213,8 @@ sub _helixinheritance {
 
         foreach my $j ($i + 1 .. $#helices) {
 
+			next if ($i == $j);
+			
             last if (!intersect([$helices[$i]->{h5start}, $helices[$i]->{h3start}],
                                 [$helices[$j]->{h5start}, $helices[$j]->{h3start}]));
 

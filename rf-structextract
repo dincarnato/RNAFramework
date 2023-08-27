@@ -187,7 +187,8 @@ sub extract {
         elsif (-e $rffoldOut . "structures/" . $id . ".ct") { $structFile = $rffoldOut . "structures/" . $id . ".ct"; }
         else { next; }
 
-        eval { $structIO = Data::IO::Sequence->new(file => $structFile);
+        eval { $structIO = Data::IO::Sequence->new( file        => $structFile,
+                                                    lonelypairs => 1 );
                $entry = $structIO->read(); };
 
         if ($@) { next; }
@@ -297,7 +298,7 @@ sub extract {
                 next if (defined $maxMotifLen && $motifLen >= $maxMotifLen);
                 next if ($maxLoopSize && length($loop) - 2 > $maxLoopSize);
                 next if (!minPaired($parentStruct, $motifStart, $motifEnd));
-                next if (reactAndShannonFilter($parentStart, $motifStart, $motifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+                next if (!reactAndShannonFilter($parentStart, $motifStart, $motifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
 
                 while(@{$belongHelix->{parents}} && defined (my $k = $belongHelix->{parents}->[-1])) {
 
@@ -311,7 +312,7 @@ sub extract {
                     if (minPaired($parentStruct, $parentMotifStart, $parentMotifEnd)) {
 
                         last if ($maxLoopSize && loopSize($k, \@parentHelices) > $maxLoopSize);
-                        last if (reactAndShannonFilter($parentStart, $parentMotifStart, $parentMotifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+                        last if (!reactAndShannonFilter($parentStart, $parentMotifStart, $parentMotifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
 
                         $belongHelix = $parentHelix;
                         $motifStart = $parentMotifStart;
