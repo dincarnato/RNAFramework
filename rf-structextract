@@ -279,7 +279,7 @@ sub extract {
             $parentStart = $helices[$i]->h5start();
             $parentEnd = $helices[$i]->h3start();
             $parentStruct = substr($entry->structure(), $parentStart, $parentEnd - $parentStart + 1);
-            @parentHelices = @{(listhelices($parentStruct))[0]};
+            @parentHelices = @{(listhelices($parentStruct, 1))[0]};
 
             # Populates the base-pair to helix lookup table
             foreach my $j (0 .. $#parentHelices) { $bpHelixLookup{$_} = $j for (@{$parentHelices[$j]->{h5bases}}, @{$parentHelices[$j]->{h3bases}}); }
