@@ -517,7 +517,7 @@ else {
 
         print "\n[+] Extracting transcript sequences...";
 
-        $ret = system($bt . " -fi \"" . $reference . "\" -fo \"" . $output . $prefix . ".fa\" -bed \"" . $output . $prefix . ".bed\" -name -s" . ($unspliced ? " " : " -split ") . "2> \"" . $output . "logs/fastaFromBed.log\"");
+        $ret = system($bt . " -fi \"" . $reference . "\" -fo \"" . $output . $prefix . ".fa\" -bed \"" . $output . $prefix . ".bed\" -nameOnly -s" . ($unspliced ? " " : " -split ") . "2> \"" . $output . "logs/fastaFromBed.log\"");
 
         die "\n\n  [!] Error: Transcript sequences extraction failed." .
             "\n             Please check the log file and ensure that the installed bedTools version is >= 2.17.0.\n\n" if ($ret);

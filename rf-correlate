@@ -293,7 +293,7 @@ sub correlate {
 
         }
 
-        $keepbases = $entry1->reactive() if (!$isRC);
+        $keepbases ||= $entry1->reactive() if (!$isRC);
         $sequence = $entry1->sequence();
         ($nbases) = $sequence =~ s/([$keepbases])/$1/ge;
 
