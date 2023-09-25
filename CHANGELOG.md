@@ -1,3 +1,13 @@
+## [2.8.5] - 2023-09-25
+### Changed
+- Fixed two bugs in rf-count -om mode, one causing IUPAC codes to be misinterpreted, and one leading to wrong base substitution calling in the presence of indels
+- Fixed a bug in RNA::Utils::_helixinheritance() causing cyclic references in helix parenthood
+- Fixed a bug in rf-structextract causing the "ignore Shannon - ignore SHAPE" filters to fail
+- Fixed a bug in rf-structextract causing lonely pairs to be discarded
+
+### API Changes
+- Introduced the NRC (Normalized Read Count) file format (former DB file format from SHAPEwarp) 
+
 ## [2.8.4] - 2023-08-16
 ### Added
 - Added a check to rf-count to handle cases in which the MD tag is missing from a BAM file in mutation count mode
@@ -13,7 +23,7 @@
 - Fixed a minor bug in rf-fold preventing Fold-smp, ShapeKnots-smp and partition-smp from being automatically picked
 - Fixed Core::Process:Queue onParentExit call
 
-## API Changes
+### API Changes
 - Fixed Core::Process to avoid clashes between process with identical IDs (huge thanks to Rhiju Das for reporting the issue!!)
 
 ## [2.8.3] - 2023-03-28
@@ -32,7 +42,7 @@
 - Fixed a bug in rf-structextract causing the low SHAPE - low Shannon filter to be ignored
 - Fixed a bug in rf-rctools merge when multiple RCI files are provided (thanks to Asperatus22 for reporting)
 
-## API Changes
+### API Changes
 - Altered RNA::Utils::ppv() and RNA::Utils::sensitivity() to return 0 instead of undef when no base-pairs are common between reference and provided structure
 - Data::Sequence::Structure::bpprobability() now returns 0 and does not raise any warning if the requested base-pair does not exist
 - Added the rmNaN, rmOutliers and cap parameters to Core::Statistics::pearson() and Core::Statistics::spearman() to automatically remove NaNs or outliers (values below the 5th percentile and above the 95th percentile) and to cap values to a maximum, when calculating correlations
@@ -49,7 +59,7 @@
 - Fixed parsing of Bowtie logs by rf-map, which would have caused rf-map to erroneously report 0% mapped reads with newer versions of Bowtie due to a change in the output log format
 - Fixed rf-structextract to avoid redundancies in the output motifs
 
-## API Changes
+### API Changes
 - Added the updateBytewise() method to RF::Data::IO::RC 
 - Updated the Core::Mathematics::isreal() function to use Scalar::Util::looks_like_number() for improved performances
 
@@ -67,7 +77,7 @@
 - ADDED the "extract" command to rf-rctools to allow extracting transcripts, provided a BED or GTF annotation
 - Changed the rf-wiggle module to process RC files in blocks, hence avoiding to keep in memory the full RC entry (useful for genome-level RC files)
 
-## API Changes
+### API Changes
 - Added a third argument to the Core::Statistics::pearson() function, to allow removing NaN values, outliers, or capping values to a maximum prior to calculating the correlation
 - Added the Core::Utils::isGzipped() function to evaluate whether a file is gzipped
 - Fixed the read() method of the Data::IO class to automatically skip empty lines

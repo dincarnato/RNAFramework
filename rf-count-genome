@@ -946,9 +946,9 @@ sub parsemd { # SAM MD flag parser
 
     my ($row, $gaps, $strand) = @_;
 
-    my ($md, $llen, @pos, %quals);
+    my ($md, $llen, @pos, @quals,
+        %posMap);
     $llen = $row->[3] - 1;
-    %quals = quality($row);
 
     return if (@{$row} < 11);
 
@@ -956,6 +956,8 @@ sub parsemd { # SAM MD flag parser
 
     return if (!defined $md);
 
+    %posMap = ref2read($row);
+    @quals = split(//, $row->[10]);
     $md = uc($md);
 
     while($md =~ m/^(\d+)/) {
@@ -1011,8 +1013,8 @@ sub parsemd { # SAM MD flag parser
                             @truedel = $strand eq "+" ? ($rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel))) :
                                                         ($rightdel ? ($before + 1) : $leftdel ? ($truedel) : ($before + 1 .. $truedel));
                             push(@pos, @truedel) if (($evalsurround &&
-                                                      ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
-                                                      ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
+                                                      ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
+                                                      ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
                                                      !$evalsurround);
 
                         }
@@ -1025,8 +1027,8 @@ sub parsemd { # SAM MD flag parser
                         @truedel = $strand eq "+" ? ($rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]))) :
                                                     ($rightdel ? ($before + 1) : $leftdel ? ($collapsed{$real}->[0]) : ($before + 1 .. $collapsed{$real}->[0]));
                         push(@pos, @truedel) if (($evalsurround &&
-                                                  ((exists $quals{$before} && $quals{$before} >= $minqual) || !exists $quals{$before}) &&
-                                                  ((exists $quals{$after} && $quals{$after} >= $minqual) || !exists $quals{$after})) ||
+                                                  ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
+                                                  ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
                                                  !$evalsurround);
 
                     }
@@ -1040,7 +1042,7 @@ sub parsemd { # SAM MD flag parser
             elsif ($next =~ m/^([ACGNT])$/) {
 
                 my ($readBase, $realNext);
-                $readBase = substr($row->[9], $len, 1);
+                $readBase = substr($row->[9], $posMap{$llen + $len}, 1);
                 $realNext = $next;
 
                 if ($next ne "N" && $readBase ne "N") {
@@ -1054,10 +1056,10 @@ sub parsemd { # SAM MD flag parser
 
                     # Include the mutation if both the mutated base and the bases immediately surroundinding
                     # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
-                    push(@pos, $len + $llen) if ($quals{$llen + $len} >= $minqual &&
+                    push(@pos, $len + $llen) if (unpack("C*", $quals[$posMap{$llen + $len}]) - 33 >= $minqual &&
                                                  (($evalsurround &&
-                                                   ((exists $quals{$llen + $len - 1} && $quals{$llen + $len - 1} >= $minqual) || !exists $quals{$llen + $len - 1}) &&
-                                                   ((exists $quals{$llen + $len + 1} && $quals{$llen + $len + 1} >= $minqual) || !exists $quals{$llen + $len + 1})) ||
+                                                   ((exists $posMap{$llen + $len - 1} && unpack("C*", $quals[$posMap{$llen + $len - 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len - 1}) &&
+                                                   ((exists $posMap{$llen + $len + 1} && unpack("C*", $quals[$posMap{$llen + $len + 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len + 1})) ||
                                                   !$evalsurround) &&
                                                   (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut));
 
@@ -1189,16 +1191,15 @@ sub rmconsecutive {
 
 }
 
-sub quality { # Builds an hash of quality scores in reference-based coordinates
+sub ref2read { # Reference to read relative position
 
     my $row = shift;
 
     my ($rpos, $qpos, $cigar, $lastrpos,
-        $lastqpos, @ops, @quals, %quals, %ops);
+        $lastqpos, @ops, %pos, %ops);
     $cigar = $row->[5];
     $rpos = $lastrpos = $row->[3] - 1;
     $qpos = $lastqpos = 0;
-    @quals = split(//, $row->[10]);
     %ops = ( "M" => [1, 1],
              "I" => [1, 0],
              "D" => [0, 1],
@@ -1229,7 +1230,7 @@ sub quality { # Builds an hash of quality scores in reference-based coordinates
         if ($ops{$op}->[0] &&
             $ops{$op}->[1]) {
 
-            if (my $diff = $qpos - $lastqpos) { $quals{$lastrpos + $_} = unpack("C*", $quals[$lastqpos + $_]) - 33 for (0 .. $diff - 1); }
+            if (my $diff = $qpos - $lastqpos) { $pos{$lastrpos + $_} = $lastqpos + $_ for (0 .. $diff - 1); }
 
         }
 
@@ -1238,7 +1239,7 @@ sub quality { # Builds an hash of quality scores in reference-based coordinates
 
     }
 
-    return(%quals);
+    return(%pos);
 
 }
 
