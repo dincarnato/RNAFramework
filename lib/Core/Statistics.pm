@@ -120,38 +120,39 @@ sub spearman {
 
 sub _fixCorrData {
 
-    my @data = @_[0..1];
+    my @data1 = @{$_[0]};
+    my @data2 = @{$_[1]};
     my $rm = $_[2];
 
     if ($rm->{rmNaN}) {
 
-        my @indices = grep {isnumeric($data[0]->[$_]) && isnumeric($data[1]->[$_])} 0 .. $#{$data[0]};
-        @{$data[0]} = @{$data[0]}[@indices];
-        @{$data[1]} = @{$data[1]}[@indices];
+        my @indices = grep {isnumeric($data1[$_]) && isnumeric($data2[$_])} 0 .. $#data1;
+        @data1 = @data1[@indices];
+        @data2 = @data2[@indices];
 
     }
 
     if ($rm->{cap}) {
 
-        @{$data[0]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[0]};
-        @{$data[1]} = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @{$data[1]};
+        @data1 = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @data1;
+        @data2 = map { isnumeric($_) ? min($_, $rm->{cap}) : "NaN" } @data2;
 
     }
 
     if ($rm->{rmOutliers}) {
 
         my ($min1, $max1, $min2, $max2, @indices);
-        $min1 = percentile($data[0], 0.05);
-        $max1 = percentile($data[0], 0.95);
-        $min2 = percentile($data[1], 0.05);
-        $max2 = percentile($data[1], 0.95);
-        @indices = grep { inrange($data[0]->[$_], [$min1, $max1]) && inrange($data[1]->[$_], [$min2, $max2]) } 0 .. $#{$data[0]};
-        @{$data[0]} = @{$data[0]}[@indices];
-        @{$data[1]} = @{$data[1]}[@indices];
+        $min1 = percentile(\@data1, 0.05);
+        $max1 = percentile(\@data1, 0.95);
+        $min2 = percentile(\@data2, 0.05);
+        $max2 = percentile(\@data2, 0.95);
+        @indices = grep { inrange($data1[$_], [$min1, $max1]) && inrange($data2[$_], [$min2, $max2]) } 0 .. $#data1;
+        @data1 = @data1[@indices];
+        @data2 = @data2[@indices];
 
     }
 
-    return(@data);
+    return(\@data1, \@data2);
 
 }
 
