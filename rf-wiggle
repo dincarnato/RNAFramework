@@ -186,7 +186,7 @@ foreach my $input (@ARGV) {
 
                 for(my $i = 0; $i < $length; $i += $blockSize) {
 
-                    print CLRRET . "[+] Processing input file(s) [Current: " . $name . ", " . $id . " (" . sprintf("%.2f", $i / $length * 100) . "% done)]";
+                    print CLRRET . "[+] Processing input file(s) [Current: " . $name . ", " . $id . " (" . sprintf("%.2f", (min($length, $i + $blockSize) / $length * 100) . "% done)]";
 
                     my ($j, $end, $entry, $sequence,
                         @counts, @coverage);

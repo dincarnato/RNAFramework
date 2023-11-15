@@ -43,7 +43,8 @@ sub fold {
     $self->throw("No path provided to RNAfold executable") if (!defined $self->{RNAfold});
 
     my ($id, $command, $ret, $fold,
-        $mea, $structure, $energy, %bpprobs);
+        $mea, $structure, $energy, $ensDiversity,
+        %bpprobs);
     $id = "." . $self->{_randId}; # With the leading . the dp file will be hidden
     $command = $self->{RNAfold} . " --noPS -C --shape='" . $self->{tmpdir} . $id . ".shape' " .
                "--infile='" . $self->{tmpdir} . $id . ".fasta' -T " . $parameters->{temperature} . " " .
@@ -69,18 +70,20 @@ sub fold {
 
         if ($_ =~ m/^([\.\(\)]+) \(\s*([\d\.-]+)\)$/) { ($structure, $energy) = ($1, $2); }
         elsif ($_ =~ m/^([\.\(\)]+) \{\s*[\d\.-]+ MEA=[\d\.]+\}$/) { $mea = $1; }
+        elsif ($_ =~ m/ensemble diversity ([\d\.]+)/) { $ensDiversity = $1; }
 
     }
 
     %bpprobs = $self->_parseDpFile() if ($parameters->{partitionFunction} ||
                                          $parameters->{MEA});
 
-    $fold = Data::Sequence::Structure->new( sequence        => dna2rna($sequence),
-                                            structure       => $structure,
-                                            mea             => $mea,
-                                            bpprobabilities => \%bpprobs,
-                                            energy          => $energy,
-                                            lonelypairs     => $parameters->{noLonelyPairs} ? 0 : 1 );
+    $fold = Data::Sequence::Structure->new( sequence          => dna2rna($sequence),
+                                            structure         => $structure,
+                                            mea               => $mea,
+                                            bpprobabilities   => \%bpprobs,
+                                            energy            => $energy,
+                                            ensembleDiversity => $ensDiversity,
+                                            lonelypairs       => $parameters->{noLonelyPairs} ? 0 : 1 );
 
     return($fold);
 

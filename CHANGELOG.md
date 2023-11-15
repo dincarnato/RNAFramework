@@ -1,3 +1,16 @@
+## [2.8.6] - 2023-11-15
+### Added
+- Added the -cf (--cap-mut-freqs) parameter to rf-json2rc to cap mutation frequencies to a certain value when calculating correlations between reactivity profiles
+
+### Changed
+- Fixed a small bug in rf-json2rc causing warnings not to be printed to screen
+- Fixed a but in rf-json2rc causing certain overlapping windows not to be merged
+- Changed call to bowtie in rf-map to use the -x parameter to pass the genome index, rather than positional parameter
+- Fixed a bug in the handling of end position in BED-formatted annotations by rf-rctools export
+
+### API Changes
+- Added the Data::Sequence::Structure::ensembleDiversity() method 
+
 ## [2.8.5] - 2023-09-25
 ### Changed
 - Fixed two bugs in rf-count -om mode, one causing IUPAC codes to be misinterpreted, and one leading to wrong base substitution calling in the presence of indels

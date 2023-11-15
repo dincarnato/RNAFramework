@@ -72,7 +72,7 @@ do {
                 "c|coverage"        => \$coverage,
                 "r|ratio"           => \$ratio,
                 "mc|min-coverage=i" => \$minCov,
-		 "mr|max-react=s"    => \$maxReact ) or help(1);
+		        "mr|max-react=s"    => \$maxReact ) or help(1);
 
     @files = uniq(@ARGV);
 

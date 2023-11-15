@@ -529,7 +529,7 @@ foreach my $sample (@tmp) {
 
         }
 
-        $command .= " -S \"" . $bi . "\"";
+        $command .= " -S -x \"" . $bi . "\"";
 
     }
 

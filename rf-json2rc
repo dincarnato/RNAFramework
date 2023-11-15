@@ -73,8 +73,8 @@ my ($help, $output, $overwrite, $rcin,
     $surroundToRC, $ignoreTerm, $minOverlapReps,
     $rcindex, $spearman, $minCorrMatch, $acOnly,
     $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
-    $skipZeroClusterWins, @rcin, @jsonin, @jsonData, @rcindex,
-    @rcout, %allWins, %commonWins);
+    $skipZeroClusterWins, $capMutFreqs, @rcin, @jsonin,
+    @jsonData, @rcindex, @rcout, %allWins, %commonWins);
 
 do {
 
@@ -99,7 +99,8 @@ do {
                 "mcr|min-corr-reps=s"        => \$minCorrMatch,
                 "s|spearman"                 => \$spearman,
                 "sz|skip-zero-cluster-wins"  => \$skipZeroClusterWins,
-                "mor|min-overlap-reps=s"     => \$minOverlapReps ) or help(1);
+                "mor|min-overlap-reps=s"     => \$minOverlapReps,
+                "cf|cap-mut-freqs=s"         => \$capMutFreqs ) or help(1);
 
 };
 
@@ -117,6 +118,7 @@ $minCorrMatch //= 0.7;
 $minOverlapMerge ||= 0.75;
 $minCorrMerge //= 0.7;
 $extend //= 0;
+$capMutFreqs ||= 1;
 $success = 0;
 $output =~ s/\/?$/\//;
 @rcin = split(/,/, $rcin);
@@ -136,6 +138,7 @@ die "\n  [!] Error: Minimum overlap between matching windows must be comprised b
 die "\n  [!] Error: Minimum overlap between consecutive windows must be comprised between 0 and 1\n\n" if (!isnumeric($minOverlapMerge) || !inrange($minOverlapMerge, [0, 1]));
 die "\n  [!] Error: Minimum correlation must be comprised between 0 and 1\n\n" if (!isnumeric($minCorrMatch) || !inrange($minCorrMatch, [0, 1]) || !isnumeric($minCorrMerge) || !inrange($minCorrMerge, [0, 1]));
 die "\n  [!] Error: Minimum number of conformations is higher than maximum\n\n" if ($minConf > $maxConf);
+die "\n  [!] Error: Mutation frequency cap must be comprised between 0 and 1\n\n" if (!isnumeric($capMutFreqs) || !inrange($capMutFreqs, [0, 1]));
 
 print "\n[+] Making output directory...";
 
@@ -183,7 +186,7 @@ for (0 .. $#jsonin) {
 
         if (!$rcin[$_]->read($id)) {
 
-            print CLRRET . "[!] Warning: transcript \"" . $id . "\" is missing in RC file, and it will be skipped...";
+            print CLRRET . "[!] Warning: transcript \"" . $id . "\" is missing in RC file, and it will be skipped...\n";
 
             next;
 
@@ -203,7 +206,7 @@ for (0 .. $#jsonin) {
             my ($start, $end, @stoichiometries, @cumCov);
             $start = $window->{start};
             $end = $window->{end};
-
+ 
             if (exists $window->{stoichiometries} && @{$window->{stoichiometries}}) { @stoichiometries = map { [$_] } @{$window->{stoichiometries}}; }
             else {
 
@@ -259,7 +262,8 @@ if (!$noMergeOverlapping) {
 
         foreach my $id (keys %{$allWins{$file}}) {
 
-            my @wins = @{$allWins{$file}->{$id}};
+            my @wins = sort { $a->[2] <=> $b->[2] ||
+                              $a->[0] <=> $b->[0] } @{$allWins{$file}->{$id}};
             $from += @wins;
 
             for (my $i=0; $i < @wins; $i++) {
@@ -272,7 +276,10 @@ if (!$noMergeOverlapping) {
                     my ($win, $int, $sizeInt);
                     $win = $wins[$j];
 
-                    next if ($win->[2] != $last->[2]); # Check windows have same number of conformations
+                    # Check windows have same number of conformations
+                    next if ($win->[2] < $last->[2]);
+                    last if ($win->[2] > $last->[2]);
+
                     next if ($win->[0] < $last->[0] || $win->[1] < $last->[0]);
                     last if ($win->[0] > $last->[1]);
 
@@ -282,7 +289,7 @@ if (!$noMergeOverlapping) {
 
                     $sizeInt = abs(diff(@{$int})) / min(abs(diff(@{$last}[0..1])),abs(diff(@{$win}[0..1])));
 
-                    next if ($sizeInt < $minOverlapMerge);
+                    next if ($sizeInt < $minOverlapMerge && $win->[2] > 1);
 
                     $firstj = $j if (!defined $firstj);
                     $nWins++;
@@ -408,9 +415,11 @@ if (@jsonin > 1) {
                     my ($start2, $end2, $n2, $int);
                     ($start2, $end2, $n2) = @{$allWins{$file}->{$id}->[$j]};
 
+                    next if ($n1 > $n2); # Different n of conformations
+                    last if ($n1 < $n2);
+
                     next if ($end2 < $start1);
                     last if ($start2 > $end1); # Start 2nd win is > end 1st win
-                    next if ($n1 != $n2); # Different n of conformations
 
                     $int = intersect([$start1, $end1], [$start2, $end2]);
 
@@ -457,7 +466,7 @@ push(@rcout, RF::Data::IO::RC->new( file => $output . (fileparse($_, ".json"))[0
 open(my $sh, ">", $output . "stoichiometries.txt") or die "\n\n  [!] Error: Unable to write stoichiometry summary (" . $! . ")\n\n";
 select((select($sh), $|=1)[0]);
 
-print $sh join("\t", qw(Transcript Start End extStart extEnd), map { (fileparse($_, ".json"))[0] } @jsonin) . "\n";
+print $sh join("\t", qw(#Transcript Start End extStart extEnd), map { (fileparse($_, ".json"))[0] } @jsonin) . "\n";
 
 foreach my $id (sort keys %commonWins) {
 
@@ -651,7 +660,7 @@ sub sortConformations {
 
         my ($r, @i);
         @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]} - 1;
-        $r = (_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]]))[0];
+        $r = (_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]], { cap => $capMutFreqs }))[0];
 
         # This handles those cases in which the stdev of the values in one of the arrays is 0 and the correlation is NaN
         return() if (isnan($r));
@@ -819,6 +828,7 @@ sub help {
  -mcr or --min-corr-reps          <float>         Minimum correlation between corresponding conformations for matched windows across
                                                   replicates, to be reported (0-1, Default: 0.7)
  -s   or --spearman                               Spearman will be used instead of Pearson for correlation analyses
+ -cf  or --cap-mut-freqs          <float>         Mutation frequencies will be capped to this value for correlation calculation (>0-1, Default: 1 (no cap))
 
 HELP
 

@@ -288,8 +288,9 @@ elsif ($command eq "extract") {
         }
         else {
 
-            next if ($row[2] >= $ids{$row[0]});
+            next if ($row[2] > $ids{$row[0]});
 
+            $row[2]--;
             $id = @row < 4 ? $row[0] . "_" . $row[1] . "-" . $row[2] : $row[3];
 
         }

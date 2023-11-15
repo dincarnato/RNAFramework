@@ -17,20 +17,21 @@ sub new {
     $parameters{type} = "RNA";
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ structure       => undef,
-                   mea             => undef,
-                   energy          => 0,
-                   pseudoknots     => 0,
-                   noncanonical    => 0,
-                   lonelypairs     => 0,
-                   sci             => undef,
-                   bpprobabilities => {},
-                   basepairs       => [],
-                   _ncpairs        => [],
-                   _pkpairs        => [],
-                   _lonelypairs    => [],
-                   _helices        => [],
-                   _pkhelices      => [] }, \%parameters);
+    $self->_init({ structure         => undef,
+                   mea               => undef,
+                   energy            => 0,
+                   pseudoknots       => 0,
+                   noncanonical      => 0,
+                   lonelypairs       => 0,
+                   sci               => undef,
+                   ensembleDiversity => undef,
+                   bpprobabilities   => {},
+                   basepairs         => [],
+                   _ncpairs          => [],
+                   _pkpairs          => [],
+                   _lonelypairs      => [],
+                   _helices          => [],
+                   _pkhelices        => [] }, \%parameters);
 
     $self->_validate();
     $self->_fixproperties();
@@ -232,6 +233,14 @@ sub structure {
     my $self = shift;
 
     return($self->{structure});
+
+}
+
+sub ensembleDiversity {
+
+    my $self = shift;
+
+    return($self->{ensembleDiversity});
 
 }
 
