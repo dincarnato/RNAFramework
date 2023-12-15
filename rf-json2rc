@@ -454,7 +454,7 @@ if (@jsonin > 1) {
 
     }
 
-    print " " . sum(map { scalar(@{$commonWins{$_}}) } keys %commonWins) . " identified.";
+    print " " . (keys %commonWins ? sum(map { scalar(@{$commonWins{$_}}) } keys %commonWins) : 0) . " identified.";
 
 }
 

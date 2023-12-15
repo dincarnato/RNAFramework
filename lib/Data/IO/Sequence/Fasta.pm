@@ -30,8 +30,7 @@ sub read {
     my $tsid = shift if (@_);
 
     my ($fh, $stream, $header, $id,
-        $description, $gi, $accession, $version,
-        $sequence, $object, $offset, $gb);
+        $description, $sequence, $object, $offset);
 
     $self->throw("Filehandle isn't in read mode") unless ($self->mode() eq "r");
 
@@ -97,21 +96,6 @@ sub read {
     }
     else { $id = $header; }
 
-    if ($id =~ m/gi\|(\d+)\|/) { $gi = $1; }
-    if ($id =~ m/gb\|(\w+)\|/) { $gb = $1; }
-    if ($id =~ m/ref\|([\w\.]+)\|/) {
-
-        $accession = $1;
-
-        if ($accession =~ m/\.(\w+)$/) {
-
-            $version = $1;
-            $accession =~ s/\.$version$//;
-
-        }
-
-    }
-
     $sequence = striptags($sequence);
     $sequence =~ s/[\s\r>]//g;
 
@@ -119,7 +103,7 @@ sub read {
                               !isseq($sequence, "-"));
 
     # Index building at runtime
-    $self->throw("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
+    $self->warn("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
                                                                                                                          $self->{_index}->{$id} != $offset);
 
     if (exists $self->{_index}->{$id}) {
@@ -137,10 +121,6 @@ sub read {
 
     $object = Data::Sequence->new( id          => $id,
                                    name        => $header,
-                                   gi          => $gi,
-                                   gb          => $gb,
-                                   accession   => $accession,
-                                   version     => $version,
                                    sequence    => $sequence,
                                    description => $description );
 

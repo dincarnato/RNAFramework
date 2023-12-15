@@ -976,7 +976,7 @@ sub fold { # Threads
             for (@shannon) {
 
                 $i++;
-                print $wh $i . " " . $_ . "\n" if ($_);
+                print $wh $i . " " . $_ . "\n";
 
             }
 

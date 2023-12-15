@@ -41,6 +41,8 @@ sub _validate {
 
     my $self = shift;
 
+    $self->{file} =~ s/^\s+|\s+$//g;
+
     $self->{mode} = lc($self->{mode});
 
     $self->throw("Invalid mode \"" . $self->{mode} . "\"") unless ($self->{mode} =~ m/^(r|w\+?)$/i);
