@@ -124,7 +124,7 @@ for (@xml) {
         close($dh);
 
     }
-    else { $xml{(fileparse($_, ".xml"))[0]}++; }
+    else { $xml{"__XML__"}++ if ($_ =~ m/\.xml$/); }
 
 }
 
@@ -207,6 +207,7 @@ sub combine {
                     $offset2, $remap2, $tool2, $algorithm2);
 
                 $xmlref = RF::Data::IO::XML->new(file => $file);
+                $id = $xmlref->id() if ($id eq "__XML__");
                 $tool2 = $xmlref->tool();
                 $sequence2 = $xmlref->sequence();
                 $norm2 = $xmlref->norm();

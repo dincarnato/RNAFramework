@@ -620,7 +620,7 @@ sub count {
             ($cov, $truelen, $covWithGaps, $ins, $gaps) = parsecigar($row[5]);
             @{$ins} = map { $_ + $start } @{$ins}; # Adjust insertion relative position to true position
             $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
-
+            
             next if (!exists $transcripts{$id});
             next if ($start < 0 || (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0));
             next if ($mutcount && $truelen < $discardshorter);
@@ -735,13 +735,13 @@ sub count {
                 if ($row !~ m/NM:i:0/) {
 
                     my (@mutations, @uniqmutations);
-                    @mutations = parsemd(\@row, $gaps, $realStrand);
+                    @mutations = parsemd(\@row, clonearrayref($gaps), $realStrand);
                     @mutations = uniq(@mutations, @{$ins}) if (!$noins);
                     @mutations = rmconsecutive(@mutations) if ($rmconsecutive);
 
                     # Collapsing is done towards the 3' end of the RNA, but if the library is unstranded, we do not know where the 3' end is
                     @mutations = collapsemutations(\@mutations, $realStrand) if ($collapse);
-
+                    
                     @mutations = map { $_ - $last{start} } @mutations;
 
                     if (@mutations) {
@@ -946,9 +946,11 @@ sub parsemd { # SAM MD flag parser
 
     my ($row, $gaps, $strand) = @_;
 
-    my ($md, $llen, @pos, @quals,
-        %posMap);
-    $llen = $row->[3] - 1;
+    my ($md, $llen, $realStart, $lastGapEnd,
+        @pos, @quals, %posMap);
+    $realStart = $row->[3] - 1;
+    $llen = $realStart;
+    $lastGapEnd = $realStart;
 
     return if (@{$row} < 11);
 
@@ -966,10 +968,11 @@ sub parsemd { # SAM MD flag parser
         $len = $1;
         $md =~ s/^$len//;
 
-        if (@$gaps && $llen + $len > $llen + $gaps->[0]->[0]) {
-
+        if (@$gaps && $llen + $len > $lastGapEnd + $gaps->[0]->[0]) {
+            
             my $gap = shift(@$gaps);
             $llen += $gap->[1];
+            $lastGapEnd += $gap->[0] + $gap->[1]; 
 
         }
 
