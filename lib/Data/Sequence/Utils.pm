@@ -399,7 +399,7 @@ sub nt2iupac {
 
     foreach my $nt (@nucleotides) {
 
-        my @nt = sort(split(//, $nt));
+        my @nt = sort(uniq(split(//, $nt)));
         $nt = join("", @nt);
 
         $nt =~ s/ACG[TU]/N/g;

@@ -38,7 +38,8 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
     $threads, $tmpDir, $logDir, $error,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
     $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
-    @colorScale, @input, %samples, %transcripts);
+    $dumpChimaeras, $dumpChimaerasOnly, @colorScale, @input, 
+    %samples, %transcripts);
 
 my @transcripts : shared;
 my %sharedData : shared;
@@ -74,7 +75,9 @@ do {
                 "cs|color-scale=s"          => \$colorScale,
                 "rmc|require-min-chimera"   => \$requireBpSupport,
                 "mcf|min-chimera-frac=s"    => \$minChimeraFrac,
-                "mi|max-iterations=i"       => \$maxIter ) or help(1);
+                "mi|max-iterations=i"       => \$maxIter,
+                "dc|dump-chimaeras"         => \$dumpChimaeras,
+                "do|dump-chimaeras-only"    => \$dumpChimaerasOnly ) or help(1);
 
     @input = @ARGV;
 
@@ -126,6 +129,9 @@ die "\n  [!] Error: Minimum base-paired fraction must be comprised between 0 and
 die "\n  [!] Error: Minimum chimera support must be comprised between 0.5 and 1\n\n" if ($requireBpSupport && !inrange($minChimeraFrac, [0.5, 1]));
 die "\n  [!] Error: Constraint threshold must be comprised between 0.5 and 1\n\n" if ($makeConstraint && !inrange($constraintThresh, [0.5, 1]));
 die "\n  [!] Error: Color scale must contain exactly 4 cut-points\n\n" if (@colorScale != 4);
+die "\n  [!] Error: Parameters -do and -eo are mutually exclusive\n\n" if ($dumpChimaerasOnly && $evalOnly);
+die "\n  [!] Error: Parameter -eo requires -es\n\n" if ($evalOnly && !$evalStructures);
+die "\n  [!] Error: Parameter -do requires -dc\n\n" if ($dumpChimaerasOnly && !$dumpChimaeras);
 
 for (@colorScale) { die "\n  [!] Error: Color scale's cut-point values must be comprised between 0 and 1\n\n" if (!isnumeric($_) || !inrange($_, [0, 1])); }
 
@@ -252,7 +258,7 @@ foreach my $sample (sort keys %samples) {
     print "\n[+] Processing sample \"" . $sample . "\"\n";
 
     mkpath($output . $sample . "/dotplot/", { mode  => 0755,
-                                              error => \$error }) if (!$evalOnly);
+                                              error => \$error }) if (!$evalOnly && !$dumpChimaerasOnly);
     mkpath($output . $sample . "/clustered/", { mode  => 0755,
                                                 error => \$error }) if ($makeClustersSam);
     mkpath($output . $sample . "/images/", { mode  => 0755,
@@ -261,6 +267,8 @@ foreach my $sample (sort keys %samples) {
                                                   error => \$error }) if ($makeConstraint);
     mkpath($output . $sample . "/bpcounts/", { mode  => 0755,
                                                error => \$error }) if ($evalStructures);
+    mkpath($output . $sample . "/chimaeras/", { mode  => 0755,
+                                                error => \$error }) if ($dumpChimaeras);
 
     die "\n\n  [!] Error: Unable to create output directory for sample \"" . $sample . "\" (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -387,11 +395,12 @@ sub processTranscript {
 
           if (defined $id && !-e $output . $sample . "/dotplot/" . uc(substr($id, 0, 1))) {
 
-              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if (!$evalOnly);
+              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if (!$evalOnly && !$dumpChimaerasOnly);
               mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
               mkpath($output . $sample . "/images/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
               mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
               mkpath($output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($evalStructures);
+              mkpath($output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($dumpChimaeras);
 
           } }
 
@@ -424,6 +433,17 @@ sub processTranscript {
         print CLRRET . "  [*] Transcript " . $id . ": " . $sharedData{$id}->{total} . " chimeras imported";
 
         if (@ranges) {
+
+            if ($dumpChimaeras) {
+
+                open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
+                select((select($th), $|=1)[0]);
+                print $th join("\t", @$_) . "\n" for (@ranges);
+                close($th);
+
+                next if ($dumpChimaerasOnly);
+
+            }
 
             # Splits ranges in chunks, that will be processed by each thread
             my @rangeChunks = splitRanges($id, @ranges);
@@ -1497,6 +1517,8 @@ sub help {
                                                 each base-pair will be calculated
                                                 Note: structure files must be named after their respective reference transcript
  -eo or --eval-only                             Only calculates the chimeric read support for a reference structure (requires -es), and exits
+ -dc or --dump-chimaeras                        Dumps extracted chimeric reads to file
+ -do or --dump-chimaeras-only                   Only dumps chimeric reads to file (requires -dc), and exits
 
  |
  +- Base-pairs inference options

@@ -1,0 +1,486 @@
+#!/usr/bin/env perl
+
+##
+# RF NormFactor
+# RNA Framework [http://www.rnaframework.com]
+#
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Calculate transcriptome-wide (and experiment-wide) normalization
+#          factors to be used with rf-norm
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use Config;
+use File::Basename;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Core::Statistics;
+use Core::Utils;
+use Data::Sequence::Utils;
+use RF::Data::IO::RC;
+
+$|++;
+
+die "\n  [!] Error: This program requires ithreads." .
+    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
+
+my ($minCov, $output, $help, $overwrite,
+    $reactiveBases, $scoreMethod, $normMethod, $pseudoCount,
+    $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
+    $treated, $untreated, $denatured, $threads, 
+    @ctrlFiles, @treatFiles, @denatFiles, @files, 
+    @pool, %io);
+
+my $common : shared;
+my @ids : shared;
+my %commonPos : shared;
+my %commonReact : shared;
+my %commonNorm : shared;
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                         => \$help,
+                "o|output=s"                     => \$output,
+                "ow|overwrite"                   => \$overwrite,
+                "sm|scoring-method=s"            => \$scoreMethod,
+                "nm|norm-method=s"               => \$normMethod,
+                "rb|reactive-bases=s"            => \$reactiveBases,
+                "pc|pseudocount=s"	             => \$pseudoCount,
+                "s|max-score=s"                  => \$maxScore,
+                "mc|min-coverage=s"              => \$minCov,
+                "u|untreated=s"                  => \$untreated,
+                "t|treated=s"                    => \$treated,
+                "d|denatured=s"                  => \$denatured,
+                "p|processors=s"                 => \$threads,
+                "mu|max-untreated-mut=s"         => \$maxUntreatedMut,
+                "mm|max-mutation-rate=s"         => \$maxMutRate,
+                "il|ignore-lower-than-untreated" => \$ignoreLower ) or help(1);
+
+};
+
+help() if ($help);
+
+$common = 0;
+$threads ||= 1;
+$output ||= "norm_factors.txt";
+$scoreMethod ||= 1;
+$normMethod ||= 1;
+$minCov ||= 10;
+$maxUntreatedMut //= 0.05;
+$maxMutRate ||= 0.2;
+$pseudoCount ||= 1;
+$reactiveBases ||= "ACGT";
+@treatFiles = split /,/, $treated;
+@ctrlFiles = split /,/, $untreated;
+@denatFiles = split /,/, $denatured;
+
+die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if (!isint($threads) || $threads < 1);
+die "\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
+for (@treatFiles, @ctrlFiles, @denatFiles) { die "\n [!] Error: Provided file \"$_\" does not exist\n\n" if (!-e $_); }
+die "\n  [!] Error: Invalid scoring method\n\n" if ($scoreMethod !~ /^[1-4]$/);
+die "\n  [!] Error: Invalid normalization method\n\n" if ($normMethod !~ /^[1-3]$/);
+die "\n  [!] Error: Normalization methods 1 and 3 cannot be used with scoring method 2\n\n" if ($scoreMethod == 2 && $normMethod =~ /^[13]$/);
+die "\n  [!] Error: Scoring method $scoreMethod requires an untreated control\n\n" if (!defined $untreated && $scoreMethod =~ /^[13]$/);
+die "\n  [!] Error: Unequal number of treated and control files\n\n" if (@ctrlFiles > 1 && @treatFiles != @ctrlFiles);
+die "\n  [!] Error: Unequal number of treated and denatured files\n\n" if (@denatFiles > 1 && @treatFiles != @denatFiles);
+die "\n  [!] Error: Invalid reactive bases\n\n" if ($reactiveBases !~ /^all$/i && !isiupac($reactiveBases));
+die "\n  [!] Error: Maximum mutation rate for untreated sample must be comprised between 0 and 1\n\n" if (!isnumeric($maxUntreatedMut) || !inrange($maxUntreatedMut, [0, 1]));
+die "\n  [!] Error: Maximum mutation rate must be comprised between >0 and 1\n\n" if (!isnumeric($maxMutRate) || !inrange($maxMutRate, [0, 1]) || !$maxMutRate);
+die "\n  [!] Error: Pseudocount must be > 0\n\n" if (!isnumeric($pseudoCount) || $pseudoCount <= 0);
+die "\n  [!] Error: Minimum coverage must be an INT > 0\n\n" if (!isint($minCov) || $minCov <= 0);
+
+$reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($reactiveBases)))))));
+
+if ($scoreMethod !~ /^[24]$/) {
+
+    @ctrlFiles = ($ctrlFiles[0] x @treatFiles) if (@ctrlFiles == 1);
+
+    if ($scoreMethod == 3) { @denatFiles = ($denatFiles[0] x @treatFiles) if (@denatFiles == 1); }
+    else { undef(@denatFiles); }
+
+}
+else {
+
+    # Just in case they have been passed, but won't be used
+    undef(@ctrlFiles);
+    undef(@denatFiles);
+
+    print "\n  [!] Warning: Parameter --ignore-lower-than-untreated will have no effect in the absence of an untreated sample\n" if ($ignoreLower);
+
+}
+
+@files = (@treatFiles, @ctrlFiles, @denatFiles);
+$io{$_} = RF::Data::IO::RC->new(file => $_) for (@files);
+
+if (-e $output) {
+
+    if ($overwrite) { unlink($output) or die "\n  [!] Error: $!\n\n"; }
+    else { die "\n  [!] Error: Output file already exists." .
+               "\n    Please use -ow (or --overwrite) to overwrite it\n\n"; }
+
+}
+
+print "\n[+] Identifying covered bases common to all experiments...";
+
+@ids = $io{$files[0]}->ids();
+@pool = map{ threads->create(\&getCoveredBases) } 1 .. $threads;
+$_->join() for (@pool);
+
+print " " . $common . " identified.";
+
+die "\n\n  [!] Error: No covered bases common to all samples\n\n" if (!$common);
+
+%commonReact = map { $_ => shared_clone([]) } @treatFiles;
+
+print "\n[+] Calculating raw reactivity distributions...";
+
+@ids = keys %commonPos;
+@pool = map{ threads->create(\&calcRawReact) } 1 .. $threads;
+$_->join() for (@pool);
+
+if ($normMethod =~ /^[13]$/) {
+
+    print "\n[+] Selecting bases for normalization...";
+
+    foreach my $file (keys %commonReact) {
+
+        my @norm = $normMethod == 1 ? norm_28(@{$commonReact{$file}}) : boxplot(@{$commonReact{$file}});
+
+        die "\n\n  [!] Error: Normalization failed on sample " . (fileparse($file, ".rc"))[0] . "\n\n" if (!@norm);
+
+        $commonNorm{$_}++ for (@norm);
+
+    }
+
+    $common = scalar(grep { $commonNorm{$_} == @treatFiles } keys %commonNorm);
+    print " $common selected.";
+
+    if ($common) {
+
+        print "\n[+] Normalization factors:\n";
+
+        open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
+        select((select($wh), $|=1)[0]);
+
+        print $wh "#Experiment\tNorm factor\n";
+
+        foreach my $file (sort keys %commonReact) {
+
+            my ($sample, $factor, @norm);
+            $sample = (fileparse($file, ".rc"))[0];
+            @norm = map { $_->[1] } grep { exists $commonNorm{$_->[0]} && $commonNorm{$_->[0]} == @treatFiles } @{$commonReact{$file}};
+            $factor = mean(@norm);
+
+            print "\n  [*] $sample: $factor";
+            print $wh join("\t", $sample, $factor) . "\n";
+
+        }
+
+        close($wh);
+
+    }
+    else { die "\n\n  [!] Error: No bases left for normalization\n\n"; }
+
+}
+else {
+
+    print "\n[+] Normalization factors:\n";
+
+    open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
+    select((select($wh), $|=1)[0]);
+
+    print $wh "#Experiment\tNorm factor #1\tNorm factor #2\n";
+
+    foreach my $file (sort keys %commonReact) {
+
+        my ($sample, @norm);
+        $sample = (fileparse($file, ".rc"))[0];
+        @norm = winsor_90(@{$commonReact{$file}});
+        
+        print "\n  [*] $sample: " . join(",", @norm);
+        print $wh join("\t", $sample, @norm) . "\n";
+
+    }
+
+    close($wh);
+
+}
+
+print "\n\n[+] All done.\n\n";
+
+sub getCoveredBases {
+
+    # Each thread will have its own independent copy of the fh
+    $_->forceReopenFh() for (values %io);
+
+    TRANSCRIPT:
+    while (1) {
+
+        my ($id, $refEntry, @refCov, @i);
+
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+
+        last unless(defined $id);
+
+        $refEntry = $io{$files[0]}->read($id);
+        @refCov = $refEntry->coverage();
+        @i = grep { substr($refEntry->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } 0 .. $refEntry->length() - 1;
+        @i = grep { $refCov[$_] >= $minCov } @i;
+
+        next if (!@i);
+
+        foreach my $file (@files[1 .. $#files]) {
+
+            if (my $entry = $io{$file}->read($refEntry->id())) {
+
+                my @cov = $entry->coverage();
+                @i = grep { $cov[$_] >= $minCov } @i;
+
+                next TRANSCRIPT if (!@i);
+
+            }
+            else { next TRANSCRIPT; }
+
+        }
+
+        if (@i) { 
+        
+            lock($common);
+            lock(%commonPos);
+            $commonPos{$refEntry->id()} = shared_clone(\@i);
+            $common += @i; 
+            
+        }
+
+    } 
+
+}
+
+sub calcRawReact {
+
+    # Each thread will have its own independent copy of the fh
+    $_->forceReopenFh() for (values %io);
+
+    while (1) {
+
+        my ($id, $refEntry, @refCov, @i);
+
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+
+        last unless(defined $id);
+
+        for my $i (0 .. $#treatFiles) {
+
+            my ($treatEntry, @treatCounts, @treatCov, @react);
+            $treatEntry = $io{$treatFiles[$i]}->read($id);
+            @treatCounts = $treatEntry->counts();
+            @treatCov = $treatEntry->coverage();
+
+            if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount)] } @{$commonPos{$id}}; }
+            elsif ($scoreMethod == 2) { @react = map { shared_clone(["$id:$_", $treatCounts[$_]]) } @{$commonPos{$id}}; }
+            elsif ($scoreMethod =~ /^[34]$/) { 
+                
+                @react = map { shared_clone(["$id:$_", $treatCounts[$_] / $treatCov[$_]]) } @{$commonPos{$id}};
+
+                next if (!@react); 
+                
+            }
+
+            if (@ctrlFiles) {
+
+                my ($ctrlEntry, @ctrlCounts, @ctrlCov);
+                $ctrlEntry = $io{$ctrlFiles[$i]}->read($id);
+                @ctrlCounts = $ctrlEntry->counts();
+                @ctrlCov = $ctrlEntry->coverage();
+
+                if ($scoreMethod == 1) { 
+                    
+                    my ($tMean, $cMean);
+                    @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount)} @{$commonPos{$id}};
+                    $tMean = mean(map { $_->[1] } @react);
+                    $cMean = mean(@ctrlCounts);
+                    @ctrlCounts = map { $_ / $cMean } @ctrlCounts;
+                    @react = map { [ $react[$_]->[0], $react[$_]->[1] / $tMean ] } 0 .. $#react;
+                    
+                    if ($ignoreLower) {
+
+                        my @i = grep { $react[$_]->[1] >= $ctrlCounts[$_] } 0 .. $#react;
+                        @ctrlCounts = @ctrlCounts[@i];
+                        @react = @react[@i];
+
+                    }
+
+                    next if (!@react);
+
+                    @react = map { shared_clone([ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore) ]) } 0 .. $#react;
+
+                }
+                elsif ($scoreMethod == 3) {
+
+                    my @ctrlRatio = map { $ctrlCounts[$_] / $ctrlCov[$_] } @{$commonPos{$id}};
+
+                    if ($maxUntreatedMut < 1) {
+
+                        my @i = grep { $ctrlRatio[$_] <= $maxUntreatedMut } 0 .. $#react;
+                        @ctrlRatio = @ctrlRatio[@i];
+                        @react = @react[@i];
+
+                    }
+
+                    if ($ignoreLower) {
+
+                        my @i = grep { $react[$_]->[1] >= $ctrlRatio[$_] } 0 .. $#react;
+                        @ctrlRatio = @ctrlRatio[@i];
+                        @react = @react[@i];
+
+                    }
+
+                    next if (!@react);
+                    
+                    if (@denatFiles) {
+
+                        my ($denatEntry, @denatCounts, @denatCov);
+                        $denatEntry = $io{$denatFiles[$i]}->read($id);
+                        @denatCounts = $denatEntry->counts();
+                        @denatCov = $denatEntry->coverage();
+
+                        @react = map { shared_clone([ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / ($denatCounts[$commonPos{$id}->[$_]] / $denatCov[$commonPos{$id}->[$_]])) ]) } 0 .. $#react;
+
+                    }
+                    else { @react = map { shared_clone([ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]) ]) } 0 .. $#react; }
+                    
+                }
+
+            }
+
+            { lock(%commonReact);
+              push(@{$commonReact{$treatFiles[$i]}}, @react); }
+
+        }
+
+    }
+
+}
+
+sub boxplot {
+
+    my @reactivity = sort {$b->[1] <=> $a->[1]} @_;
+
+    return if (!@reactivity);
+
+    my ($avg, $perc75, $perc25, $iqrange, 
+        $max, $p10, $outliers);
+    $perc75 = percentile([ map { $_->[1] } @reactivity ], 0.75);
+    $perc25 = percentile([ map { $_->[1] } @reactivity ], 0.25);
+    $iqrange = $perc75 - $perc25;      # Interquartile range
+    $max = $perc75 + ($iqrange * 1.5); # Above this value, data points are considered outliers
+    $p10 = @reactivity < 100 && @reactivity >= 50 ? 10 : round(@reactivity * 0.1);
+
+    if (@reactivity < 50) { $outliers = round(@reactivity * 0.02); }
+    else { for (@reactivity) { $outliers++ if ($_->[1] > $max); } }
+
+    $outliers = 1 if (!$outliers);
+    @reactivity = @reactivity[$outliers .. $#reactivity];
+
+    return($p10 ? map { $reactivity[$_]->[0] } 0 .. $p10 - 1 : ());
+
+}
+
+sub norm_28 {  # 2-8% Normalization
+
+    my @reactivity = sort {$b->[1] <=> $a->[1]} @_;
+
+    return if (!@reactivity);
+
+    my ($avg, $p2, $p8, @norm);
+    $p2 = round(@reactivity * 0.02);
+    $p8 = round(@reactivity * 0.08);
+
+    return($p8 ? map { $reactivity[$_]->[0] } $p2 .. ($p2 + $p8) : ());
+
+}
+
+sub winsor_90 {  # 90% Winsorizing
+
+    my @reactivity = sort {$b->[1] <=> $a->[1]} @_;
+
+    return if (!@reactivity);
+
+    my ($percentile5, $percentile95);
+    $percentile5 = percentile([ map { $_->[1] } @reactivity ], 0.05) || 0; # 5th percentile
+    $percentile95 = percentile([ map { $_->[1] } @reactivity ], 0.95); # 95th percentile
+
+    return($percentile5, $percentile95);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF NormFactor (v$Core::Utils::VERSION)
+ RNA Framework [http://www.rnaframework.com]
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Calculate transcriptome-wide (and experiment-wide) normalization factors to be used with rf-norm
+
+ Usage:   rf-normfactor [Options]
+
+ Options                                            Description
+ -u  or --untreated           <string>[,<string>]   A comma-separated list of untreated sample RC files (required by Ding/Siegfried 
+                                                    scoring methods)
+                                                    Note: if a single file is passed, this will be used for all treated files
+ -d  or --denatured           <string>[,<string>]   A comma-separated list of denatured sample RC files (optional for Siegfried 
+                                                    scoring method)
+                                                    Note: if a single file is passed, this will be used for all treated files
+ -t  or --treated             <string>[,<string>]   A comma-separated list of treated sample RC files
+ -p  or --processors          <int>                 Number of processors to use (Default: 1)
+ -o  or --output              <string>              Output file normalization factors will be reported to (Default: norm_factors.txt)
+ -ow or --overwrite                                 Overwrites output file (if it already exists)
+ -sm or --scoring-method      <int>                 Specifies the score calculation method (1-2, Default: 1): [1] Ding et al., 2014
+                                                                                                              [2] Rouskin et al., 2014
+                                                                                                              [3] Siegfried et al., 2014
+                                                                                                              [4] Zubradt et al., 2016
+ -nm or --norm-method         <int>                 Specifies the normalization method (1-3, Default: 1): [1] 2-8%
+                                                                                                          [2] 90% Winsorizing
+                                                                                                          [3] Box-plot
+                                                    Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
+ -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
+ -mc or --min-coverage        <int>                 Discards any base with coverage below this threshold (>=1, Default: 10)
+
+ Scoring method #1 options (Ding et al., 2014) options
+ -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)
+ -s  or --max-score           <float>               Score threshold for capping raw reactivities (>0, Default: 10)
+
+ Scoring method #3 options (Siegfried et al., 2014) options
+ -mu or --max-untreated-mut   <float>               Maximum per-base mutation rate in untreated sample (0<=r<=1, Default: 0.05 [5%])
+
+ Scoring methods #1 and #3 (Ding et al., 2014 & Siegfried et al., 2014)
+ -il or --ignore-lower-than-untreated               Bases having raw reactivity in the treated sample lower than the untreated control, will
+                                                    be ignored (not used during reactivity normalization)
+
+ Scoring methods #3 and #4 (mutational profiling) options
+ -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 1 [100%])
+
+HELP
+
+}

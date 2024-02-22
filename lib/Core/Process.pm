@@ -35,7 +35,6 @@ sub _validate {
 
     my $self = shift;
 
-    #$self->throw("Detached parameter value must be BOOL") if ($self->{detached} !~ m/^[01]$/);
     $self->throw("On start parameter value must be a CODE reference") if (ref($self->{onstart}) ne "CODE");
     $self->throw("On exit parameter value must be a CODE reference") if (ref($self->{onexit}) ne "CODE");
     $self->throw("Provided temporary directory does not exist") if (!-d $self->{tmpDir});
@@ -58,8 +57,6 @@ sub start {
         $self->{_pid} = fork();
 
         $self->throw("Unable to start process") unless (defined $self->{_pid});
-
-        #setsid() if ($self->{detached});
 
         if (!$self->{_pid}) {
 
@@ -87,7 +84,7 @@ sub start {
 
             local $Storable::Deparse = 1;
 
-            if (ref($command) eq "CODE") { $exitcode = [$command->(@parameters)]; }
+            if (ref($command) eq "CODE") { $exitcode = [ $command->(@parameters) ]; }
             else { $exitcode = [ system($command, @parameters) ]; }
 
             $self->{_tmpDataFile} .= "_" . $$ . ".tmp";
@@ -128,6 +125,7 @@ sub _retrieveReturnData {
         unlink($self->{_tmpDataFile});
 
     }
+    else { $self->{_exitcode} = [ -1, "Unable to open child process temporary data file \"" . $self->{_tmpDataFile} . "\"" ]; }
 
 }
 
@@ -136,8 +134,6 @@ sub exitcode { return(wantarray() ? @{$_[0]->{_exitcode}} : $_[0]->{_exitcode});
 sub wait {
 
     my $self = shift;
-
-    #$self->throw("Cannot wait a detached process (PID: " . $self->{_pid} . ")") if ($self->{detached});
 
     local $SIG{CHLD} = "IGNORE";
 

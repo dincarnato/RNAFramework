@@ -73,7 +73,7 @@ my ($help, $output, $overwrite, $rcin,
     $surroundToRC, $ignoreTerm, $minOverlapReps,
     $rcindex, $spearman, $minCorrMatch, $acOnly,
     $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
-    $skipZeroClusterWins, $capMutFreqs, @rcin, @jsonin,
+    $skipZeroClusterWins, $capMutFreqs, $keepIgnored, @rcin, @jsonin,
     @jsonData, @rcindex, @rcout, %allWins, %commonWins);
 
 do {
@@ -96,6 +96,7 @@ do {
                 "e|extend=i"                 => \$extend,
                 "sr|surround-to-rc"          => \$surroundToRC,
                 "i|ignore-terminal=s"        => \$ignoreTerm,
+                "ki|keep-ignored"            => \$keepIgnored,
                 "mcr|min-corr-reps=s"        => \$minCorrMatch,
                 "s|spearman"                 => \$spearman,
                 "sz|skip-zero-cluster-wins"  => \$skipZeroClusterWins,
@@ -180,7 +181,7 @@ for (0 .. $#jsonin) {
     foreach my $transcript (@{$data->{transcripts}}) {
 
         my ($id, $sequence, $nReads, @windows);
-        $id = $transcript->{id};
+        $id = $transcript->{id}; 
         $sequence = $transcript->{sequence};
         $nReads = $transcript->{nReads};
 
@@ -236,7 +237,7 @@ for (0 .. $#jsonin) {
             push(@{$allWins{$file}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
 
             $lastid = $id;
-
+		
         }
 
     }
@@ -277,8 +278,8 @@ if (!$noMergeOverlapping) {
                     $win = $wins[$j];
 
                     # Check windows have same number of conformations
-                    next if ($win->[2] < $last->[2]);
-                    last if ($win->[2] > $last->[2]);
+                    next if ($win->[2] != $last->[2]);
+                    #last if ($win->[2] > $last->[2]);
 
                     next if ($win->[0] < $last->[0] || $win->[1] < $last->[0]);
                     last if ($win->[0] > $last->[1]);
@@ -503,7 +504,7 @@ foreach my $id (sort keys %commonWins) {
             if ($nConfs > 1) {
 
                 my ($adjStart, $adjEnd, $c, @sortedConfs,
-                    @counts, @coverage);
+                    @counts, @coverage, @unmaskedCounts, @unmaskedCov);
                 $c = 0;
                 $adjStart = $start - $realStart;
                 $adjEnd = $end - $realStart - 1;
@@ -514,6 +515,13 @@ foreach my $id (sort keys %commonWins) {
                 if ($ignoreTerm) {
 
                     my $basesToIgnore = round($ignoreTerm * ($end - $start));
+
+                    if ($keepIgnored) {
+
+                        @unmaskedCounts = @{clonearrayref(\@counts)};
+                        @unmaskedCov = @{clonearrayref(\@coverage)};
+
+                    }
 
                     for (0 .. $#counts) {
 
@@ -539,6 +547,13 @@ foreach my $id (sort keys %commonWins) {
                 if (@sortedConfs) {
 
                     my (@upCounts, @upCoverage, @downCounts, @downCoverage);
+
+                    if ($ignoreTerm && $keepIgnored) {
+                       
+                        @counts = @unmaskedCounts;
+                        @coverage = @unmaskedCov;
+
+                    } 
 
                     if ($extend) {
 
@@ -822,8 +837,10 @@ sub help {
                                                   Note: these bases will be assigned a coverage and mutation count of 0
  -sr  or --surround-to-rc                         Instead of getting coverage and mutation count of 0, bases in up/downstream extensions
                                                   will be assigned the same coverage and mutation count they have in the input RC files (requires -e)
- -i   or --ignore-terminal        <float>         Coverage and mutation counts for this fraction of bases at window termini will be set
-                                                  to 0 (0-0.2, Default: 0.05)
+ -i   or --ignore-terminal        <float>         Coverage and mutation counts for this fraction of bases at window termini will be ignored during
+                                                  correlation calculation (0-0.2, Default: 0.05)
+ -ki  or --keep-ignored                           Bases ignored during correlation calculation, will be kept in the output RC files
+                                                  Note: by default, both counts and coverage for these bases is set to 0
  -mor or --min-overlap-reps       <float>         Minimum fractional overlap between windows across replicates to be merged (0-1, Default: 0.5)
  -mcr or --min-corr-reps          <float>         Minimum correlation between corresponding conformations for matched windows across
                                                   replicates, to be reported (0-1, Default: 0.7)
@@ -833,3 +850,4 @@ sub help {
 HELP
 
 }
+

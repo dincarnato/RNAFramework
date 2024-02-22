@@ -102,7 +102,7 @@ $scoremethod ||= 1;
 $normmethod ||= 1;
 $nan ||= 10;
 $maxumut //= 0.05;
-$maxmutrate //= 0.2;
+$maxmutrate ||= 1;
 $normwin ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
 $winoffset ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
 $suffix = $raw ? "_raw/" : "_norm/";
@@ -447,7 +447,7 @@ sub norm {
                     my ($tcount, $ucount);
                     $tcount = $tcounts[$_] / $tmean;
                     $ucount = $ucounts[$_] / $umean;
-                    $tcounts[$_] = max(0, $tcount - $ucount);
+                    $tcounts[$_] = min(max(0, $tcount - $ucount), $config->maxscore());
 
                     $seqmask[$_] = "X" if ($ignoreLower && $tcount < $ucount);
 
@@ -786,9 +786,7 @@ sub boxplot {  # Box-plot Normalization
         else { for (@norm) { $outliers++ if ($_ > $max); } }
 
         $outliers = 1 if (!$outliers);
-
-        # If there are 0 outliers, we consider the highest value an outlier
-        shift(@norm) for (0 .. $outliers - 1);
+        @norm = @norm[$outliers .. $#norm];
 
         return unless($p10);
 
@@ -881,7 +879,7 @@ sub help {
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
  -r  or --raw                                       Reports raw reactivities (skips normalization)
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012
- -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: N)
+ -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
  -ni or --norm-independent                          Each reactive base will be normalized independently
  -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript (1e9) [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])
@@ -909,7 +907,7 @@ sub help {
                                                     be ignored (not used during reactivity normalization) and will be reported as NaNs
 
  Scoring methods #3 and #4 (mutational profiling) options
- -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 0.2 [20%])
+ -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 1 [100%])
 
 HELP
 

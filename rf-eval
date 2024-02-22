@@ -1,0 +1,379 @@
+#!/usr/bin/env perl
+
+##
+# RF Eval
+# RNA Framework [http://www.rnaframework.com]
+#
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Calculates various metrics of agreement between reactivity 
+#          data and a structure model
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use File::Basename;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics qw(:all);
+use Data::IO::Sequence;
+use RF::Data::IO::XML;
+use Term::Constants qw(:screen);
+use Term::Progress;
+
+$|++;
+
+my ($help, $output, $overwrite, $reactCutoff, 
+    $structs, $reacts, $termAsUnpaired, $ignoreTerminal,
+    $keepLonelyPairs, $keepPseudoknots, $threads, @pool, %structs);
+
+my $progressBar : shared;
+my @ids : shared;
+my @metrics : shared;
+my %results : shared;
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                  => \$help,
+                "o|output=s"              => \$output,
+                "ow|overwrite"            => \$overwrite,
+                "p|processors=s"          => \$threads,
+                "s|structures=s"          => \$structs,
+                "r|reactivities=s"        => \$reacts,
+                "tu|terminal-as-unpaired" => \$termAsUnpaired,
+                "it|ignore-terminal"      => \$ignoreTerminal,
+                "kl|keep-lonelypairs"     => \$keepLonelyPairs,
+                "kp|keep-pseudoknots"     => \$keepPseudoknots,
+                "c|reactivity-cutoff=s"   => \$reactCutoff ) or help(1);
+
+};
+
+help() if ($help);
+
+$threads ||= 1;
+$reactCutoff ||= 0.7;
+$output ||= "rf_eval.txt";
+
+die "\n  [!] Error: Number of processors must be an INT >= 1\n\n" if (!isint($threads) || !ispositive($threads));
+die "\n  [!] Error: No structure file/directory specified\n\n" if (!defined $structs);
+die "\n  [!] Error: Provided structure file/directory does not exist\n\n" if (!-e $structs);
+die "\n  [!] Error: No XML reactivity file/directory specified\n\n" if (!defined $reacts);
+die "\n  [!] Error: Provided XML reactivity file/directory does not exist\n\n" if (!-e $reacts);
+die "\n  [!] Error: Reactivity cutoff must > 0\n\n" if (!ispositive($reactCutoff));
+die "\n  [!] Error: Parameters -tu and -it are mutually exclusive\n\n" if ($termAsUnpaired && $ignoreTerminal);
+die "\n  [!] Error: Output file already exists." .
+    "\n             Please specify -ow (or --overwrite) to overwrite it.\n\n" if (-e $output && !$overwrite);
+
+print "\n[+] Importing structure file(s) [0 imported]";
+
+if (-d $structs) { # Directory of structure files
+
+    opendir(my $dh, $structs) or die "\n\n  [!] Error: Unable to read structure files from directory\n\n";
+    while(my $file = readdir($dh)) {
+
+        next if ($file !~ m/\.(?:db|ct)$/);
+
+        my $io = Data::IO::Sequence->new( file        => "$structs/$file",
+                                          lonelypairs => $keepLonelyPairs,
+                                          pseudoknots => $keepPseudoknots );
+        while(my $entry = $io->read()) { 
+            
+            die "\n\n  [!] Error: Duplicate structure ID \"" . $entry->id() . "\"\n\n" if (exists $structs{$entry->id()});
+
+            $structs{$entry->id()}->{structure} = $entry->structure() if ($entry->can("structure")); 
+            print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]";
+
+        }
+
+    }
+    closedir($dh);
+
+    die "\n\n  [!] Error: Specified folder doesn't contain any structure file\n\n" unless(keys %structs);
+
+}
+else { # Single structure file
+
+    die "\n\n  [!] Error: Provided file lacks .db or .ct extension\n\n" if ($structs !~ m/\.(?:db|ct)$/);
+
+    my $io = Data::IO::Sequence->new( file        => $structs,
+                                      lonelypairs => $keepLonelyPairs,
+                                      pseudoknots => $keepPseudoknots );
+    while(my $entry = $io->read()) { 
+
+        die "\n\n  [!] Error: Duplicate structure ID \"" . $entry->id() . "\"\n\n" if (exists $structs{$entry->id()});
+
+        $structs{$entry->id()}->{structure} = $entry->structure() if ($entry->can("structure")); 
+        print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]";
+
+    }
+    
+}
+
+die "\n\n  [!] Error: No structure file imported\n\n" if (!keys %structs);
+
+print "\n[+] Importing XML file(s) [0 imported]";
+
+if (-d $reacts) { # Directory of structure files
+
+    my $imported = 0;
+
+    opendir(my $dh, $reacts) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
+    while(my $file = readdir($dh)) {
+
+        next if ($file !~ m/\.(?:xml)$/);
+
+        my $id = $file;
+        $id =~ s/\.xml$//;
+
+        if (exists $structs{$id}) {
+
+            $structs{$id}->{reactFile} = "$reacts/$file";
+            $imported++;
+
+        }
+
+    }
+    closedir($dh);
+
+    die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless ($imported);
+
+    print CLRRET . "[+] Importing XML file(s) [$imported imported]";
+
+}
+else { # Single structure file
+
+    die "\n\n  [!] Error: Provided file lacks .xml extension\n\n" if ($structs !~ m/\.xml$/);
+
+    my $id = $reacts;
+    $id =~ s/\.xml$//;
+
+    $structs{$id}->{reactFile} = $reacts if (exists $structs{$id});
+
+    print CLRRET . "[+] Importing XML file(s) [1 imported]";
+    
+}
+
+for (keys %structs) { delete($structs{$_}) if (!exists $structs{$_}->{reactFile}); }
+
+@ids = keys %structs;
+
+if (@ids) { print "\n[+] " . scalar(@ids) . " structures with matched reactivity file\n\n"; }
+else { die "\n\n  [!] Error: No matching structure-XML pair\n\n"; }
+
+$progressBar = shared_clone(Term::Progress->new( max   => scalar(@ids),
+                                                 width => 50 ));
+$progressBar->init("");
+
+@pool = map{ threads->create(\&metrics) } 1 .. $threads;
+$_->join() for (@pool);
+
+@metrics = sort { $a->[0] cmp $b->[0] } @metrics;
+
+print "\n\n[+] Writing metrics to file...";
+
+open(my $fh, ">", $output) or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
+select((select($fh), $|=1)[0]);
+print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
+print $fh join("\t", @$_) . "\n" for (@metrics);
+close($fh);
+
+print "\n[+] All done.\n\n";
+
+sub metrics {
+
+    while(1) {
+
+        my ($id, $structure, $xml);
+
+        { lock(@ids);
+          $id = shift(@ids) if (@ids); }
+
+        last unless($id);
+
+        $structure = $structs{$id}->{structure};
+
+        eval { $xml = RF::Data::IO::XML->new(file => $structs{$id}->{reactFile}); };
+
+        if ($@) {
+
+            lock(%results);
+            $results{parseErr}++;
+
+            undef($@);
+
+            next;
+
+        }
+
+        if ($xml->length() != length($structure)) {
+
+            lock(%results);
+            $results{diffLen}++;
+
+            next;
+
+        }
+
+        my ($coeffUnpaired, $dsci, $auc);
+        $coeffUnpaired = coeffUnpaired($structure, [ $xml->reactivity() ]);
+        $dsci = dsci($structure, [ $xml->reactivity() ]);
+        $auc = roc($structure, [ $xml->reactivity() ]);
+
+        { lock(@metrics);
+          push(@metrics, shared_clone([$id, $coeffUnpaired, $dsci, $auc])); 
+          $progressBar->update(1); }
+
+    }
+
+}
+
+sub coeffUnpaired {
+
+    my ($dotbracket, $reactivity) = @_;
+
+    my ($coeff, $ss, $total, @unpaired);
+    @unpaired = @{(getBaseIndexes($dotbracket))[0]};
+    @unpaired = grep { isnumeric($reactivity->[$_]) } @unpaired;
+    $total = scalar(grep { $_ >= $reactCutoff } @{$reactivity});
+
+    return("NaN") if (!@unpaired || !$total);
+
+    $ss = scalar(grep { $reactivity->[$_] >= $reactCutoff } @unpaired);
+    $coeff = $ss / $total;
+
+    return($coeff);
+
+}
+
+sub dsci {
+
+    my ($dotbracket, $reactivity) = @_;
+
+    my ($dsci, $paired, $unpaired);
+    ($unpaired, $paired) = getBaseIndexes($dotbracket);
+    @$paired = grep { isnumeric($reactivity->[$_]) } @$paired;
+    @$unpaired = grep { isnumeric($reactivity->[$_]) } @$unpaired;
+
+    return("NaN") if (!@$paired || !@$unpaired);
+
+    foreach my $i (@$paired) {
+
+        foreach my $j (@$unpaired) {
+
+            $dsci++ if ($reactivity->[$i] < $reactivity->[$j]);
+
+        }
+
+    }
+
+    return($dsci / (scalar(@$paired) * scalar(@$unpaired)));
+
+}
+
+sub roc {
+
+    my ($dotbracket, $reactivity) = @_;
+
+    my ($auc, $unpaired, $paired, @tp, @fp);
+    $auc = 0;
+    ($unpaired, $paired) = getBaseIndexes($dotbracket);
+    @$unpaired = grep { isnumeric($reactivity->[$_]) } @$unpaired;
+    @$paired = grep { isnumeric($reactivity->[$_]) } @$paired;
+
+    return("NaN") if (!@$unpaired || !@$paired);
+
+    for (my $i = 0; $i <= 1000; $i += 5) {
+
+        my ($cutoff, $tp, $fp);
+        $cutoff = $i / 1000;
+        $tp = scalar(grep { $reactivity->[$_] >= $cutoff } @$unpaired);
+        $fp = scalar(grep { $reactivity->[$_] >= $cutoff } @$paired);
+
+        push(@tp, $tp / @$unpaired);
+        push(@fp, $fp / @$paired);
+
+    }
+
+    for(my $i = 0; $i < $#tp; $i++) {
+
+        my ($b1, $b2, $h);
+        $b1 = $tp[$i];
+        $b2 = $tp[$i+1];
+        $h = $fp[$i] - $fp[$i+1];
+        $auc += ($b1 + $b2) * $h / 2;
+
+    }
+
+    return($auc);
+
+}
+
+sub getBaseIndexes {
+
+    my $dotbracket = shift;
+
+    my ($n, @paired, @unpaired);
+    $n = length($dotbracket) - 1;
+    @paired = grep { substr($dotbracket, $_, 1) ne "." } 0 .. $n;
+    @unpaired = grep { substr($dotbracket, $_, 1) eq "." } 0 .. $n;
+
+    if ($ignoreTerminal || $termAsUnpaired) {
+
+        my %terminal = map { $_ => 1 } grep { substr($dotbracket, $_, 1) ne "." && 
+                                              (($_ > 0 && substr($dotbracket, $_ - 1, 1) eq ".") || 
+                                               ($_ < $n && substr($dotbracket, $_ + 1, 1) eq ".")) } 0 .. $n;
+
+        @paired = grep { !exists $terminal{$_} } @paired if ($ignoreTerminal);
+        push(@unpaired, map { $_ } keys %terminal) if ($termAsUnpaired);
+
+    }
+
+    return(\@unpaired, \@paired);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF Eval (v$Core::Utils::VERSION)
+ RNA Framework [http://www.rnaframework.com]
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Calculates various metrics of agreement between reactivity data and a structure model
+
+ Usage:   rf-eval [Options] -s /path/to/structure/files -r /path/to/XML/reactivity/files       # Multiple files
+          rf-eval [Options] -s /path/to/structure/file.db -r /path/to/XML/reactivity/file.xml  # Single file
+
+ Options                                       Description
+ -s  or --structures             <string>      Path to a (folder of) structure file(s)
+                                               Note: files containing multiple structures are accepted
+ -r  or --reactivities           <string>      Path to a (folder of) XML reactivity file(s)
+                                               Note: file names must match transcript IDs in structure files
+ -o  or --output                 <string>      Output file with metrics per transcript (Default: rf_eval.txt)
+ -ow or --overwrite                            Overwrites output file (if the specified file already exists)
+ -p  or --processors             <int>         Number of processors to use (>=1, Default: 1)
+ -tu or --terminal-as-unpaired                 Treats terminal base-pairs as if they were unpaired
+ -it or --ignore-terminal                      Terminal base-pairs are excluded from calculations
+ -kl or --keep-lonelypairs                     Lonely base-pairs (helices of 1 bp) are retained
+ -kp or --keep-pseudoknots                     Pseudoknotted base-pairs are retained
+ -c  or --reactivity-cutoff      <float>       Cutoff for considering a base highly-reactive when computing the
+                                               unpaired coefficient (>0, Default: 0.7)
+
+HELP
+
+}

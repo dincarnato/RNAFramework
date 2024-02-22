@@ -78,7 +78,7 @@ foreach my $input (@ARGV) {
     $name =~ s/\/$//;
     $name = fileparse($name, qr/\.[^.]*/);
     $name =~ s/\.(?:xml|rc)$//;
-    $output = $name . "." . ($coverage ? "coverage" : ($ratio ? "ratio" : "counts")) . ".wig";
+    $output = $name . ($coverage ? ".coverage" : ($ratio ? ".ratio" : undef)) . ".wig";
 
     print CLRRET . "[+] Processing input file(s) [Current: " . $name . "]";
 

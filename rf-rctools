@@ -481,14 +481,14 @@ HELP
  Usage:       rf-rctools extract -a annotation.gtf Sample.rc     # Will only use the specified file
               rf-rctools extract -a annotation.gtf Sample        # Will look for .plus.rc and .minus.rc files
 
- Options                           Description
- -o  or --output      <string>     Output RC filename (Default: <annotation>.rc)
- -ow or --overwrite                Overwrites output file if already exists
- -a  or --annotation  <string>     BED/GTF file containing a list of regions to be extracted (mandatory)
- -f  or --GTFfeature  <string>     If a GTF file is provided, only entries corresponding to this feature type
-                                   will be extracted (Default: exon)
- -b  o --GTFattribute <string>     If a GTF file is provided, this attribute will be used as the entry ID in
-                                   the output RC file (Default: transcript_id)
+ Options                            Description
+ -o  or --output       <string>     Output RC filename (Default: <annotation>.rc)
+ -ow or --overwrite                 Overwrites output file if already exists
+ -a  or --annotation   <string>     BED/GTF file containing a list of regions to be extracted (mandatory)
+ -f  or --GTFfeature   <string>     If a GTF file is provided, only entries corresponding to this feature type
+                                    will be extracted (Default: exon)
+ -b  or --GTFattribute <string>     If a GTF file is provided, this attribute will be used as the entry ID in
+                                    the output RC file (Default: transcript_id)
 
 HELP
 
