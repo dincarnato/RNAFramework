@@ -51,10 +51,8 @@ ENV PATH="/home/${USERNAME}/conda/bin:${PATH}"
 # Setup Bioconda channel configuration and install dependencies
 RUN conda config --add channels defaults && \
     conda config --add channels bioconda && \
-    conda config --add channels conda-forge && \
-    conda config --set channel_priority strict && \
     mamba install -y \
-        python=3.9 \
+        python=3.10 \
         gxx_linux-64 \
         bowtie>=1.2.3 \
         bowtie2>=2.3.5 \
