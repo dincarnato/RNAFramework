@@ -1115,7 +1115,7 @@ sub parsecigar {
 
         }
 
-        $truelen += $n if ($op =~ m/^[MI]$/);
+        $truelen += $n if ($op =~ m/^[MI=X]$/);
         push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
 
         $cigar =~ s/^$n$op//;

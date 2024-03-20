@@ -102,8 +102,6 @@ sub read {
 
     foreach my $line (split(/\n/, $stream)) {
 
-        $line =~ s/[\s\r]//g;
-
         next if ($line =~ m/^\s*$/ ||
                  $line =~ m/^#/);
 

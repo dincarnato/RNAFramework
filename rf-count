@@ -1155,7 +1155,7 @@ sub parsecigar {
         $cov += $n if (($includeclip && $op =~ m/^[DM=XSH]$/) ||
                        (!$includeclip && $op =~ m/^[DM=X]$/));
         $last += $n if ($op =~ m/^[DNM=X]$/);
-        $truelen += $n if ($op =~ m/^[MI]$/);
+        $truelen += $n if ($op =~ m/^[MI=X]$/);
         push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
 
         $cigar =~ s/^$n$op//;
