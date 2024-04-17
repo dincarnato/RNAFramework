@@ -186,6 +186,7 @@ elsif ($command eq "merge") {
         my ($merge, $readscount, @counts, @coverage);
         @counts = $entry->counts();
         @coverage = $entry->coverage();
+        $readscount = $entry->readscount();
 
         if (@rc > 1) {
 

@@ -785,7 +785,13 @@ sub count {
 
             }
 
-            $readscount++ unless ($row[1] & 256);
+            unless ($row[1] & 256) {
+
+                $readscount++;
+                $stats{totalPrimary}++;
+
+            }
+            
             $stats{total}++;
 
             if (@$gaps) {
@@ -843,12 +849,12 @@ sub count {
 
         }
 
-        $rcIO{"+"}->mappedreads($stats{total});
+        $rcIO{"+"}->mappedreads($stats{totalPrimary});
         $rcIO{"+"}->close();
 
         if ($sample->{library} ne "unstranded") {
 
-            $rcIO{"-"}->mappedreads($stats{total});
+            $rcIO{"-"}->mappedreads($stats{totalPrimary});
             $rcIO{"-"}->close();
 
         }

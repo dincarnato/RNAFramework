@@ -781,7 +781,13 @@ sub count {
 
                 }
 
-                $readscount++ unless ($row[1] & 256);
+                unless ($row[1] & 256) {
+
+                    $readscount++;
+                    $stats{totalPrimary}++;
+
+                }
+
                 $stats{total}++;
 
                 # Parse the MD flag only when edit distance != 0
@@ -858,7 +864,13 @@ sub count {
 
                     map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov + $clip5 - 2);
 
-                    $readscount++ unless ($row[1] & 256);
+                    unless ($row[1] & 256) {
+
+                        $readscount++;
+                        $stats{totalPrimary}++;
+
+                    }
+
                     $stats{total}++;
 
                 }
@@ -902,7 +914,7 @@ sub count {
         close($rh) if ($outRawCounts);
         close($fh);
 
-        $rcio->mappedreads($stats{total});
+        $rcio->mappedreads($stats{totalPrimary});
         $rcio->close();
         $mmio->close() if ($mutmap);
 
