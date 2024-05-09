@@ -166,7 +166,7 @@ print "\n[+] Combination statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{combined} .
       "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
       "\n                             " . ($results{failed} - $results{diffseq} - $results{diffscore} - $results{diffnorm} - $results{difftool} - $results{nominvalues} - $results{lowcorr}) . " XML parsing failed" .
-      "\n                             " . $results{nominvalues} . " not enough values for correlation calculation" .
+      "\n                             " . $results{nominvalues} . " no common bases, or not enough values for correlation calculation" .
       "\n                             " . $results{lowcorr} . " correlation too low" .
       "\n                             " . $results{difftool} . " mismatch between analysis tools" .
       "\n                             " . $results{diffseq} . " mismatch between transcript sequences" .

@@ -42,12 +42,11 @@ my ($minCov, $output, $help, $overwrite,
     $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
     $treated, $untreated, $denatured, $threads, 
     @ctrlFiles, @treatFiles, @denatFiles, @files, 
-    @pool, %io);
+    @pool, %io, %commonReact);
 
 my $common : shared;
 my @ids : shared;
 my %commonPos : shared;
-my %commonReact : shared;
 my %commonNorm : shared;
 
 do {
@@ -145,13 +144,12 @@ print " " . $common . " identified.";
 
 die "\n\n  [!] Error: No covered bases common to all samples\n\n" if (!$common);
 
-%commonReact = map { $_ => shared_clone([]) } @treatFiles;
+%commonReact = map { $_ => [] } @treatFiles;
 
 print "\n[+] Calculating raw reactivity distributions...";
 
 @ids = keys %commonPos;
-@pool = map{ threads->create(\&calcRawReact) } 1 .. $threads;
-$_->join() for (@pool);
+calcRawReact();
 
 if ($normMethod =~ /^[13]$/) {
 
@@ -294,10 +292,10 @@ sub calcRawReact {
             @treatCov = $treatEntry->coverage();
 
             if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount)] } @{$commonPos{$id}}; }
-            elsif ($scoreMethod == 2) { @react = map { shared_clone(["$id:$_", $treatCounts[$_]]) } @{$commonPos{$id}}; }
+            elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_]] } @{$commonPos{$id}}; }
             elsif ($scoreMethod =~ /^[34]$/) { 
                 
-                @react = map { shared_clone(["$id:$_", $treatCounts[$_] / $treatCov[$_]]) } @{$commonPos{$id}};
+                @react = map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @{$commonPos{$id}};
 
                 next if (!@react); 
                 
@@ -329,7 +327,7 @@ sub calcRawReact {
 
                     next if (!@react);
 
-                    @react = map { shared_clone([ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore) ]) } 0 .. $#react;
+                    @react = map { [ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore) ] } 0 .. $#react;
 
                 }
                 elsif ($scoreMethod == 3) {
@@ -361,17 +359,16 @@ sub calcRawReact {
                         @denatCounts = $denatEntry->counts();
                         @denatCov = $denatEntry->coverage();
 
-                        @react = map { shared_clone([ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / ($denatCounts[$commonPos{$id}->[$_]] / $denatCov[$commonPos{$id}->[$_]])) ]) } 0 .. $#react;
+                        @react = map { [ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / ($denatCounts[$commonPos{$id}->[$_]] / $denatCov[$commonPos{$id}->[$_]])) ] } 0 .. $#react;
 
                     }
-                    else { @react = map { shared_clone([ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]) ]) } 0 .. $#react; }
+                    else { @react = map { [ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]) ] } 0 .. $#react; }
                     
                 }
 
             }
 
-            { lock(%commonReact);
-              push(@{$commonReact{$treatFiles[$i]}}, @react); }
+            push(@{$commonReact{$treatFiles[$i]}}, @react);
 
         }
 
