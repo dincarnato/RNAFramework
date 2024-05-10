@@ -81,7 +81,7 @@ $scoreMethod ||= 1;
 $normMethod ||= 1;
 $minCov ||= 10;
 $maxUntreatedMut //= 0.05;
-$maxMutRate ||= 0.2;
+$maxMutRate ||= 1;
 $pseudoCount ||= 1;
 $reactiveBases ||= "ACGT";
 @treatFiles = split /,/, $treated;
@@ -100,6 +100,7 @@ die "\n  [!] Error: Unequal number of treated and denatured files\n\n" if (@dena
 die "\n  [!] Error: Invalid reactive bases\n\n" if ($reactiveBases !~ /^all$/i && !isiupac($reactiveBases));
 die "\n  [!] Error: Maximum mutation rate for untreated sample must be comprised between 0 and 1\n\n" if (!isnumeric($maxUntreatedMut) || !inrange($maxUntreatedMut, [0, 1]));
 die "\n  [!] Error: Maximum mutation rate must be comprised between >0 and 1\n\n" if (!isnumeric($maxMutRate) || !inrange($maxMutRate, [0, 1]) || !$maxMutRate);
+die "\n  [!] Error: Maximum mutation rate for untreated sample cannot exceed max mutation rate\n\n" if ($maxUntreatedMut > $maxMutRate);
 die "\n  [!] Error: Pseudocount must be > 0\n\n" if (!isnumeric($pseudoCount) || $pseudoCount <= 0);
 die "\n  [!] Error: Minimum coverage must be an INT > 0\n\n" if (!isint($minCov) || $minCov <= 0);
 
@@ -295,7 +296,7 @@ sub calcRawReact {
             elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_]] } @{$commonPos{$id}}; }
             elsif ($scoreMethod =~ /^[34]$/) { 
                 
-                @react = map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @{$commonPos{$id}};
+                @react = grep { $_->[1] <= $maxMutRate } map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @{$commonPos{$id}};
 
                 next if (!@react); 
                 
@@ -354,12 +355,21 @@ sub calcRawReact {
                     
                     if (@denatFiles) {
 
-                        my ($denatEntry, @denatCounts, @denatCov);
+                        my ($denatEntry, @denatCounts, @denatCov, @denatRatio);
                         $denatEntry = $io{$denatFiles[$i]}->read($id);
                         @denatCounts = $denatEntry->counts();
                         @denatCov = $denatEntry->coverage();
+                        @denatRatio = map { $denatCounts[$_] / $denatCov[$_] } @{$commonPos{$id}};
 
-                        @react = map { [ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / ($denatCounts[$commonPos{$id}->[$_]] / $denatCov[$commonPos{$id}->[$_]])) ] } 0 .. $#react;
+                        if ($maxMutRate < 1) {
+
+                            my @i = grep { $denatRatio[$_] <= $maxMutRate } 0 .. $#react;
+                            @denatRatio = @denatRatio[@i];
+                            @react = @react[@i];
+
+                        }
+
+                        @react = map { [ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / $denatRatio[$_]) ] } 0 .. $#react;
 
                     }
                     else { @react = map { [ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]) ] } 0 .. $#react; }
