@@ -29,6 +29,11 @@ Danny Incarnato (dincarnato[at]rnaframework.com)
 University of Groningen
 
 
+## References
+
+Incarnato *et al.*, 2018. RNA Framework: an all-in-one toolkit for the analysis of RNA structures and post-transcriptional modifications. *Nucleic Acids Research* [PMID: [29893890](https://pubmed.ncbi.nlm.nih.gov/29893890/)]
+
+
 ## License
 
 This program is free software, and can be redistribute and/or modified under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
