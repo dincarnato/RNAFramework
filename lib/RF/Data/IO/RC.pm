@@ -91,10 +91,10 @@ sub _loadindex {
             $self->{_offsets}->{$id} = $offset; # Stores the offset for ID
 
             # Validates offset
-            #seek($fh, $offset + 4, SEEK_SET);
-            #read($fh, $data, $idlen);
+            seek($fh, $offset + 4, SEEK_SET);
+            read($fh, $data, $idlen);
 
-            #$self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
+            $self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
 
             read($fh, $data, 4);
             $self->{_lengths}->{$id} = unpack("L<", $data);

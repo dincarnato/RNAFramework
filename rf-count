@@ -568,7 +568,7 @@ if (-e $mbfile) {
 
                 my ($maskSeq, $index);
                 $maskSeq = uc($1);
-                $maskSeq = dnarevcomp($maskSeq) if ($line[$i] =~ /^rc:/);
+                $maskSeq = dnarevcomp($maskSeq) if ($line[$i] =~ /^rc:/i);
                 $line[$i] = rna2dna($maskSeq);
                 $index = index($sequence, $line[$i]);
 
