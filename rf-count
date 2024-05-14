@@ -564,10 +564,13 @@ if (-e $mbfile) {
             my $sequence = uc($seqio->read($line[0])->sequence());
             $line[$i] =~ s/\s//g;
 
-            if (isna($line[$i])) {
+            if ($line[$i] =~ /^(?:rc:)?([ACGTUN]+)$/i) {
 
-                $line[$i] = rna2dna($line[$i]);
-                my $index = index($sequence, $line[$i]);
+                my ($maskSeq, $index);
+                $maskSeq = uc($1);
+                $maskSeq = dnarevcomp($maskSeq) if ($line[$i] =~ /^rc:/);
+                $line[$i] = rna2dna($maskSeq);
+                $index = index($sequence, $line[$i]);
 
                 next if ($index == -1);
 

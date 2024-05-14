@@ -41,12 +41,12 @@ my ($minCov, $output, $help, $overwrite,
     $reactiveBases, $scoreMethod, $normMethod, $pseudoCount,
     $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
     $treated, $untreated, $denatured, $threads, 
-    @ctrlFiles, @treatFiles, @denatFiles, @files, 
+    $index, @ctrlFiles, @treatFiles, @denatFiles, @files, 
     @pool, %io, %commonReact);
 
 my $common : shared;
 my @ids : shared;
-my %commonPos : shared;
+my %tmpReact : shared;
 my %commonNorm : shared;
 
 do {
@@ -66,6 +66,7 @@ do {
                 "t|treated=s"                    => \$treated,
                 "d|denatured=s"                  => \$denatured,
                 "p|processors=s"                 => \$threads,
+                "i|index=s"                      => \$index,
                 "mu|max-untreated-mut=s"         => \$maxUntreatedMut,
                 "mm|max-mutation-rate=s"         => \$maxMutRate,
                 "il|ignore-lower-than-untreated" => \$ignoreLower ) or help(1);
@@ -89,6 +90,7 @@ $reactiveBases ||= "ACGT";
 @denatFiles = split /,/, $denatured;
 
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if (!isint($threads) || $threads < 1);
+die "\n  [!] Error: Provided RCI index file does not exist\n\n" if (defined $index && !-e $index);
 die "\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 for (@treatFiles, @ctrlFiles, @denatFiles) { die "\n [!] Error: Provided file \"$_\" does not exist\n\n" if (!-e $_); }
 die "\n  [!] Error: Invalid scoring method\n\n" if ($scoreMethod !~ /^[1-4]$/);
@@ -125,7 +127,11 @@ else {
 }
 
 @files = (@treatFiles, @ctrlFiles, @denatFiles);
-$io{$_} = RF::Data::IO::RC->new(file => $_) for (@files);
+
+die "\n  [!] Error: Provided RC files have unequal sizes\n\n" if (uniq(map { -s $_ } @files) != 1);
+
+$io{$_} = RF::Data::IO::RC->new( file  => $_,
+                                 index => $index ) for (@files);
 
 if (-e $output) {
 
@@ -135,22 +141,22 @@ if (-e $output) {
 
 }
 
-print "\n[+] Identifying covered bases common to all experiments...";
+%tmpReact = map { $_ => shared_clone([]) } @treatFiles;
+
+print "\n[+] Calculating raw reactivities for bases covered across all samples...";
 
 @ids = $io{$files[0]}->ids();
 @pool = map{ threads->create(\&getCoveredBases) } 1 .. $threads;
 $_->join() for (@pool);
 
-print " " . $common . " identified.";
+print " " . $common . " bases selected.";
 
-die "\n\n  [!] Error: No covered bases common to all samples\n\n" if (!$common);
+# It looks like, working with a shared hash of arrays from this point on would use exponentially
+# more memory. To address this, we make a deep copy of %commonReact
+%commonReact = map { $_ => clonearrayref($tmpReact{$_}) } @treatFiles;
+undef(%tmpReact);
 
-%commonReact = map { $_ => [] } @treatFiles;
-
-print "\n[+] Calculating raw reactivity distributions...";
-
-@ids = keys %commonPos;
-calcRawReact();
+die "\n\n  [!] Error: No bases covered across all samples\n\n" if (!$common);
 
 if ($normMethod =~ /^[13]$/) {
 
@@ -230,28 +236,30 @@ sub getCoveredBases {
     TRANSCRIPT:
     while (1) {
 
-        my ($id, $refEntry, @refCov, @i);
+        my ($id, @refCov, @i, %entries);
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
 
         last unless(defined $id);
 
-        $refEntry = $io{$files[0]}->read($id);
-        @refCov = $refEntry->coverage();
-        @i = grep { substr($refEntry->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } 0 .. $refEntry->length() - 1;
+        $entries{$files[0]} = $io{$files[0]}->read($id);
+        @refCov = $entries{$files[0]}->coverage();
+        @i = grep { substr($entries{$files[0]}->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } 0 .. $entries{$files[0]}->length() - 1;
         @i = grep { $refCov[$_] >= $minCov } @i;
 
         next if (!@i);
 
         foreach my $file (@files[1 .. $#files]) {
 
-            if (my $entry = $io{$file}->read($refEntry->id())) {
+            if (my $entry = $io{$file}->read($entries{$files[0]}->id())) {
 
                 my @cov = $entry->coverage();
                 @i = grep { $cov[$_] >= $minCov } @i;
 
                 next TRANSCRIPT if (!@i);
+
+                $entries{$file} = $entry;
 
             }
             else { next TRANSCRIPT; }
@@ -261,58 +269,39 @@ sub getCoveredBases {
         if (@i) { 
         
             lock($common);
-            lock(%commonPos);
-            $commonPos{$refEntry->id()} = shared_clone(\@i);
             $common += @i; 
             
         }
-
-    } 
-
-}
-
-sub calcRawReact {
-
-    # Each thread will have its own independent copy of the fh
-    $_->forceReopenFh() for (values %io);
-
-    while (1) {
-
-        my ($id, $refEntry, @refCov, @i);
-
-        { lock(@ids);
-          $id = shift(@ids) if (@ids); }
-
-        last unless(defined $id);
+        else { next; }
 
         for my $i (0 .. $#treatFiles) {
 
             my ($treatEntry, @treatCounts, @treatCov, @react);
-            $treatEntry = $io{$treatFiles[$i]}->read($id);
+            $treatEntry = $entries{$treatFiles[$i]};
             @treatCounts = $treatEntry->counts();
             @treatCov = $treatEntry->coverage();
 
-            if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount)] } @{$commonPos{$id}}; }
-            elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_]] } @{$commonPos{$id}}; }
+            if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount)] } @i; }
+            elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_]] } @i; }
             elsif ($scoreMethod =~ /^[34]$/) { 
                 
-                @react = grep { $_->[1] <= $maxMutRate } map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @{$commonPos{$id}};
+                @react = grep { $_->[1] <= $maxMutRate } map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @i;
 
-                next if (!@react); 
+                next TRANSCRIPT if (!@react); 
                 
             }
 
             if (@ctrlFiles) {
 
                 my ($ctrlEntry, @ctrlCounts, @ctrlCov);
-                $ctrlEntry = $io{$ctrlFiles[$i]}->read($id);
+                $ctrlEntry = $entries{$ctrlFiles[$i]};
                 @ctrlCounts = $ctrlEntry->counts();
                 @ctrlCov = $ctrlEntry->coverage();
 
                 if ($scoreMethod == 1) { 
                     
                     my ($tMean, $cMean);
-                    @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount)} @{$commonPos{$id}};
+                    @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount)} @i;
                     $tMean = mean(map { $_->[1] } @react);
                     $cMean = mean(@ctrlCounts);
                     @ctrlCounts = map { $_ / $cMean } @ctrlCounts;
@@ -326,14 +315,14 @@ sub calcRawReact {
 
                     }
 
-                    next if (!@react);
+                    next TRANSCRIPT if (!@react);
 
                     @react = map { [ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore) ] } 0 .. $#react;
 
                 }
                 elsif ($scoreMethod == 3) {
 
-                    my @ctrlRatio = map { $ctrlCounts[$_] / $ctrlCov[$_] } @{$commonPos{$id}};
+                    my @ctrlRatio = map { $ctrlCounts[$_] / $ctrlCov[$_] } @i;
 
                     if ($maxUntreatedMut < 1) {
 
@@ -351,15 +340,15 @@ sub calcRawReact {
 
                     }
 
-                    next if (!@react);
+                    next TRANSCRIPT if (!@react);
                     
                     if (@denatFiles) {
 
                         my ($denatEntry, @denatCounts, @denatCov, @denatRatio);
-                        $denatEntry = $io{$denatFiles[$i]}->read($id);
+                        $denatEntry = $entries{$denatFiles[$i]};
                         @denatCounts = $denatEntry->counts();
                         @denatCov = $denatEntry->coverage();
-                        @denatRatio = map { $denatCounts[$_] / $denatCov[$_] } @{$commonPos{$id}};
+                        @denatRatio = map { $denatCounts[$_] / $denatCov[$_] } @i;
 
                         if ($maxMutRate < 1) {
 
@@ -378,7 +367,8 @@ sub calcRawReact {
 
             }
 
-            push(@{$commonReact{$treatFiles[$i]}}, @react);
+            { lock(%tmpReact); 
+              push(@{$tmpReact{$treatFiles[$i]}}, map { shareDataStruct($_) } @react); }
 
         }
 
@@ -460,6 +450,7 @@ sub help {
                                                     scoring method)
                                                     Note: if a single file is passed, this will be used for all treated files
  -t  or --treated             <string>[,<string>]   A comma-separated list of treated sample RC files
+ -i  or --index               <string>              RCI index file
  -p  or --processors          <int>                 Number of processors to use (Default: 1)
  -o  or --output              <string>              Output file normalization factors will be reported to (Default: norm_factors.txt)
  -ow or --overwrite                                 Overwrites output file (if it already exists)
@@ -491,3 +482,4 @@ sub help {
 HELP
 
 }
+

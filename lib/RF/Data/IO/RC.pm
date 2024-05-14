@@ -18,21 +18,22 @@ sub new {
     my %parameters = @_ if (@_);
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ index       => undef,
-                   buildindex  => 0,
-                   mappedreads => 0,
-                   blockSize   => 10000,
-                   _offsets    => {},
-                   _lengths    => {},
-                   _lastoffset => 0,
-                   _lastSeq    => { id       => undef,
-                                    sequence => undef } }, \%parameters);
+    $self->_init({ index          => undef,
+                   buildindex     => 0,
+                   mappedreads    => 0,
+                   blockSize      => 10000,
+                   noPreloadIndex => 0,
+                   _offsets       => {},
+                   _lengths       => {},
+                   _lastoffset    => 0,
+                   _lastSeq       => { id       => undef,
+                                       sequence => undef } }, \%parameters);
 
     $self->{binmode} = ":raw";
 
     $self->_openfh();
     $self->_validate();
-    $self->_loadindex() if ($self->mode() ne "w"); # r | w+
+    $self->_loadindex() if ($self->mode() ne "w" && !$self->{noPreloadIndex}); # r | w+
 
     return($self);
 
@@ -90,10 +91,10 @@ sub _loadindex {
             $self->{_offsets}->{$id} = $offset; # Stores the offset for ID
 
             # Validates offset
-            seek($fh, $offset + 4, SEEK_SET);
-            read($fh, $data, $idlen);
+            #seek($fh, $offset + 4, SEEK_SET);
+            #read($fh, $data, $idlen);
 
-            $self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
+            #$self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
 
             read($fh, $data, 4);
             $self->{_lengths}->{$id} = unpack("L<", $data);
@@ -225,7 +226,7 @@ sub read {
 
     my ($fh, $data, $idlen, $id,
         $length, $sequence, $entry, $eightbytes,
-        $mappedreads, @stops, @coverage);
+        $mappedreads, $offset, @stops, @coverage);
 
     $self->throw("Filehandle isn't in read mode") unless ($self->mode() eq "r");
 
@@ -259,6 +260,7 @@ sub read {
 
     }
 
+    $offset = tell($fh);
     push(@{$self->{_prev}}, tell($fh)) if (!defined $seqid);
 
     read($fh, $data, 4); #read id length
@@ -274,6 +276,14 @@ sub read {
     $data = unpack("H*", $data);
     $data =~ tr/43210/NTGCA/;
     $sequence = substr($data, 0, $length);
+
+    # Index was not loaded before, but we can build it at runtime
+    if ($self->{noLoadIndex}) {
+
+        $self->{_offsets}->{$id} = $offset;
+        $self->{_lengths}->{$id} = $length;
+
+    }
 
     read($fh, $data, 4 * $length);
     @stops = unpack("L<*", $data);
