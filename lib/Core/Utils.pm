@@ -21,13 +21,14 @@ use Carp;
 use Fcntl qw(F_GETFL SEEK_SET);
 use File::Find qw(finddepth);
 use File::Spec;
-use HTTP::Tiny;
+use FindBin qw($Bin);
 use Scalar::Util qw(reftype);
 use threads::shared;
 
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
+$VERSION = "2.8.7";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
@@ -38,30 +39,9 @@ our ($VERSION, @EXPORT);
 
 BEGIN {
 
-    $VERSION = "2.8.7";
-    my $reply = HTTP::Tiny->new->get("https://raw.githubusercontent.com/dincarnato/RNAFramework/master/VERSION");
+    my $git = `git -C $Bin status 2>&1`;
 
-    if ($reply->{success}) {
-
-        my $latest = $reply->{content};
-        chomp($latest);
-
-        if ($latest =~ m/^[\d\.]+$/) {
-
-            my (@VERSION, @latest);
-            @VERSION = split /\./, $VERSION;
-            @latest = split /\./, $latest;
-
-            if ($VERSION[0] < $latest[0] ||
-                ($VERSION[0] == $latest[0] && ($VERSION[1] < $latest[1] || ($VERSION[1] == $latest[1] && $VERSION[2] < $latest[2])))) {
-
-                CORE::warn  "\n  [i] Note: RNA Framework v" . $latest . " is available. Issue a 'git pull' to update.\n";
-
-            }
-
-        }
-
-    }
+    CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n" if ($git =~ /Your branch is behind 'origin\/master'/);
 
 }
 
