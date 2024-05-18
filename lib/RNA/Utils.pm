@@ -9,7 +9,8 @@ use base qw(Exporter);
 
 our @EXPORT = qw(isdotbracket isdbbalanced fixdotbracket rnapair
                  listpairs listhelices ppv sensitivity
-				 bpdistance rmpseudoknots rmnoncanonical rmlonelypairs);
+				 bpdistance rmpseudoknots rmnoncanonical rmlonelypairs
+				 fmi mfmi);
 
 my @bpchars = (([qw(\( \))], [qw([ ])], [qw({ })], [qw(< >)]), (map { [uc($_), $_] } ("a" .. "z")));
 
@@ -248,6 +249,41 @@ sub sensitivity {
 
 }
 
+sub fmi {
+
+	my ($reference, $structure, $relaxed) = @_;
+
+	my ($common, $refPairs, $structPairs, $refOnly, 
+		$structOnly);
+	$refPairs = @{listpairs($reference)};
+	$structPairs = @{listpairs($structure)};
+
+	return(0) if (!$refPairs || !$structPairs);
+
+	$common = _commonpairs($reference, $structure, $relaxed) || 0;
+	$refOnly = @{listpairs($reference)} - $common;
+	$structOnly = @{listpairs($structure)} - $common;
+
+	return($common / sqrt(($common + $refOnly) * ($common + $structOnly)));
+
+}
+
+sub mfmi { # Lan et al., 2022
+
+	my ($reference, $structure, $relaxed) = @_;
+
+	my ($commonUnpaired, $fmi, $length);
+	$length = length($reference);
+
+	return(0) if ($length != length($structure));
+
+	$commonUnpaired = scalar(grep { substr($reference, $_, 1) eq "." && substr($structure, $_, 1) eq "." } 0 .. $length - 1) / $length;
+	$fmi = fmi($reference, $structure, $relaxed);
+
+	return($commonUnpaired + (1 - $commonUnpaired) * $fmi);
+
+}
+
 sub bpdistance {
 
     my ($reference, $structure) = @_;
@@ -282,11 +318,25 @@ sub _commonpairs {
 		# and considers a basepair i-j as present in the reference structure if any of the following pairs exist:
 		# i/j; i-1/j; i+1/j; i/j-1; i/j+1
 
-		for (listpairs($structure)) { $common++ if (exists $reference{($_->[0] - 1) . "-" . $_->[1]} ||
-													exists $reference{$_->[0] . "-" . $_->[1]} ||
-													exists $reference{($_->[0] + 1) . "-" . $_->[1]} ||
-													exists $reference{$_->[0] . "-" . ($_->[1] - 1)} ||
-													exists $reference{$_->[0] . "-" . ($_->[1] + 1)}); }
+		for (listpairs($structure)) {
+
+			my @pairs = ($_->[0] . "-" . $_->[1], ($_->[0] - 1) . "-" . $_->[1], ($_->[0] + 1) . "-" . $_->[1],
+						 $_->[0] . "-" . ($_->[1] - 1), $_->[0] . "-" . ($_->[1] + 1));
+
+			foreach my $pair (@pairs) {
+
+				if (exists $reference{$pair}) {
+
+					$common++;
+					delete($reference{$pair});
+
+					last;
+
+				}
+
+			}
+			
+		}
 
 	}
 	else { for (listpairs($structure)) { $common++ if (exists $reference{$_->[0] . "-" . $_->[1]}); } }

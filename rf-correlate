@@ -43,12 +43,13 @@ my ($output, $overwrite, $help, $minvalues,
     $threads, $table, $skipoverall, $spearman,
     $ignoreseq, $singlefile, $isRC, $keepbases,
     $coverage, $ratio, $minCov, $maxReact,
-    @pool, @files, @overall, %files);
+    $capReact, $medianCov, @pool, @files, 
+    @overall, %files);
 
 my @ids : shared;
+my @results : shared;
 my @allreactivities1 : shared;
 my @allreactivities2 : shared;
-my %correlations : shared;
 my %results : shared;
 %results = ( diffseq     => 0,
              nominvalues => 0,
@@ -60,19 +61,21 @@ do {
 
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"            => \$help,
-                "o|output=s"        => \$output,
-                "ow|overwrite"      => \$overwrite,
-                "m|min-values=s"    => \$minvalues,
-                "p|processors=i"    => \$threads,
-                "s|skip-overall"    => \$skipoverall,
-                "S|spearman"        => \$spearman,
-                "kb|keep-bases=s"   => \$keepbases,
-                "i|ignore-sequence" => \$ignoreseq,
-                "c|coverage"        => \$coverage,
-                "r|ratio"           => \$ratio,
-                "mc|min-coverage=i" => \$minCov,
-		        "mr|max-react=s"    => \$maxReact ) or help(1);
+    GetOptions( "h|help"               => \$help,
+                "o|output=s"           => \$output,
+                "ow|overwrite"         => \$overwrite,
+                "m|min-values=s"       => \$minvalues,
+                "p|processors=i"       => \$threads,
+                "s|skip-overall"       => \$skipoverall,
+                "S|spearman"           => \$spearman,
+                "kb|keep-bases=s"      => \$keepbases,
+                "i|ignore-sequence"    => \$ignoreseq,
+                "c|coverage"          => \$coverage,
+                "r|ratio"              => \$ratio,
+                "ec|median-coverage=s" => \$medianCov,
+                "mc|min-coverage=i"    => \$minCov,
+		        "mr|max-react=s"       => \$maxReact,
+                "cr|cap-react=s"       => \$capReact ) or help(1);
 
     @files = uniq(@ARGV);
 
@@ -81,12 +84,11 @@ do {
 help() if ($help);
 
 # Default
-$output ||= "rf_correlate.csv";
+$output ||= "rf_correlate.txt";
 $threads ||= 1;
 $keepbases ||= "ACGT";
 $minCov ||= 1;
-$maxReact ||= 1e9;
-$output =~ s/(?:\.csv)?$/\.csv/ if (defined $output);
+$capReact ||= 1e9;
 
 ##
 # Input validation
@@ -100,7 +102,9 @@ die "\n  [!] Error: Miminum number of values must be greater than 0\n\n" if (def
                                                                               $minvalues == 0));
 die "\n  [!] Error: Parameters -r and -c are mutually exclusive\n\n" if ($ratio && $coverage);
 die "\n  [!] Error: Invalid bases to keep\n\n" if (!isiupac($keepbases) && $keepbases !~ m/^all$/i);
-die "\n  [!] Error: Maximum reactivity must be positive\n\n" if (!ispositive($maxReact));
+die "\n  [!] Error: Maximum reactivity must be positive\n\n" if (defined $maxReact && !ispositive($maxReact));
+die "\n  [!] Error: Median coverage must be positive\n\n" if (defined $medianCov && !ispositive($medianCov));
+die "\n  [!] Error: Reactivity cap must be positive\n\n" if (!ispositive($capReact));
 
 $minvalues = round($minvalues) if ($minvalues > 1);
 $singlefile = 1 if (!-d $files[0] && !-d $files[1]);
@@ -139,6 +143,7 @@ for (@files) {
 
 # Only one of the two files is in RC format
 die "\n\n  [!] Error: Mixed file types provided\n\n" if ($isRC == 1);
+die "\n\n  [!] Error: Provided RC files have unequal sizes\n\n" if ($isRC && uniq(map { -s $_ } @files) != 1);
 
 # Delete all transcripts that are not common to all XML directories
 if (!$singlefile) {
@@ -159,9 +164,6 @@ if (-e $output) {
 
 }
 
-open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
-select((select($wh), $|=1)[0]);
-
 print "\n[+] Calculating correlations [Last: none]";
 
 if ($isRC) {
@@ -175,11 +177,9 @@ else { @ids = $singlefile ? (keys %files)[0] : keys %files; }
 @pool = map{ threads->create(\&correlate) } 1 .. $threads;
 $_->join() for(@pool);
 
-close($wh);
-
 if ($singlefile && !$isRC) {
 
-    if (my $id = (keys %correlations)[0]) { print "\n[+] Correlation: " . sprintf("%.3f", $correlations{$id}->[0]) . " (p-value: " .  sprintf("%.2e", $correlations{$id}->[1]) . ")"; }
+    if (my $id = $results[0]->[0]) { print "\n[+] Correlation: " . sprintf("%.3f", $results[0]->[1]) . " (p-value: " .  sprintf("%.2e", $results[0]->[2]) . ")"; }
     else { print "\n\n  [!] Error: Correlation calculation failed"; }
 
 }
@@ -189,21 +189,30 @@ else {
 
         @overall = _correlate(\@allreactivities1, \@allreactivities2);
 
-        print "\n[+] Overall correlation: " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
+        print "\n[+] Overall correlation (over " . scalar(@allreactivities1) . " bases): " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
 
     }
 
-    if (keys %correlations) {
+    if (@results) {
 
-        print "\n[+] Top 10 correlated transcripts:\n\n";
+        my $top = min(scalar(@results), 10);
+        @results = sort { $b->[1] <=> $a->[1] } @results;
+
+        print "\n[+] Top $top correlated transcripts:\n\n";
 
         $table = Term::Table->new(indent => 2);
         $table->head("Transcript", "Correlation", "p-value");
-        $table->row($_, sprintf("%.3f", $correlations{$_}->[0]), sprintf("%.2e", $correlations{$_}->[1])) for ((sort {$correlations{$b}->[0] <=> $correlations{$a}->[0] } keys %correlations)[0 .. min(scalar(keys(%correlations)) - 1, 9)]);
+        $table->row($_->[0], sprintf("%.3f", $_->[1]), sprintf("%.2e", $_->[2])) for (@results[0 .. $top - 1]);
         $table->print();
 
+        open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
+        select((select($wh), $|=1)[0]);
+        print $wh "#Transcript ID\tCorrelation\tp-value\n";
+        print $wh join("\t", @$_) . "\n" for (@results);
+        close($wh);
+
     }
-    else { print "\n\n  [!] Error: correlation calculation failed for all transcripts"; }
+    else { print "\n\n  [!] Error: Correlation calculation failed for all transcripts"; }
 
 }
 
@@ -219,18 +228,20 @@ print "\n\n[+] All done.\n\n";
 
 sub correlate {
 
+    my ($io1, $io2);
+
+    if ($isRC) {
+
+        $io1 = RF::Data::IO::RC->new(file => $files[0]);
+        $io2 = RF::Data::IO::RC->new(file => $files[1]);
+
+    }
+
     while (1) {
 
-        my ($id, $io1, $io2, $entry1, $entry2, $nbases,
+        my ($id, $entry1, $entry2, $nbases,
             $sequence, @reactivity1, @reactivity2,
             @commonidx, @pearson);
-
-        if ($isRC) {
-
-            $io1 = RF::Data::IO::RC->new(file => $files[0]);
-            $io2 = RF::Data::IO::RC->new(file => $files[1]);
-
-        }
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
@@ -270,6 +281,19 @@ sub correlate {
 
                 lock(%results);
                 $results{missing}++;
+                $results{failed}++;
+
+                undef($@);
+
+                next;
+
+            }
+
+            if ($medianCov && 
+                ($entry1->mediancoverage() < $medianCov || $entry2->mediancoverage() < $medianCov)) {
+
+                lock(%results);
+                $results{nominvalues}++;
                 $results{failed}++;
 
                 undef($@);
@@ -325,11 +349,18 @@ sub correlate {
         }
         else {
 
-            @reactivity1 = map { isnan($_) ? "NaN" : ($_ > $maxReact ? $maxReact : $_) } $entry1->reactivity();
-            @reactivity2 = map { isnan($_) ? "NaN" : ($_ > $maxReact ? $maxReact : $_) } $entry2->reactivity();
+            @reactivity1 = map { isnan($_) ? "NaN" : $_ } $entry1->reactivity();
+            @reactivity2 = map { isnan($_) ? "NaN" : $_ } $entry2->reactivity();
 
             @commonidx = grep { isnumeric($reactivity1[$_]) &&
                                 isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
+
+        }
+
+        if ($maxReact && (($isRC && $ratio) || !$isRC)) {
+
+            @commonidx = grep { $reactivity1[$_] <= $maxReact &&
+                                $reactivity2[$_] <= $maxReact } @commonidx;
 
         }
 
@@ -356,17 +387,16 @@ sub correlate {
         @pearson = _correlate(\@reactivity1, \@reactivity2);
 
         { lock(%results);
+          lock(@results);
           $results{correlated}++;
-          $correlations{$id} = shared_clone(\@pearson);
+          push(@results, shared_clone([$id, @pearson]));
 
           if (!$skipoverall) {
 
               push(@allreactivities1, @reactivity1);
               push(@allreactivities2, @reactivity2);
 
-          }
-
-          print $wh join(";", $id, @pearson) . "\n"; }
+          } }
 
         print CLRRET . "[+] Calculating correlations [Last: $id]";
 
@@ -380,7 +410,7 @@ sub _correlate {
 
     local $SIG{__WARN__} = sub { }; # Suppresses warnings from Pearson and Spearman when stdev = 0
 
-    return($spearman ? spearman(@_) : pearson(@_));
+    return($spearman ? spearman(@_, { cap => $capReact }) : pearson(@_, { cap => $capReact }));
 
 }
 
@@ -402,12 +432,16 @@ sub help {
 
  Options                                  Description
  -p  or --processors       <int>          Number of processors to use (Default: 1)
- -o  or --output           <string>       Output CSV file (Default: rf_correlate.csv)
+ -o  or --output           <string>       Output TSV file (Default: rf_correlate.txt)
  -ow or --overwrite                       Overwrites output file (if the specified file already exists)
  -m  or --min-values       <float>        Minimum number of values to calculate correlation (Default: off)
                                           Note: if a value between 0 and 1 is provided, this is interpreted as a
                                                 fraction of the transcript's length
- -mr or --max-reactivity   <float>        Maximum reactivity value to cap reactivities to (>0, Default: 1e9)
+ -cr or --cap-react        <float>        Maximum reactivity value to cap reactivities to (>0, Default: 1e9)
+                                          Note: if processing RC files, this parameter only applies to ratios (-r)
+ -mr or --max-react        <float>        Reactivity values above this threshold will be excluded from correlation
+                                          calculation (>0, Default: none)
+                                          Note: if processing RC files, this parameter only applies to ratios (-r)
  -s  or --skip-overall                    Skips overall experiment correlation calculation (faster)
  -i  or --ignore-sequences                Ignores sequence differences (e.g. SNVs) between the compared transcripts
  -S  or --spearman                        Uses Spearman instead of Pearson to calculate correlation
@@ -417,6 +451,8 @@ sub help {
                                           Note: this option has effect only on RC files. For XML files, reactive
                                                 bases are automatically identified from the "reactive" attribute
  -mc or --min-coverage     <int>          Restricts the correlation analysis to bases exceeding this coverage
+ -ec or --median-coverage  <float>        Restricts the correlation analysis to transcripts with median coverage
+                                          above this threshold (>=0, Default: 0)
  -c  or --coverage                        Correlation is calculated on the coverage, rather than on the raw RT
                                           stop/mutation counts
  -r  or --ratio                           Correlation is calculated on the ratio between, the RT stop/mutation

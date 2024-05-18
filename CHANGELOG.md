@@ -1,3 +1,28 @@
+## [2.8.8] - 2024-05-20
+### Added
+- Added handling of the "rc:" prefix to rf-count mask files to reverse complement sequences to mask
+- Added support to rf-compare to use entire directories of structure files as reference
+- Added multi-threading support to rf-compare
+- rf-compare will now report the Fowlkes-Mallows index (FMI, geometric mean of PPV and sensitivity) and the modified FMI (Lan et al., 2022; PMID:35236847) for each comparison
+- Parameter -mr (--max-react) of rf-correlate has now been renamed to -cr (--cap-react), to specify a maximum value reactivities must be capped to, while -mr is now used to specify a reactivity threshold above which reactivity values should be excluded from correlation calculation
+- Added paramter -ec (--median-coverage) to rf-correlate, to calculate correlation only on transcripts exeeding a certain median coverage
+- Added parameter -wl (--whitelist) to rf-normfactor, to allow providing a list of transcript IDs to be used for calculating normalization factors
+- Added parameter -ec (--median-coverage) to rf-normfactor, to allow specifying a minimum median coverage for transcripts to be used when calculating normalization factors
+- Added paramter -ls (--library-strandedness) to rf-count-genome, to allow specifying the library type for all experiments simultaneously
+
+### Changed
+- Fixed rf-count and rf-count-genome to handle X and = CIGAR operations
+- Fixed a minor bug in rf-rctools merge, causing the mapped read count to be stored in the merged RC file (thanks to @light0112 for spotting the issue)
+- Fixed a minor bug in rf-normfactor, which caused --max-mutation-rate to be ignored
+- Fixed a bug preventing custom normalization factors to be passed to rf-norm via -nf when using normalization method #2 (90% Winsorizing)
+- Changed rf-count and rf-count-genome to only report primary alignments in the mapped read count of RC files
+- Rewritten rf-normfactor and rf-rctools merge (thanks to @coffeebond for reporting the slow speed issue) engine for increased performances
+
+### API Changes
+- Fixed a minor bug in RNA::Utils::_commonpairs() causing the same base-pair to be matched multiple times when relaxed evaluation was used
+- Changed Core::Utils check for updates to use "git status"
+- Added RNA::Utils::fmi() and RNA::Utils::mfmi() to calculate the Fowlkes-Mallows index (FMI, geometric mean of PPV and sensitivity) and the modified FMI (Lan et al., 2022; PMID:35236847)
+
 ## [2.8.7] - 2024-02-22
 ### Added
 - Added the -dc and -do parameters to rf-duplex to enable dumping of parsed chimaeras to file

@@ -41,8 +41,9 @@ my ($minCov, $output, $help, $overwrite,
     $reactiveBases, $scoreMethod, $normMethod, $pseudoCount,
     $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
     $treated, $untreated, $denatured, $threads, 
-    $index, @ctrlFiles, @treatFiles, @denatFiles, @files, 
-    @pool, %io, %commonReact);
+    $index, $whitelist, $medianCoverage, @ctrlFiles, 
+    @treatFiles, @denatFiles, @files, @pool, 
+    %io, %commonReact);
 
 my $common : shared;
 my @ids : shared;
@@ -69,7 +70,9 @@ do {
                 "i|index=s"                      => \$index,
                 "mu|max-untreated-mut=s"         => \$maxUntreatedMut,
                 "mm|max-mutation-rate=s"         => \$maxMutRate,
-                "il|ignore-lower-than-untreated" => \$ignoreLower ) or help(1);
+                "il|ignore-lower-than-untreated" => \$ignoreLower,
+                "wl|whitelist=s"                 => \$whitelist,
+                "ec|median-coverage=s"           => \$medianCoverage ) or help(1);
 
 };
 
@@ -82,6 +85,7 @@ $scoreMethod ||= 1;
 $normMethod ||= 1;
 $minCov ||= 10;
 $maxUntreatedMut //= 0.05;
+$medianCoverage //= 0;
 $maxMutRate ||= 1;
 $pseudoCount ||= 1;
 $reactiveBases ||= "ACGT";
@@ -105,6 +109,8 @@ die "\n  [!] Error: Maximum mutation rate must be comprised between >0 and 1\n\n
 die "\n  [!] Error: Maximum mutation rate for untreated sample cannot exceed max mutation rate\n\n" if ($maxUntreatedMut > $maxMutRate);
 die "\n  [!] Error: Pseudocount must be > 0\n\n" if (!isnumeric($pseudoCount) || $pseudoCount <= 0);
 die "\n  [!] Error: Minimum coverage must be an INT > 0\n\n" if (!isint($minCov) || $minCov <= 0);
+die "\n  [!] Error: Median coverage must be positive\n\n" if (!ispositive($medianCoverage));
+die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
 $reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($reactiveBases)))))));
 
@@ -130,6 +136,8 @@ else {
 
 die "\n  [!] Error: Provided RC files have unequal sizes\n\n" if (uniq(map { -s $_ } @files) != 1);
 
+print "\n[+] Loading RC files...";
+
 $io{$_} = RF::Data::IO::RC->new( file  => $_,
                                  index => $index ) for (@files);
 
@@ -142,17 +150,45 @@ if (-e $output) {
 }
 
 %tmpReact = map { $_ => shared_clone([]) } @treatFiles;
+@ids = $io{$files[0]}->ids();
+
+if ($whitelist) {
+
+    my (%whitelist);
+
+    print "\n[+] Importing whitelist...";
+
+    open(my $fh, "<", $whitelist) or die "\n\n  [!] Error: Unable to read whitelist file ($!)\n\n";
+    while(<$fh>) {
+
+        chomp();
+        $whitelist{$_} = 1;
+
+    }
+    close($fh);
+
+    print " " . scalar(keys %whitelist) . " transcripts.\n";
+
+    die "\n\n  [!] Error: Whitelist file is empty\n\n" if (!keys %whitelist);
+
+    @ids = grep { exists $whitelist{$_} } @ids;
+
+    die "\n\n  [!] Error: No match between whitelist and transcript IDs in RC files\n\n" if (!@ids);
+
+    print "\n[+] " . scalar(@ids) . " transcript IDs in RC files matching whitelist will be retained...";
+
+}
 
 print "\n[+] Calculating raw reactivities for bases covered across all samples...";
 
-@ids = $io{$files[0]}->ids();
 @pool = map{ threads->create(\&getCoveredBases) } 1 .. $threads;
 $_->join() for (@pool);
 
 print " " . $common . " bases selected.";
 
 # It looks like, working with a shared hash of arrays from this point on would use exponentially
-# more memory. To address this, we make a deep copy of %commonReact
+# more memory. To address this, we make a deep copy of %commonReact and free the shared hash
+print "\n[+] Freeing unused memory...";
 %commonReact = map { $_ => clonearrayref($tmpReact{$_}) } @treatFiles;
 undef(%tmpReact);
 
@@ -244,6 +280,9 @@ sub getCoveredBases {
         last unless(defined $id);
 
         $entries{$files[0]} = $io{$files[0]}->read($id);
+
+        next if ($entries{$files[0]}->mediancoverage() < $medianCoverage);
+
         @refCov = $entries{$files[0]}->coverage();
         @i = grep { substr($entries{$files[0]}->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } 0 .. $entries{$files[0]}->length() - 1;
         @i = grep { $refCov[$_] >= $minCov } @i;
@@ -253,6 +292,8 @@ sub getCoveredBases {
         foreach my $file (@files[1 .. $#files]) {
 
             if (my $entry = $io{$file}->read($entries{$files[0]}->id())) {
+
+                next TRANSCRIPT if ($entry->mediancoverage() < $medianCoverage);
 
                 my @cov = $entry->coverage();
                 @i = grep { $cov[$_] >= $minCov } @i;
@@ -451,6 +492,8 @@ sub help {
                                                     Note: if a single file is passed, this will be used for all treated files
  -t  or --treated             <string>[,<string>]   A comma-separated list of treated sample RC files
  -i  or --index               <string>              RCI index file
+ -wl or --whitelist           <string>              A text file containing a list of IDs of transcripts to be used for calculating
+                                                    normalization factors (Default: use all transcripts)
  -p  or --processors          <int>                 Number of processors to use (Default: 1)
  -o  or --output              <string>              Output file normalization factors will be reported to (Default: norm_factors.txt)
  -ow or --overwrite                                 Overwrites output file (if it already exists)
@@ -464,6 +507,7 @@ sub help {
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
  -mc or --min-coverage        <int>                 Discards any base with coverage below this threshold (>=1, Default: 10)
+ -ec or --median-coverage     <float>               Discards transcripts having median coverage below this threshold (>=0, Default: 0)
 
  Scoring method #1 options (Ding et al., 2014) options
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)

@@ -32,16 +32,16 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($tmp, $tmpdir, $output, $wt,
     $samtools, $multifasta, $sam, $sorted,
     $help, $overwrite, $error, $bam_trim5,
-    $offset, $threads, $processmanager, $mbfile,
-    $madetmp, $table, $mutcount, $rcio, $covonly, $nodel, $baseRC, $dedupUMI,
-    $pp, $po, $fromhead, $nodiscarddup,
+    $offset, $threads, $processmanager, $madetmp, 
+    $table, $mutcount, $rcio, $covonly, $nodel, $baseRC, 
+    $dedupUMI, $pp, $po, $fromhead, $nodiscarddup,
     $minqual, $maxdel, $maxmut, $hashead,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $primaryonly, $onlyMut, $blockSize,
+    $primaryonly, $onlyMut, $blockSize, $libraryStrandAll,
     @bam_trim5, @qcounter, %transcripts, %spacer,
-    %files, %masks, %realid, %onlyMut, %last);
+    %files, %realid, %onlyMut, %last);
 
 do {
 
@@ -55,12 +55,12 @@ do {
                 "ow|overwrite"               => \$overwrite,
                 "t5|trim-5prime=s"           => \$bam_trim5,
                 "wt|working-threads=i"       => \$wt,
+                "ls|library-strandedness=s"  => \$libraryStrandAll,
                 "s|samtools=s"               => \$samtools,
                 "r|sorted"                   => \$sorted,
                 "p|processors=i"             => \$threads,
                 "f|fasta=s"                  => \$multifasta,
                 "m|count-mutations"          => \$mutcount,
-                "mf|mask-file=s"             => \$mbfile,
                 "co|coverage-only"           => \$covonly,
                 "nd|no-deletions"            => \$nodel,
                 "ni|no-insertions"           => \$noins,
@@ -120,26 +120,19 @@ die "\n  [!] Error: No sample SAM/BAM file provided\n\n" if (!@ARGV);
 die "\n  [!] Error: No FASTA nor base RC file provided\n\n" if (!defined $multifasta && !defined $baseRC);
 die "\n  [!] Error: Provided FASTA file doesn't exist\n\n" if (defined $multifasta && !-e $multifasta);
 die "\n  [!] Error: Provided base RC file does not exist\n\n" if (defined $baseRC && !-e $baseRC);
-die "\n  [!] Error: Provided mask file doesn't exist\n\n" if (defined $mbfile &&
-                                                              !-e $mbfile);
-die "\n  [!] Error: Parameters -co and -m are mutually exclusive\n\n" if ($mutcount &&
-                                                                          $covonly);
-die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) ||
-                                                                                     $wt < 1);
-die "\n  [!] Error: Invalid format for -t5 parameter's argument\n\n" if (defined $bam_trim5 &&
-                                                                         $bam_trim5 !~ m/^(\d+[;,]?)+$/);
+die "\n  [!] Error: Parameters -co and -m are mutually exclusive\n\n" if ($mutcount && $covonly);
+die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n" if (!isint($wt) || $wt < 1);
+die "\n  [!] Error: Invalid format for -t5 parameter's argument\n\n" if (defined $bam_trim5 && $bam_trim5 !~ m/^(\d+[;,]?)+$/);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
-die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel &&
-                                                                 !$mutcount);
+die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel && !$mutcount);
 die "\n  [!] Error: Minimum quality score value must be and integer >= 0 and <= 41\n\n" if (!inrange($minqual, [0, 41]));
 die "\n  [!] Error: Median read's quality score value must be and integer >= 0 and <= 41\n\n" if (!inrange($medianqual, [0, 41]));
-die "\n  [!] Error: Maximum edit distance value must be > 0 and <= 1\n\n" if (!inrange($maxmut, [0, 1]) ||
-                                                                          !$maxmut);
-die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noambiguous &&
-                                                                           $leftalign);
-die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($collapse &&
-                                                                           $rmconsecutive);
+die "\n  [!] Error: Maximum edit distance value must be > 0 and <= 1\n\n" if (!inrange($maxmut, [0, 1]) || !$maxmut);
+die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noambiguous && $leftalign);
+die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($collapse && $rmconsecutive);
 die "\n  [!] Error: Discard shorter must be a positive INT >= 0\n\n" if (!isint($discardshorter) || !ispositive($discardshorter));
+die "\n  [!] Error: Invalid library strandedness\n\n" if (defined $libraryStrandAll && $libraryStrandAll !~ /^(?:1|f(?:irst)?(?:-strand)?)|(?:2|s(?:econd)?(?:-strand)?)|(?:0|u(?:nstranded)?)$/);
+
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if ($mutcount && $onlyMut) {
@@ -250,14 +243,19 @@ foreach my $sample (uniq(@ARGV)) {
 
     if (!$libraryType) {
 
-        if ($mutcount || $covonly) { $libraryType = "unstranded"; }
-        else { $libraryType = "second-strand"; }
+        if (!$libraryStrandAll) {
+
+            if ($mutcount || $covonly) { $libraryType = "unstranded"; }
+            else { $libraryType = "second-strand"; }
+
+        }
+        else { $libraryType = $libraryStrandAll; }
 
     }
 
     if ($libraryType =~ m/^(?:1|f(?:irst)?(?:-strand)?)$/i) { $libraryType = "first-strand"; }
     elsif ($libraryType =~ m/^(?:2|s(?:econd)?(?:-strand)?)$/i) { $libraryType = "second-strand"; }
-    elsif ($libraryType  =~ m/^(?:u(?:nstranded)?)$/i) { $libraryType = "unstranded"; }
+    elsif ($libraryType  =~ m/^(?:0|u(?:nstranded)?)$/i) { $libraryType = "unstranded"; }
     else { die "  [!] Error: Invalid library type for sample \"" . $file . "\"\n\n"; }
 
     die "  [!] Error: Library type for RT-stop experiments can only be second-strand\n\n" if ($libraryType ne "second-strand" &&
@@ -1286,7 +1284,6 @@ sub help {
                                                   the provided SAM/BAM files
  -f   or --fasta                   <string>       Path to a FASTA file containing the reference transcripts
                                                   Note: Transcripts in this file must match transcripts in SAM/BAM file headers
- -mf  or --mask-file               <string>       Path to a mask file
  -ndd or --no-discard-duplicates                  Reads marked as PCR/optical duplicates, discarded by default, will be also considered
  -pn  or --primary-only                           Considers only primary alignments (SAM flag != 256)
  -po  or --paired-only                            When processing SAM/BAM files from paired-end experiments, only those reads for which
@@ -1294,6 +1291,10 @@ sub help {
  -pp  or --properly-paired                        When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
                                                   proper pair will be considered
  -mq  or --map-quality                            Minimum mapping quality to consider a read (Default: 0)
+ -ls  or --library-strandedness    <string>       Defines which genomic strand alignment-derived counts must be assigned to (0-2, 
+                                                  Default: unstranded [0] (with -m or -co), second-strand [2] otherwise)
+                                                  Note: strandedness specified via -ls can be overridden for individual samples by appending 
+                                                        a colon followed by the library type to the sample name.
  -co  or --coverage-only                          Only calculates per-base coverage (disables RT-stops/mutations count)
  -m   or --count-mutations                        Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
 

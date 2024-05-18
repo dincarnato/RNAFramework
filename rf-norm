@@ -146,7 +146,7 @@ if (defined $normfactor) {
 
     if ($config->normmethod() == 2) { 
         
-        @normfactor = split(/,/, @normfactor);
+        @normfactor = split(/,/, $normfactor);
 
         die "\n  [!] Error: 90\% Winsorizing requires two values for normalization factor\n\n" if (@normfactor != 2);
         

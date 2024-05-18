@@ -28,7 +28,7 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.8.7";
+$VERSION = "2.8.8";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
@@ -41,7 +41,8 @@ BEGIN {
 
     my $git = `git -C $Bin status 2>&1`;
 
-    CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n" if ($git =~ /Your branch is behind 'origin\/master'/);
+    if ($git =~ /Your branch is behind 'origin\/master'/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
+    elsif ($git =~ /not a git repository/) { CORE::warn  "\n  [!] Warning: Cannot check for updates. RNA Framework install dir does not appear to be a git repository.\n"; }
 
 }
 

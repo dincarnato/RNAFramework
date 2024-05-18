@@ -313,7 +313,7 @@ if (keys %files) {
 
     open(my $ph, ">", $output . "ppv.csv") or die "\n\n  [!] Error: Unable to write ouput PPV table (" . $! . ")\n\n";
     open(my $sh, ">", $output . "sensitivity.csv") or die "\n\n  [!] Error: Unable to write ouput sensitivity table (" . $! . ")\n\n";
-    open(my $gh, ">", $output . "geometric_mean.csv") or die "\n\n  [!] Error: Unable to write ouput geometric mean table (" . $! . ")\n\n";
+    open(my $gh, ">", $output . "fmi.csv") or die "\n\n  [!] Error: Unable to write ouput FMI table (" . $! . ")\n\n";
     select((select($ph), $|=1)[0]);
     select((select($sh), $|=1)[0]);
     select((select($gh), $|=1)[0]);
@@ -365,7 +365,7 @@ if (keys %files) {
     @table = sort { $b->[4] <=> $a->[4] } @table;
 
     $table = Term::Table->new(indent => 2);
-    $table->head("Slope", "Intercept", "Sensitivity", "PPV", "Geometric mean");
+    $table->head("Slope", "Intercept", "Sensitivity", "PPV", "FMI");
 
     for (0 .. ($#table < 9 ? $#table : 9)) { $table->row(@{$table[$_]}); }
 
@@ -468,9 +468,10 @@ sub help {
  -kp or --keep-pseudoknots                    Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs                    Keeps lonely basepairs (helices of length 1 bp) in reference structure
  -i  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
- -m  or --median                              Reports the median PPV/sensitivity value between all reference structures
-                                              Note: by default, the geometric mean of PPV/sensitivity values is reported
- -am or --arithmetic-mean                     Reports the arithmetic mean of PPV/sensitivity values between all reference structures
+ -m  or --median                              Predictions across multiple reference structures are aggregated by median instead of
+                                              geometric mean
+ -am or --arithmetic-mean                     Predictions across multiple reference structures are aggregated by arithmetic mean
+                                              instead of geometric mean
                                               Note: by default, the geometric mean of PPV/sensitivity values is reported
  -rf or --rf-fold          <string>           Path to rf-fold executable (Default: assumes rf-fold is in PATH)
  -rp or --rf-fold-params   <string>           Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
