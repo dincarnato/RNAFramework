@@ -21,7 +21,7 @@ use Carp;
 use Fcntl qw(F_GETFL SEEK_SET);
 use File::Find qw(finddepth);
 use File::Spec;
-use FindBin qw($Bin);
+use File::Basename;
 use Scalar::Util qw(reftype);
 use threads::shared;
 
@@ -35,11 +35,13 @@ $VERSION = "2.8.8";
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
              mktree ncores blessed unbless shareDataStruct
-	         formatTime isGzipped);
+	     formatTime isGzipped);
 
 BEGIN {
 
-    my $git = `git -C $Bin remote show origin 2>&1`;
+    my ($dir, $git);
+    $dir = dirname($INC{"Core/Utils.pm"}) . "/../../";
+    $git = `git -C $dir remote show origin 2>&1`;
 
     if ($git =~ /master pushes to master \(local out of date\)/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
     elsif ($git =~ /not a git repository/) { CORE::warn  "\n  [!] Warning: Cannot check for updates. RNA Framework install dir does not appear to be a git repository.\n"; }
