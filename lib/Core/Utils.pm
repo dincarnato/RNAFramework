@@ -39,9 +39,9 @@ $VERSION = "2.8.8";
 
 BEGIN {
 
-    my $git = `git -C $Bin status 2>&1`;
+    my $git = `git -C $Bin remote show origin 2>&1`;
 
-    if ($git =~ /Your branch is behind 'origin\/master'/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
+    if ($git =~ /master pushes to master \(local out of date\)/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
     elsif ($git =~ /not a git repository/) { CORE::warn  "\n  [!] Warning: Cannot check for updates. RNA Framework install dir does not appear to be a git repository.\n"; }
 
 }
