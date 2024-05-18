@@ -207,7 +207,7 @@ else {
 
         open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
         select((select($wh), $|=1)[0]);
-        print $wh "#Transcript ID\tCorrelation\tp-value\n";
+        print $wh "#Transcript\tCorrelation\tp-value\n";
         print $wh join("\t", @$_) . "\n" for (@results);
         close($wh);
 

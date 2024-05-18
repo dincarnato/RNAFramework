@@ -179,14 +179,12 @@ $progressBar->init("");
 @pool = map{ threads->create(\&metrics) } 1 .. $threads;
 $_->join() for (@pool);
 
-@metrics = sort { $a->[0] cmp $b->[0] } @metrics;
-
 print "\n\n[+] Writing metrics to file...";
 
 open(my $fh, ">", $output) or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
 select((select($fh), $|=1)[0]);
 print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
-print $fh join("\t", @$_) . "\n" for (@metrics);
+print $fh join("\t", @$_) . "\n" for (sort { $a->[0] cmp $b->[0] } @metrics);
 close($fh);
 
 print "\n[+] All done.\n\n";
@@ -360,13 +358,13 @@ sub help {
           rf-eval [Options] -s /path/to/structure/file.db -r /path/to/XML/reactivity/file.xml  # Single file
 
  Options                                       Description
+ -p  or --processors             <int>         Number of processors to use (>=1, Default: 1)
  -s  or --structures             <string>      Path to a (folder of) structure file(s)
                                                Note: files containing multiple structures are accepted
  -r  or --reactivities           <string>      Path to a (folder of) XML reactivity file(s)
                                                Note: file names must match transcript IDs in structure files
  -o  or --output                 <string>      Output file with metrics per transcript (Default: rf_eval.txt)
  -ow or --overwrite                            Overwrites output file (if the specified file already exists)
- -p  or --processors             <int>         Number of processors to use (>=1, Default: 1)
  -tu or --terminal-as-unpaired                 Treats terminal base-pairs as if they were unpaired
  -it or --ignore-terminal                      Terminal base-pairs are excluded from calculations
  -kl or --keep-lonelypairs                     Lonely base-pairs (helices of 1 bp) are retained

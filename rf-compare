@@ -178,7 +178,8 @@ if ($results{compared}) {
     print "\n";
 
     open(my $wh, ">", $output . "metrics.txt") or die "\n  [!] Error: Failed to write metrics to file ($!)\n\n";
-    print $wh join("\t", @$_) . "\n" for (@results);
+    print $wh join("\t", "Transcript", "PPV", "Sensitivity", "FMI", "mFMI") . "\n";
+    print $wh join("\t", @$_) . "\n" for (sort {$a->[0] cmp $b->[0]} @results);
     close($wh);
     
 }
