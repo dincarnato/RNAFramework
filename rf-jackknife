@@ -6,7 +6,7 @@
 #
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Iteratively optimize slope and intercept parameters to maximize
-#          PPV and sensitivity using a set of reference structures
+#          FMI (or mFMI) using a set of reference structures
 #
 # This program is free software, and can be redistribute  and/or modified
 # under the terms of the GNU General Public License as published by
@@ -44,7 +44,7 @@ my ($input, $output, $overwrite, $reference,
     $refio, $help, $tmpdir, $madetmp,
     $tmp, $error, $rffold, $processmanager,
     $threads, $slope, $intercept, $sstep,
-    $istep, $rfparams, $relaxed, $kn,
+    $istep, $rfparams, $relaxed, $mFMI,
     $kp, $kl, $m, $am,
     $ignoreseq, @slope, @intercept, %files,
     %reference, %table, %results);
@@ -72,10 +72,10 @@ do {
                 "rf|rf-fold=s"         => \$rffold,
                 "rp|rf-fold-params=s"  => \$rfparams,
                 "x|relaxed"            => \$relaxed,
-                "kn|keep-noncanonical" => \$kn,
                 "kp|keep-pseudoknots"  => \$kp,
                 "kl|keep-lonelypairs"  => \$kl,
-                "m|median"             => \$m,
+                "m|mFMI"               => \$mFMI,
+                "e|median"             => \$m,
                 "am|arithmetic-mean"   => \$am,
                 "i|ignore-sequence"    => \$ignoreseq ) or help(1);
 
@@ -179,10 +179,9 @@ else { die "\n\n  [!] Error: The path to the specified temporary folder is not a
 
 print "\n[+] Checking input reference structures and probing data [0 imported]";
 
-$refio = Data::IO::Sequence->new( file         => $reference,
-                                  noncanonical => $kn,
-                                  pseudoknots  => $kp,
-                                  lonelypairs  => $kl );
+$refio = Data::IO::Sequence->new( file        => $reference,
+                                  pseudoknots => $kp,
+                                  lonelypairs => $kl );
 
 while(my $ref = $refio->read()) {
 
@@ -294,78 +293,54 @@ if (keys %files) {
         while (my $test = $processmanager->dequeue()) { die "\n\n  [!] Error: Folding failed for transcript \"" . $id . "\"." .
                                                               "\n             Please check input parameters and files and try again.\n\n" if ($test->exitcode()->[0]); }
 
-        print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "; PPV/Sensitivity calculation]";
+        print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $id . "; " . ($mFMI ? "mFMI" : "FMI") . " calculation]";
 
         @pool = map{ threads->create(\&calc) } 1 .. $threads;
         $_->join() for(@pool);
 
-        for (@results) {
-
-            push(@{$table{$_->[0]}->{$_->[1]}->{ppv}}, $_->[2]);
-            push(@{$table{$_->[0]}->{$_->[1]}->{sensitivity}}, $_->[3]);
-
-        }
+        push(@{$table{$_->[0]}->{$_->[1]}}, $_->[2]) for (@results);
 
     }
 
     print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [DONE]";
     print "\n[+] Reporting output tables...";
 
-    open(my $ph, ">", $output . "ppv.csv") or die "\n\n  [!] Error: Unable to write ouput PPV table (" . $! . ")\n\n";
-    open(my $sh, ">", $output . "sensitivity.csv") or die "\n\n  [!] Error: Unable to write ouput sensitivity table (" . $! . ")\n\n";
-    open(my $gh, ">", $output . "fmi.csv") or die "\n\n  [!] Error: Unable to write ouput FMI table (" . $! . ")\n\n";
-    select((select($ph), $|=1)[0]);
-    select((select($sh), $|=1)[0]);
+    open(my $gh, ">", $output . ($mFMI ? "mFMI" : "FMI") . ".csv") or die "\n\n  [!] Error: Unable to write ouput " . ($mFMI ? "mFMI" : "FMI") . " table (" . $! . ")\n\n";
     select((select($gh), $|=1)[0]);
 
-    print $ph join(";", "PPV", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
-    print $sh join(";", "Sensitivity", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
-    print $gh join(";", "Mean", sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
+    print $gh join(";", ($mFMI ? "mFMI" : "FMI"), sort {$a <=> $b} keys %{$table{min(@slope)}}) . "\n";
 
     foreach my $sl (sort {$a <=> $b} keys %table) {
 
-        my (@prow, @srow, @grow);
-        @prow = ($sl);
-        @srow = @prow;
-        @grow = @prow;
+        my @grow = ($sl);
 
         foreach my $in (sort {$a <=> $b} keys %{$table{$sl}}) {
 
-            my ($ppv, $sensitivity, $geomean);
+            my $fmi = "NaN";
 
-            if (isnumeric(@{$table{$sl}->{$in}->{ppv}}) &&
-                isnumeric(@{$table{$sl}->{$in}->{sensitivity}})) {
+            if (isnumeric(@{$table{$sl}->{$in}})) {
 
-                if ($m) { ($ppv, $sensitivity) = (sprintf("%.3f", median(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", median(@{$table{$sl}->{$in}->{sensitivity}}))); }
-                elsif ($am) { ($ppv, $sensitivity) = (sprintf("%.3f", mean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", mean(@{$table{$sl}->{$in}->{sensitivity}}))); }
-                else { ($ppv, $sensitivity) = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{ppv}})), sprintf("%.3f", geomean(@{$table{$sl}->{$in}->{sensitivity}}))); }
-
-                $geomean = $ppv && $sensitivity ? sprintf("%.3f", geomean($ppv, $sensitivity)) : "NaN";
+                if ($m) { $fmi = (sprintf("%.3f", median(@{$table{$sl}->{$in}}))); }
+                elsif ($am) { $fmi = (sprintf("%.3f", mean(@{$table{$sl}->{$in}}))); }
+                else { $fmi = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}}))); }
 
             }
-            else { ($ppv, $sensitivity, $geomean) = ("NaN", "NaN", "NaN");}
 
-            push(@prow, $ppv);
-            push(@srow, $sensitivity);
-            push(@grow, $geomean);
-            push(@table, [$sl, $in, $sensitivity, $ppv, $geomean]) if (!isnan($geomean));
+            push(@grow, $fmi);
+            push(@table, [$sl, $in, $fmi]) if (!isnan($fmi));
 
         }
 
-        print $ph join(";", @prow) . "\n";
-        print $sh join(";", @srow) . "\n";
         print $gh join(";", @grow) . "\n";
 
     }
 
-    close($ph);
-    close($sh);
     close($gh);
 
-    @table = sort { $b->[4] <=> $a->[4] } @table;
+    @table = sort { $b->[2] <=> $a->[2] } @table;
 
     $table = Term::Table->new(indent => 2);
-    $table->head("Slope", "Intercept", "Sensitivity", "PPV", "FMI");
+    $table->head("Slope", "Intercept", ($mFMI ? "mFMI" : "FMI"));
 
     for (0 .. ($#table < 9 ? $#table : 9)) { $table->row(@{$table[$_]}); }
 
@@ -393,8 +368,8 @@ sub calc {
 
     while (1) {
 
-        my ($test, $testio, $entry, $p,
-            $s, $id);
+        my ($test, $testio, $entry, $fmi,
+            $id);
 
         { lock(@tested);
           $test = shift(@tested) if (@tested); }
@@ -405,22 +380,17 @@ sub calc {
 
         eval { $testio = Data::IO::Sequence->new(file => $tmpdir . join("_", $id, @{$test}) . "/structures/" . $id . ".db"); };
 
-        if ($@) {
-
-            $p = "NaN";
-            $s = "NaN";
-
-        }
+        if ($@) { $fmi = "NaN"; }
         else {
 
             $entry = $testio->read();
-            $p = ppv($reference{$id}, $entry->structure(), $relaxed);
-            $s = sensitivity($reference{$id}, $entry->structure(), $relaxed);
+            $fmi = $mFMI ? mfmi($reference{$id}, $entry->structure(), $relaxed) :
+                           fmi($reference{$id}, $entry->structure(), $relaxed);
 
         }
 
         { lock(@results);
-          push(@results, shared_clone([@{$test}, $p, $s]));
+          push(@results, shared_clone([@{$test}, $fmi]));
 
           rmtree($tmpdir . join("_", $id, @{$test})); }
 
@@ -448,7 +418,8 @@ sub help {
 
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Iteratively optimize slope and intercept parameters to maximize
-          PPV and sensitivity using a set of reference structures
+          FMI (geometric mean of PPV and sensitivity), or modified FMI (mFMI)
+          using a set of reference structures
 
  Usage:   rf-jackknife [Options] XML_folder/                # Multiple transcripts
           rf-jackknife [Options] file.xml                   # Single transcript
@@ -463,16 +434,16 @@ sub help {
  -in or --intercept        <float>,<float>    Range of intercept values to test (Default: -3,0)
  -ss or --slope-step       <float>            Step for testing slope values (Default: 0.2)
  -is or --intercept-step   <float>            Step for testing intercept values (Default: 0.2)
- -x  or --relaxed                             Uses relaxed criteria (described in Deigan et al., 2009) to calculate PPV and sensitivity
- -kn or --keep-noncanonical                   Keeps non-canonical basepairs in reference structure
+ -x  or --relaxed                             Uses relaxed criteria (Deigan et al., 2009) to calculate FMI
  -kp or --keep-pseudoknots                    Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs                    Keeps lonely basepairs (helices of length 1 bp) in reference structure
  -i  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
- -m  or --median                              Predictions across multiple reference structures are aggregated by median instead of
-                                              geometric mean
- -am or --arithmetic-mean                     Predictions across multiple reference structures are aggregated by arithmetic mean
-                                              instead of geometric mean
-                                              Note: by default, the geometric mean of PPV/sensitivity values is reported
+ -m  or --mFMI                                Uses modified FMI (mFMI, Lan et al., 2022) instead of standard FMI to quantify the
+                                              agreement between predicted and reference structure
+ -e  or --median                              FMI values across multiple reference structures are aggregated by median
+                                              Note: default is to aggregate them by geometric mean
+ -am or --arithmetic-mean                     FMI values across multiple reference structures are aggregated by arithmetic mean
+                                              Note: default is to aggregate them by geometric mean
  -rf or --rf-fold          <string>           Path to rf-fold executable (Default: assumes rf-fold is in PATH)
  -rp or --rf-fold-params   <string>           Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
 

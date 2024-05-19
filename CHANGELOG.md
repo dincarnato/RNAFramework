@@ -9,6 +9,7 @@
 - Added parameter -wl (--whitelist) to rf-normfactor, to allow providing a list of transcript IDs to be used for calculating normalization factors
 - Added parameter -ec (--median-coverage) to rf-normfactor, to allow specifying a minimum median coverage for transcripts to be used when calculating normalization factors
 - Added paramter -ls (--library-strandedness) to rf-count-genome, to allow specifying the library type for all experiments simultaneously
+- rf-jackknife can now use both FMI (geometric mean of PPV and sensitivity) and mFMI (modified FMI, Lan *et al.*, 2022). Parameter -m now allows switching from FMI to mFMI, while the old parameter -m (--median) has now been renamed to -e. 
 
 ### Changed
 - Fixed rf-count and rf-count-genome to handle X and = CIGAR operations
