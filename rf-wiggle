@@ -67,7 +67,7 @@ die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i &&
 die "\n  [!] Error: Block size must be a positive INT >= 1" if (!isint($blockSize) || $blockSize < 1);
 for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 
-$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($keepbases)))))));
+$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepbases))))))));
 
 print "\n[+] Processing input file(s) [Current: none]";
 

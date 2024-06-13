@@ -108,7 +108,7 @@ die "\n  [!] Error: Reactivity cap must be positive\n\n" if (!ispositive($capRea
 
 $minvalues = round($minvalues) if ($minvalues > 1);
 $singlefile = 1 if (!-d $files[0] && !-d $files[1]);
-$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($keepbases)))))));
+$keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepbases))))))));
 
 print "\n[+] Importing input XML directories\/files...";
 

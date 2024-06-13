@@ -112,7 +112,7 @@ die "\n  [!] Error: Minimum coverage must be an INT > 0\n\n" if (!isint($minCov)
 die "\n  [!] Error: Median coverage must be positive\n\n" if (!ispositive($medianCoverage));
 die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
-$reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna($reactiveBases)))))));
+$reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($reactiveBases))))))));
 
 if ($scoreMethod !~ /^[24]$/) {
 
@@ -144,7 +144,7 @@ $io{$_} = RF::Data::IO::RC->new( file  => $_,
 if (-e $output) {
 
     if ($overwrite) { unlink($output) or die "\n  [!] Error: $!\n\n"; }
-    else { die "\n  [!] Error: Output file already exists." .
+    else { die "\n\n  [!] Error: Output file already exists." .
                "\n    Please use -ow (or --overwrite) to overwrite it\n\n"; }
 
 }

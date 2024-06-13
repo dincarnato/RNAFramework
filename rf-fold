@@ -64,7 +64,7 @@ my ($output, $ct, $input, $method,
     $ignore, $madetmp, $hc, $vrfoldparams, $rsfoldparams,
     $windowed, $cwd, $partition, $probplot,
     $partwin, $partstep, $wintrim, $foldwin,
-    $foldstep, $dp, $sh, $pk,
+    $foldstep, $dp, $sh, $pk, $suboptDeltaEnergy,
     $pkwin, $pkstep, $p1, $p2,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $skparams, $keeptmp,
@@ -142,8 +142,8 @@ do {
                 "ko|pseudoknot-offset=i"     => \$pkstep,
                 "ksl|pseudoknot-slope=s"     => \$pkslope,
                 "kin|pseudoknot-intercept=s" => \$pkintercept,
-                "kp1|pseudoknot-penality1=s" => \$p1,
-                "kp2|pseudoknot-penality2=s" => \$p2,
+                "kp1|pseudoknot-penalty1=s"  => \$p1,
+                "kp2|pseudoknot-penalty2=s"  => \$p2,
                 "kc|pseudoknot-cutoff=s"     => \$pkcutoff,
                 "ks|pseudoknot-suboptimal=i" => \$pksubopt,
                 "kh|pseudoknot-helices=i"    => \$pkmax,
@@ -151,6 +151,7 @@ do {
                 "sk|shapeknots=s"            => \$shapeknots,
                 "nz|no-zuker"                => \$nozuker,
                 "zs|zuker-suboptimal=i"      => \$zukersubopt,
+                "ke|subopt-delta-energy=s"   => \$suboptDeltaEnergy,
                 "pmr|plot-median-react"      => \$plotMedianShape,
                 "pms|plot-median-shannon"    => \$plotMedianShannon ) or help(1);
 
@@ -192,6 +193,7 @@ $pksubopt ||= 1000;
 $zukersubopt ||= 1000;
 $pkmethod ||= 1;
 $pkpercentmfe ||= 0.5;
+$suboptDeltaEnergy ||= 1;
 $viennarna = File::Spec->rel2abs($viennarna || which("RNAfold"));
 $rnasubopt = File::Spec->rel2abs($rnasubopt || which("RNAsubopt"));
 $rnastructure = File::Spec->rel2abs($rnastructure || which("Fold-smp") || which("Fold"));
@@ -241,11 +243,11 @@ if ($pk) {
     die "\n  [!] Error: Invalid pseudoknots prediction method\n\n" unless($pkmethod =~ m/^[12]$/);
     die "\n  [!] Error: Pseudoknot window's size must be an integer >= 50\n\n" unless($pkwin >= MINWINLENGTH);
     die "\n  [!] Error: Pseudoknot window's sliding offset cannot be greater than window's size\n\n" if ($pkstep > $pkwin);
-    die "\n  [!] Error: Pseudoknot penality 1 must be numeric\n\n" unless(isnumeric($p1));
-    die "\n  [!] Error: Pseudoknot penality 2 must be numeric\n\n" unless(isnumeric($p2));
-    die "\n  [!] Error: Pseudoknot reactivity cutoff must be a value >0 and <= 1" if (!inrange($pkcutoff, [0, 1]));
-    die "\n  [!] Error: Pseudoknot suboptimal structures energy tollerance must be numeric" if (!isnumeric($pkpercentmfe));
-    die "\n  [!] Error: Pseudoknot suboptimal structures energy tollerance must be a value >0 and <= 1" if (!inrange($pkpercentmfe, [0, 1]));
+    die "\n  [!] Error: Pseudoknot penalty 1 must be numeric\n\n" unless(isnumeric($p1));
+    die "\n  [!] Error: Pseudoknot penalty 2 must be numeric\n\n" unless(isnumeric($p2));
+    die "\n  [!] Error: Pseudoknot reactivity cutoff must be > 0 and <= 1\n\n" if (!inrange($pkcutoff, [0, 1]));
+    die "\n  [!] Error: Pseudoknot suboptimal structures energy tollerance must be > 0 and <= 1\n\n" if (!isnumeric($pkpercentmfe) || !inrange($pkpercentmfe, [0, 1]));
+    die "\n  [!] Error: Pseudoknot suboptimal structure energy delta must be >= 0\n\n" if (!ispositive($suboptDeltaEnergy));
 
 }
 
@@ -384,6 +386,8 @@ if ($method == 2 ||
     $rsfoldparams .= " -t " . ($t + 273.15);         # RNAstructure expects a temperature in Kelvin degrees
 
 }
+
+$RNA::temperature = $t;
 
 # Output directory tree
 print "\n[+] Making output directory tree...";
@@ -1177,7 +1181,7 @@ sub pkdetect {
 
     if ($pkmethod == 1) {
 
-        $cmd = $rnasubopt . " -p " . $pksubopt;
+        $cmd = $rnasubopt . " -p " . $pksubopt . " -e " . $suboptDeltaEnergy;
         $cmd .= " -C" if (!$ignore);
 
         $energy = RNA::energy_of_struct($parameters{sequence}, $parameters{constraint});
@@ -1205,7 +1209,7 @@ sub pkdetect {
             my $structs = 0;
 
             # I added this to sample suboptimal structures according to Zuker (increases the folding space searched)
-            foreach my $line (split(/\n/, `cat '$fastafile' | $rnasubopt -z`)) {
+            foreach my $line (split(/\n/, `echo '$parameters{sequence}' | $rnasubopt -z 2>/dev/null`)) {
 
                 last if ($structs == $zukersubopt);
 
@@ -1809,8 +1813,8 @@ sub help {
  -pk  or --pseudoknots                       Enables detection of pseudoknots (computationally intensive)
  -ksl or --pseudoknot-slope      <float>     Sets slope used for pseudoknots prediction (Default: same as -sl <slope>)
  -kin or --pseudoknot-intercept  <float>     Sets intercept used for pseudoknots prediction (Default: same as -in <intercept>)
- -kp1 or --pseudoknot-penality1  <float>     Pseudoknot penality P1 (Default: 0.35)
- -kp2 or --pseudoknot-penality2  <float>     Pseudoknot penality P2 (Default: 0.65)
+ -kp1 or --pseudoknot-penalty1   <float>     Pseudoknot penalty P1 (Default: 0.35)
+ -kp2 or --pseudoknot-penalty2   <float>     Pseudoknot penalty P2 (Default: 0.65)
  -kt  or --pseudoknot-tollerance <float>     Maximum tollerated deviation of suboptimal structures energy from MFE (>0-1, Default: 0.5 [50%])
  -kh  or --pseudoknot-helices    <int>       Number of candidate pseudoknotted helices to evaluate (>0, Default: 100)
  -kw  or --pseudoknot-window     <int>       Window size (in nt) for performing pseudoknots detection (Default: 600)
@@ -1823,6 +1827,7 @@ sub help {
  |
  +- RNA Framework pseudoknots detection algorithm options
     -vrs or --vienna-rnasubopt      <string>    Path to ViennaRNA RNAsubopt executable (Default: assumes RNAsubopt is in PATH)
+    -ke  or --subopt-delta-energy   <float>     Computes suboptimal structures with energy in a certain range of the optimum (>=0, Default: 1 [kcal/mol])
     -ks  or --pseudoknot-suboptimal <int>       Number of suboptimal structures to evaluate for pseudoknots prediction (>0, Default: 1000)
     -nz  or --no-zuker                          Disables the inclusion of Zuker suboptimal structures (reduces the sampled folding space)
     -zs  or --zuker-suboptimal                  Number of Zuker suboptimal structures to include (>0, Default: 1000)
