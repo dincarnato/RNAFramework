@@ -125,7 +125,7 @@ sub _retrieveReturnData {
         unlink($self->{_tmpDataFile});
 
     }
-    else { $self->{_exitcode} = [ -1, "Unable to open child process temporary data file \"" . $self->{_tmpDataFile} . "\"" ]; }
+    else { $self->{_exitcode} = [ "Unable to open child process temporary data file \"" . $self->{_tmpDataFile} . "\"" ]; }
 
 }
 
