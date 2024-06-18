@@ -40,7 +40,7 @@ my ($tmp, $tmpdir, $output, $wt,
     $mapqual, $noambiguous, $medianqual, $noins,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
-    $maxcov, $primaryonly, $whitelist, $onlyMut, 
+    $maxcov, $primaryonly, $whitelist, $onlyMut, $noCovLowQual,
     $outRawCounts, $fast, @mutClasses, @bam_trim5, @pool, 
     @qcounter, %transcripts, %spacer, %files, 
     %masks, %realid, %onlyMut);
@@ -89,7 +89,8 @@ do {
                 "pn|primary-only"            => \$primaryonly,
                 "wl|whitelist=i"             => \$whitelist,
                 "om|only-mut=s"              => \$onlyMut,
-                "ndd|no-discard-duplicates"  => \$nodiscarddup ) or help(1);
+                "ndd|no-discard-duplicates"  => \$nodiscarddup,
+                "ncl|no-cov-low-qual"        => \$noCovLowQual ) or help(1);
 
 };
 
@@ -772,7 +773,8 @@ sub count {
             if ($mutcount ||
                 $covonly) {  # Mutations count / Coverage only modes
 
-                my $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
+                my ($start, @covered);
+                $start = $row[3] - 1 < 0 ? 0 : $row[3] - 1;
 
                 if ($maxcov) {
 
@@ -792,14 +794,15 @@ sub count {
                 }
 
                 $stats{total}++;
+                @covered = ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..($row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2);
 
                 # Parse the MD flag only when edit distance != 0
                 if ($mutcount &&
                     $row !~ m/NM:i:0/) {
 
-                    my ($end, $muts, $rawMuts, $missingMD);
+                    my ($end, $muts, $rawMuts, $lowQual, $missingMD);
                     $end = $row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2;
-                    ($muts, $rawMuts, $missingMD) = parsemd(\@row, $last{sequence});
+                    ($muts, $rawMuts, $lowQual, $missingMD) = parsemd(\@row, $last{sequence});
 
                     if ($missingMD && !$sample->{missingMD}) {
 
@@ -807,7 +810,11 @@ sub count {
                               "\n               Consider running \"samtools calmd\" to fix.\n";
                         $sample->{missingMD} = 1;
 
+                        next;
+
                     }
+
+                    if ($noCovLowQual) { @covered = grep { !exists $lowQual->{$_} } @covered; }
 
                     @$muts = uniq(@$muts, @{$ins}) if (!$noins);
                     @$muts = rmconsecutive(@$muts) if ($rmconsecutive);
@@ -852,31 +859,31 @@ sub count {
                 }
 
                 $lastPos[1]++;
-                map {$coverage[$_]++} ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..
-                                       ($row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2);
+                map {$coverage[$_]++} @covered;
 
 
             }
             else {  # RT-stops count mode
 
-                if ($row[3] >= 2 + $sample->{trim5} + $clip5) { # Read 5'-end is not before transcript 5'-end
+                $row[3] -= $sample->{trim5} + $clip5 + 2;
 
-                    $row[3] -= $sample->{trim5} + $clip5 + 2;
+                if ($row[3] >= 0) { # Read 5'-end is not before transcript 5'-end
+
                     $counts[$row[3]]++;
                     $stats{substr($last{sequence}, $row[3], 1)}++;
 
-                    map {$coverage[$_]++} $row[3] .. ($row[3] + $cov + $clip5 - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov + $clip5 - 2);
+                }
 
-                    unless ($row[1] & 256) {
+                map { $coverage[$_]++ } max(0, $row[3]) .. min($tsLen - 1, $row[3] + $cov + $clip5 - 2);
 
-                        $readscount++;
-                        $stats{totalPrimary}++;
+                unless ($row[1] & 256) {
 
-                    }
-
-                    $stats{total}++;
+                    $readscount++;
+                    $stats{totalPrimary}++;
 
                 }
+
+                $stats{total}++;
 
             }
 
@@ -1015,14 +1022,14 @@ sub parsemd { # SAM MD flag parser
     my ($row, $reference) = @_;
 
     my ($md, $llen, @pos, @quals,
-        %pos, %posMap);
+        %lowQual, %pos, %posMap);
     $llen = $row->[3] - 1;
 
-    return([], {}, 1) if (@{$row} < 11);
+    return([], {}, [], 1) if (@{$row} < 11);
 
     for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
 
-    return([], {}, 1) if (!defined $md);
+    return([], {}, [], 1) if (!defined $md);
 
     %posMap = ref2read($row);
     @quals = split(//, $row->[10]);
@@ -1079,6 +1086,7 @@ sub parsemd { # SAM MD flag parser
                                 push(@{$pos{del}}, @truedel) if ($outRawCounts);
                                 
                             }
+                            else { $lowQual{$_} = 1 for (@truedel); }
 
                         }
 
@@ -1097,6 +1105,7 @@ sub parsemd { # SAM MD flag parser
                             push(@{$pos{del}}, @truedel) if ($outRawCounts);
 
                         }
+                        else { $lowQual{$_} = 1 for (@truedel); }
 
                     }
 
@@ -1125,6 +1134,7 @@ sub parsemd { # SAM MD flag parser
                         push(@{$pos{$next . $readBase}}, $len + $llen) if ($outRawCounts);
 
                     }
+                    else { $lowQual{$len + $llen} = 1; }
 
                     $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
 
@@ -1141,7 +1151,7 @@ sub parsemd { # SAM MD flag parser
 
     }
 
-    return(\@pos, \%pos, 0);
+    return(\@pos, \%pos, \%lowQual, 0);
 
 }
 
@@ -1367,6 +1377,8 @@ sub help {
     -ds  or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
                                                    Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
     -q   or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
+    -ncl or --no-cov-low-qual                      If a mutated base (or one of the surrounding bases, if -es is specified) does not exceed the -mq minimum
+                                                   quality threshold, that base will be considered as non covered
     -es  or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
                                                    Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
     -nd  or --no-deletions                         Ignores deletions
