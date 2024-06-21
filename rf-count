@@ -874,7 +874,7 @@ sub count {
 
                 }
 
-                map { $coverage[$_]++ } max(0, $row[3]) .. min($tsLen - 1, $row[3] + $cov + $clip5 - 2);
+                map { $coverage[$_]++ } max(0, $row[3]) .. min($tsLen - 1, $row[3] + $cov + $clip5);
 
                 unless ($row[1] & 256) {
 
