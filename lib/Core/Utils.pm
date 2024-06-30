@@ -114,6 +114,8 @@ sub _exception {
 
     $message .= "\n    -> Caught";
 
+    return($message);
+
 }
 
 sub is {
@@ -418,7 +420,12 @@ sub blessed {
     return() unless(ref($reference));
 
     my $eval = do { local $@;
-                    eval { $reference->can("can"); };
+                    eval { 
+
+                        local $SIG{__DIE__} = sub {};
+                        $reference->can("can"); 
+                        
+                    };
                     $@; };
 
     return(1) if (!$eval);
