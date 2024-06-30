@@ -199,7 +199,7 @@ else {
 
 }
 
-$SIG{__DIE__} = \&cleanup;
+#$SIG{__DIE__} = \&cleanup;
 
 print "\n[+] Making output directory...";
 
@@ -300,6 +300,7 @@ print "\n";
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
                                              stderr     => "/dev/null",
+                                             tmpDir     => $tmpdir,
                                              verbosity  => -1 );
 
 ##

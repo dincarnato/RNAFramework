@@ -179,7 +179,7 @@ else {
 
 }
 
-$SIG{__DIE__} = \&cleanup;
+#$SIG{__DIE__} = \&cleanup;
 
 print "\n[+] Making output directory...";
 
@@ -298,8 +298,9 @@ print "\n";
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-
-                                             verbosity  => 1 );
+                                             stderr     => "/dev/null",
+                                             tmpDir     => $tmpdir,
+                                             verbosity  => -1 );
 
 ##
 # FASTA Parsing
