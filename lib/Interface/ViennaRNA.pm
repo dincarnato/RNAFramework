@@ -98,7 +98,7 @@ sub alifold {
 
     my ($id, $shapeFiles, $command, $ret,
         $sequence, $structure, $sci, $energy,
-        $fold, @ret);
+        $fold, $mea, $ensDiversity, @ret, %bpprobs);
     $id = "." . $self->{_randId}; # With the leading . the dp file will be hidden
     $shapeFiles = $self->{tmpdir} . $id . "_" . join(".shape," . $self->{tmpdir} . $id . "_", sort keys %{$alignment}) . ".shape";
     $command = $self->{RNAalifold} . " --noPS --shape='" . $shapeFiles . "' --id-prefix=" . $id . " -T " . $parameters->{temperature} .
@@ -106,8 +106,9 @@ sub alifold {
     $command .= " --maxBPspan=" . $parameters->{maxBPspan} if ($parameters->{maxBPspan});
     $command .= " --noClosingGU" if ($parameters->{noClosingGU});
     $command .= " --noLP" if ($parameters->{noLonelyPairs});
-#    $command .= " --mis" if ($parameters->{mostInformativeSeq}); # this needs data::sequence::Structure to be adjusted to take iupac characters
+#   $command .= " --mis" if ($parameters->{mostInformativeSeq}); # this needs data::sequence::Structure to be adjusted to take iupac characters
     $command .= " -p" if ($parameters->{partitionFunction});
+    $command .= " --MEA" if ($parameters->{MEA});
     $command .= " --ribosum_scoring" if ($parameters->{ribosumScoring});
     $command .= " " . $self->{tmpdir} . $id . ".fasta";
 
@@ -131,14 +132,24 @@ sub alifold {
             ($structure, $energy, $sci) = $ret[$_ + 2] =~ m/^([.\(\)]+)\s\(\s*([-\d\.]+).+?\[sci = ([\d\.]+)\]/;
 
         }
+        elsif ($ret[$_] =~ m/^([\.\(\)]+) \{.+? MEA=[\d\.]+\}$/) { $mea = $1; }
+        elsif ($_ =~ m/ensemble diversity ([\d\.]+)/) { $ensDiversity = $1; }
 
     }
 
-    $fold = Data::Sequence::Structure->new( sequence     => $sequence,
-                                            structure    => $structure,
-                                            energy       => $energy,
-                                            sci          => $sci,
-                                            noncanonical => 1 );
+    %bpprobs = $self->_parseAliDpFile() if ($parameters->{partitionFunction} ||
+                                            $parameters->{MEA});
+
+    #unlink($id . "_0001_ali.out");
+
+    $fold = Data::Sequence::Structure->new( sequence          => $sequence,
+                                            structure         => $structure,
+                                            mea               => $mea,
+                                            bpprobabilities   => \%bpprobs,
+                                            energy            => $energy,
+                                            ensembleDiversity => $ensDiversity,
+                                            sci               => $sci,
+                                            noncanonical      => 1 );
 
     return($fold);
 
@@ -303,14 +314,15 @@ sub _checkAliFoldParams {
                                     slope              => 1.8,
                                     intercept          => -0.6,
                                     temperature        => 37,
-                                    ribosumScoring     => 0 }, $parameters);
+                                    ribosumScoring     => 0,
+                                    MEA                => 0 }, $parameters);
 
     $self->throw("Parameter maxBPspan span must be a positive INT") if ($parameters->{maxBPspan} &&
                                                                         (!isint($parameters->{maxBPspan}) ||
                                                                          !ispositive($parameters->{maxBPspan})));
 
     for (qw(slope intercept temperature)) { $self->throw("Parameter " . $_ . " must be numeric") if (!isnumeric($parameters->{$_})); }
-    for (qw(noLonelyPairs noClosingGU
+    for (qw(noLonelyPairs noClosingGU MEA
             partitionFunction mostInformativeSeq)) { $self->throw("Parameter " . $_ . " must be BOOL") if (!isbool($parameters->{$_})); }
 
     $parameters->{reactivity} = \%reactivity;
@@ -433,6 +445,38 @@ sub _parseDpFile {
     close($fh);
 
     unlink($id . "_dp.ps");
+
+    return(%bpprobs);
+
+}
+
+sub _parseAliDpFile {
+
+    my $self = shift;
+
+    my ($id, %bpprobs);
+    $id = "." . $self->{_randId};
+
+    open(my $fh, "<", $id . "_0001_dp.ps") or $self->throw("Unable to read base-pairing probabilities file (" . $! . ")");
+    while(<$fh>) {
+
+        if ($_ =~ m/hsb (\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
+
+            my ($i, $j, $p) = ($1, $2, $3);
+
+            $i -= 1;         # Base numbering is 1-based
+            $j -= 1;
+            $p = $p ** 2;    # ViennaRNA returns sqrt(p(i,j))
+
+            $bpprobs{$i}->{$j} = $p;
+            $bpprobs{$j}->{$i} = $p;
+
+        }
+
+    }
+    close($fh);
+
+    unlink($id . "_0001_dp.ps");
 
     return(%bpprobs);
 

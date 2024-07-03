@@ -3,11 +3,9 @@ package Term::Progress;
 use strict;
 use Core::Mathematics qw(:all);
 use Core::Utils;
-use Term::Constants qw(:screen);
+use Term::Constants qw(:screen :colors);
 
 use base qw(Core::Base);
-
-use constant BLOCK => "\x{2588}";
 
 sub new {
 
@@ -17,6 +15,7 @@ sub new {
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ max       => undef,
                    width     => 100,
+                   colored   => 0,
                    _residual => undef,
                    _status   => undef,
                    _time     => time(),
@@ -32,8 +31,9 @@ sub _validate {
 
     my $self = shift;
 
-    $self->throw("Maximum value must be numeric") if (!isnumeric($self->{max}));
-    $self->throw("Width must be numeric") if (!isnumeric($self->{width}));
+    $self->throw("Maximum value must be a positive INT >= 1") if (!isint($self->{max}) || $self->{max} < 1);
+    $self->throw("Width must be a positive INT >= 1") if (!isint($self->{width}) || $self->{width} < 1);
+    $self->throw("Colored parameter must be BOOL") if (!isbool($self->{colored}));
 
     $self->{_residual} = $self->{max};
 
@@ -64,7 +64,7 @@ sub update {
     $self->{_status} = " " . $status if (defined $status);
 
     my ($time, $timePerEvent, $timeLeft, $done,
-        $blocks, $spaces, $percentage);
+        $blocks, $spaces, $percentage, $color);
     #$time = time();
     $self->{_residual} -= $increment;
     $done = $self->{max} - $self->{_residual};
@@ -72,9 +72,22 @@ sub update {
     #$timeLeft = $self->{_residual} * $timePerEvent;
     $percentage = min(100, $done / $self->{max} * 100);
     $blocks = round(min($self->{width}, $done / $self->{max} * $self->{width}));
-    $spaces = $self->{width} - round($blocks);
+    $spaces = " " x ($self->{width} - round($blocks));
+    $blocks = Term::Constants::BLOCK x $blocks;
+    
+    if ($self->{colored}) {
 
-    print CLRRET . "|" . (BLOCK x $blocks) . (" " x $spaces) . "|" . $self->{_status} . " (Done: " . sprintf("%.2f", $percentage) . "\%)"; #\%; ETC: " . formatTime($timeLeft) . ")";
+        if ($percentage <= 20) { $color = RED; }
+        elsif ($percentage <= 40) { $color = BRED; }
+        elsif ($percentage <= 60) { $color = BYELLOW; }
+        elsif ($percentage <= 90) { $color = YELLOW; }
+        elsif ($percentage < 100) { $color = BGREEN; }
+        else { $color = GREEN; }
+
+    }
+    else { $color = WHITE; }
+
+    print CLRRET . "|" . $color . $blocks . RESET . $spaces . "|" . $self->{_status} . " (Done: " . $color . sprintf("%.2f", $percentage) . "\%" . RESET . ")"; #\%; ETC: " . formatTime($timeLeft) . ")";
 
 }
 
@@ -85,10 +98,11 @@ sub complete {
 
     return if ($self->{_complete});
 
+    my $color = $self->{colored} ? GREEN : WHITE;
     $self->{_status} = " " . $status if (defined $status);
     $self->{_complete} = 1;
 
-    print CLRRET . "|" . (BLOCK x $self->{width}) . "|" . $self->{_status} . " (Done: 100.00\%)"; #; ETC: 0s)";
+    print CLRRET . "|" . $color . (Term::Constants::BLOCK x $self->{width}) . RESET . "|" . $self->{_status} . " (Done: " . $color . "100.00\%" . RESET . ")"; #; ETC: 0s)";
 
 }
 

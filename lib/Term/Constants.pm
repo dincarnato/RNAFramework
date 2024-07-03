@@ -48,4 +48,6 @@ use constant RET       => "\r";
 use constant CLRTOP    => CLRALL . CURTOP;
 use constant CLRRET    => CLRROW . RET;
 
-1;
+use constant BLOCK     => "\x{2588}";
+
+1; 
