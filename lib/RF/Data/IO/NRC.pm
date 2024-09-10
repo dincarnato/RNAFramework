@@ -14,7 +14,7 @@ use constant VERSION => 1;
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ index       => undef,
@@ -163,7 +163,7 @@ sub _loadIndex {
 sub read {
 
     my $self = shift;
-    my $seqid = shift if (@_);
+    my $seqid = shift;
 
     my ($fh, $data, $idlen, $id,
         $length, $sequence, $entry, $eightbytes,
@@ -232,7 +232,7 @@ sub read {
 sub readBytewise {
 
     my $self = shift;
-    my ($id, @ranges) = @_ if (@_);
+    my ($id, @ranges) = @_;
 
     return if (!exists $self->{_offsets}->{$id});
 
@@ -284,7 +284,7 @@ sub readBytewise {
 sub writeBytewise {
 
     my $self = shift;
-    my ($id, $pos, $counts) = @_ if (@_);
+    my ($id, $pos, $counts) = @_;
 
     $self->throw("Filehandle isn't in append mode") unless ($self->mode() eq "w+");
 
@@ -313,7 +313,7 @@ sub writeBytewise {
 sub write {
 
     my $self = shift;
-    my @entries = @_ if (@_);
+    my @entries = @_;
 
     my ($fh, @offsets);
     $fh = $self->{_fh};
@@ -407,7 +407,7 @@ sub write {
 sub dbSize {
 
     my $self = shift;
-    my $n = shift if (@_);
+    my $n = shift;
 
     $self->throw("NRC size must be a positive integer") if (defined $n &&
                                                            !ispositive($n));
@@ -469,7 +469,7 @@ sub ids {
 sub length {
 
     my $self = shift;
-    my $id = shift if (@_);
+    my $id = shift;
 
     return() if (!defined $id || !exists $self->{_lengths}->{$id});
 

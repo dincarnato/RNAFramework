@@ -9,7 +9,7 @@ use base qw(Core::Base);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
     
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ id         => undef,
@@ -48,7 +48,7 @@ sub _validate {
 sub id {
 
     my $self = shift;
-    my $id = shift if (@_);
+    my $id = shift;
 
     $self->{id} = $id if (defined $id);
 

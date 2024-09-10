@@ -27,7 +27,7 @@ use base qw(Data::IO::Sequence);
 sub read {
 
     my $self = shift;
-    my $tsid = shift if (@_);
+    my $tsid = shift;
 
     my ($fh, $stream, $header, $id,
         $description, $sequence, $object, $offset);
@@ -131,7 +131,7 @@ sub read {
 sub write {
 
     my $self = shift;
-    my @sequences = @_ if (@_);
+    my @sequences = @_;
 
     $self->throw("Filehandle isn't in write/append mode") unless ($self->mode() =~ m/^w\+?$/);
 

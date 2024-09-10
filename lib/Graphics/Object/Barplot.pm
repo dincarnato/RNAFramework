@@ -10,7 +10,7 @@ use base qw(Graphics::Object::Yaxis);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
     
     # Since certain parameters can be both SCALAR or ARRAY, we adjust them here
     $parameters{barfill} = [$parameters{barfill}] if (ref($parameters{barfill}) ne "ARRAY");

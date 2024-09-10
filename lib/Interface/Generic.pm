@@ -8,7 +8,7 @@ use base qw(Core::Base);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ tmpdir      => "/tmp/",

@@ -13,7 +13,7 @@ use base qw(Interface::Generic);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ RNAfold       => which("RNAfold"),
@@ -210,7 +210,7 @@ sub alifold {
 sub _checkFoldParams {
 
     my $self = shift;
-    my $sequence = shift if (@_);
+    my $sequence = shift;
     my $parameters = shift || {};
 
     $self->throw("Parameters must be an HASH reference") if (ref($parameters) ne "HASH");

@@ -11,7 +11,7 @@ use base qw(Interface::Generic);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ STAR          => which("STAR"),
@@ -131,7 +131,7 @@ sub alignReads {
 sub alignStats {
 
     my $self = shift;
-    my $stat = shift if (@_);
+    my $stat = shift;
 
     if (!keys %{$self->{_alignStats}}) { $self->warn("No statistics available. No alignment has been performed yet."); }
     else {
@@ -151,7 +151,7 @@ sub alignStats {
 sub _loadAndRemoveIndex {
 
     my $self = shift;
-    my $mode = shift if (@_);
+    my $mode = shift;
 
     $self->_checkValidIndex(1);
 
@@ -181,7 +181,7 @@ sub _loadAndRemoveIndex {
 sub _checkValidIndex {
 
     my $self = shift;
-    my $throw = shift if (@_);
+    my $throw = shift;
 
     for (qw(chrLength.txt  chrNameLength.txt  chrName.txt  chrStart.txt
             Genome  genomeParameters.txt  SA  SAindex)) {
@@ -202,7 +202,7 @@ sub _checkValidIndex {
 sub _checkIndexParams {
 
     my $self = shift;
-    my $genomeFiles = shift if (@_);
+    my $genomeFiles = shift;
     my $parameters = shift || {};
 
     $self->throw("No reference FASTA file provided") if (!$genomeFiles);
@@ -262,7 +262,7 @@ sub _checkIndexParams {
 sub _checkAlignParams {
 
     my $self = shift;
-    my $readFiles = shift if (@_);
+    my $readFiles = shift;
     my $parameters = shift || {};
 
     $self->throw("No read file provided") if (!$readFiles);

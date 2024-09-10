@@ -10,7 +10,7 @@ use base qw(Graphics::Object);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ values          => [],
@@ -332,7 +332,7 @@ sub _plotyaxis {
 sub _vertalign {
 
     my $self = shift;
-    my $y = shift if (@_);
+    my $y = shift;
 
     my $zero = maprange(@{$self->{yrange}}, @{$self->{_yarea}}, 0);
 

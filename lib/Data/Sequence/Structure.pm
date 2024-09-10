@@ -12,7 +12,7 @@ use base qw(Data::Sequence);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     $parameters{type} = "RNA";
 
@@ -263,7 +263,7 @@ sub basepairs {
 sub bpprobability {
 
     my $self = shift;
-    my ($base1, $base2) = sort {$a <=> $b} @_ if (@_);
+    my ($base1, $base2) = sort {$a <=> $b} @_;
 
     if (defined $base1) {
 
@@ -301,7 +301,7 @@ sub pkpairs {
 sub energy {
 
     my $self = shift;
-    my $energy = shift if (@_);
+    my $energy = shift;
 
     $self->{energy} = $energy if (isreal($energy));
 
@@ -312,7 +312,7 @@ sub energy {
 sub sci {
 
     my $self = shift;
-    my $sci = shift if (@_);
+    my $sci = shift;
 
     $self->{sci} = $sci if (isreal($sci));
 
@@ -323,7 +323,7 @@ sub sci {
 sub helices {
 
     my $self = shift;
-    my $split = shift if (@_);
+    my $split = shift;
 
     if (!@{$self->{_helices}}) {
 

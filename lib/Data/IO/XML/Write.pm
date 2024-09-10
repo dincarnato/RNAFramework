@@ -25,7 +25,7 @@ sub _validate {
 sub heading {
     
     my $self = shift;
-    my $heading = shift if (@_);
+    my $heading = shift;
     
     if (defined $heading) {
         
@@ -42,7 +42,7 @@ sub heading {
 sub autoclear {
     
     my $self = shift;
-    my $autoclear = shift if (@_);
+    my $autoclear = shift;
     
     if (defined $autoclear) {
         
@@ -59,7 +59,7 @@ sub autoclear {
 sub autoclose {
     
     my $self = shift;
-    my $autoclose = shift if (@_);
+    my $autoclose = shift;
     
     if (defined $autoclose) {
         
@@ -86,7 +86,7 @@ sub clearxml {
 sub opentag {
     
     my $self = shift;
-    my ($tag, $attributes) = @_ if (@_);
+    my ($tag, $attributes) = @_;
     
     $attributes = {} if (!defined $attributes);
     
@@ -111,7 +111,7 @@ sub opentag {
 sub addtext {
     
     my $self = shift;
-    my $text = shift if (@_);
+    my $text = shift;
     
     if (defined $text) {
         
@@ -127,7 +127,7 @@ sub addtext {
 sub closebogustag {
     
     my $self = shift; 
-    my $tag = shift if (@_);
+    my $tag = shift;
     
     if (defined $tag) {
         
@@ -144,7 +144,7 @@ sub closebogustag {
 sub closetag {
     
     my $self = shift; 
-    my $tag = shift if (@_); 
+    my $tag = shift; 
     
     if (defined $tag) {
         
@@ -189,7 +189,7 @@ sub closealltags {
 sub tagline {
     
     my $self = shift;
-    my ($tag, $text, $attributes) = @_ if (@_);
+    my ($tag, $text, $attributes) = @_;
     
     $attributes = {} if (!defined $attributes);
     
@@ -212,7 +212,7 @@ sub tagline {
 sub emptytag {
     
     my $self = shift;
-    my ($tag, $attributes) = @_ if (@_);
+    my ($tag, $attributes) = @_;
     
     $attributes = {} if (!defined $attributes);
     
@@ -234,7 +234,7 @@ sub emptytag {
 sub comment {
     
     my $self = shift;
-    my $comment = shift if (@_);
+    my $comment = shift;
     
     if (defined $comment) {
         
@@ -265,7 +265,7 @@ sub write {
 sub _validatetag {
     
     my $self = shift;
-    my $tag = shift if (@_);
+    my $tag = shift;
     
     if (defined $tag) {
         
@@ -282,7 +282,7 @@ sub _validatetag {
 sub _validatechars {
     
     my $self = shift;
-    my $text = shift if (@_);
+    my $text = shift;
     
     if (defined $text) {
         

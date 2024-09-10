@@ -4,22 +4,27 @@ use strict;
 use Core::Mathematics qw(:all);
 use Core::Utils;
 use Term::Constants qw(:screen :colors);
+use Time::HiRes qw(time);
 
 use base qw(Core::Base);
 
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ max       => undef,
-                   width     => 100,
-                   colored   => 0,
-                   _residual => undef,
-                   _status   => undef,
-                   _time     => time(),
-                   _complete => 0 }, \%parameters);
+    $self->_init({ max        => 0,
+                   width      => 50,
+                   colored    => 0,
+                   showETA    => 0,
+                   updateRate => 0,
+                   _residual  => undef,
+                   _status    => undef,
+                   _time      => time(),
+                   _complete  => 0,
+                   _updateN   => 0,
+                   _appended  => 0 }, \%parameters);
 
     $self->_validate();
 
@@ -34,8 +39,11 @@ sub _validate {
     $self->throw("Maximum value must be a positive INT >= 1") if (!isint($self->{max}) || $self->{max} < 1);
     $self->throw("Width must be a positive INT >= 1") if (!isint($self->{width}) || $self->{width} < 1);
     $self->throw("Colored parameter must be BOOL") if (!isbool($self->{colored}));
+    $self->throw("showETA parameter must be BOOL") if (!isbool($self->{showETA}));
+    $self->throw("updateRate parameter must be comprised betwen 0 and 1") if (!inrange($self->{updateRate}, [0, 1]));
 
     $self->{_residual} = $self->{max};
+    $self->{_updateN} = Core::Mathematics::max(1, int($self->{updateRate} * $self->{max}));
 
     binmode(STDOUT, "encoding(UTF-8)");
     select((select(STDOUT), $|=1)[0]);
@@ -45,31 +53,33 @@ sub _validate {
 sub init {
 
     my $self = shift;
-    my $status = shift if (@_);
+    my $status = shift;
 
     $self->{_status} = " " . $status if (defined $status);
 
-    print CLRRET . "|" . (" " x $self->{width}) . "|" . $self->{_status} . " (Done: 0.00\%)"; #; ETC: unknown)";
+    print CLRRET . "|" . (" " x $self->{width}) . "|" . $self->{_status} . " (Done: 0.00\%" . ($self->{showETA} ? "; ETA: unknown)" : ")");
 
 }
 
 sub update {
 
     my $self = shift;
-    my $increment = shift;
-    my $status = shift if (@_);
+    my $increment = shift || 1;
+    my $status = shift;
 
     return if ($self->{_complete});
 
-    $self->{_status} = " " . $status if (defined $status);
-
     my ($time, $timePerEvent, $timeLeft, $done,
         $blocks, $spaces, $percentage, $color);
-    #$time = time();
+    $self->{_status} = " " . $status if (defined $status);
     $self->{_residual} -= $increment;
     $done = $self->{max} - $self->{_residual};
-    #$timePerEvent = $done ? ($time - $self->{_time}) / $done : 0;
-    #$timeLeft = $self->{_residual} * $timePerEvent;
+
+    return if (int($done / $self->{_updateN}) <= int(($done - $increment) / $self->{_updateN}));
+
+    $time = time();
+    $timePerEvent = $done ? ($time - $self->{_time}) / $done : 0;
+    $timeLeft = $self->{_residual} * $timePerEvent;
     $percentage = min(100, $done / $self->{max} * 100);
     $blocks = round(min($self->{width}, $done / $self->{max} * $self->{width}));
     $spaces = " " x ($self->{width} - round($blocks));
@@ -87,14 +97,14 @@ sub update {
     }
     else { $color = WHITE; }
 
-    print CLRRET . "|" . $color . $blocks . RESET . $spaces . "|" . $self->{_status} . " (Done: " . $color . sprintf("%.2f", $percentage) . "\%" . RESET . ")"; #\%; ETC: " . formatTime($timeLeft) . ")";
+    print CLRRET . "|" . $color . $blocks . RESET . $spaces . "|" . $self->{_status} . " (Done: " . $color . sprintf("%.2f", $percentage) . "\%" . RESET . ($self->{showETA} ? "; ETA: " . formatTime($timeLeft) . ")" : ")");
 
 }
 
 sub complete {
 
     my $self = shift;
-    my $status = shift if (@_);
+    my $status = shift;
 
     return if ($self->{_complete});
 
@@ -102,14 +112,23 @@ sub complete {
     $self->{_status} = " " . $status if (defined $status);
     $self->{_complete} = 1;
 
-    print CLRRET . "|" . $color . (Term::Constants::BLOCK x $self->{width}) . RESET . "|" . $self->{_status} . " (Done: " . $color . "100.00\%" . RESET . ")"; #; ETC: 0s)";
+    print CLRRET . "|" . $color . (Term::Constants::BLOCK x $self->{width}) . RESET . "|" . $self->{_status} . " (Done: " . $color . "100.00\%" . RESET . ($self->{showETA} ? "; ETA: 0s)" : ")");
+
+}
+
+sub appendText {
+
+    my $self = shift;
+    my $text = shift;
+
+    print "  " . $text if (defined $text);
 
 }
 
 sub max {
 
     my $self = shift;
-    my $max = shift if (@_);
+    my $max = shift;
 
     if ($max) {
 
@@ -117,6 +136,7 @@ sub max {
 
         $self->{max} = $max;
         $self->{_residual} = $max;
+        $self->{_updateN} = Core::Mathematics::max(1, int($self->{updateRate} * $self->{max}));
 
     }
 

@@ -4,13 +4,14 @@ use strict;
 use Core::Utils;
 use Storable qw(store retrieve);
 use POSIX;
+use Time::HiRes qw(time);
 
 use base qw(Core::Base);
 
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ tmpDir       => "/tmp",
@@ -24,7 +25,6 @@ sub new {
                    _exitcode    => undef,
                    _tmpDataFile => undef }, \%parameters);
 
-    $self->{id} = $self->{_tmpId} if (!defined $self->{id});
     $self->_validate();
 
     return($self);
@@ -40,17 +40,38 @@ sub _validate {
     $self->throw("Provided temporary directory does not exist") if (!-d $self->{tmpDir});
 
     $self->{tmpDir} =~ s/\/?$/\//;
-    $self->{_tmpDataFile} = $self->{tmpDir} . $self->{_tmpId};
 
-    my $i = 0;
+}
+
+sub _getUniqueTmpId {
+
+    my $self = shift;
+
+    my ($tmpDataFile);
+
+    while(!defined $self->{_tmpDataFile}) {
+
+        $tmpDataFile = $self->{tmpDir} . "." . $self->{_tmpId} . "." . time();
+
+        if (glob("$tmpDataFile*")) { $self->{_tmpId} = randalphanum(0xf); }
+        else { 
+            
+            $self->{_tmpDataFile} = $tmpDataFile; 
+            $self->{id} = $self->{_tmpId} if (!defined $self->{id});
+
+        }
+
+    }
 
 }
 
 sub start {
 
     my $self  = shift;
-    my $command = shift if (@_);
-    my @parameters = @_ if (@_);
+    my $command = shift;
+    my @parameters = @_;
+
+    $self->_getUniqueTmpId();
 
     if (defined $command) {
 
@@ -69,7 +90,7 @@ sub start {
             if ($self->{stdout} &&
                 $self->{stdout} !~ m/^STDOUT$/i) {
 
-                open(STDOUT, ">", $self->{stdout}) or $self->throw("Unable to tee STDOUT to \"" . $self->{stdout} . "\" (" . $! . ")");
+                open(STDOUT, ">>", $self->{stdout}) or $self->throw("Unable to tee STDOUT to \"" . $self->{stdout} . "\" (" . $! . ")");
                 select((select(STDOUT), $|=1)[0]);
 
             }
@@ -77,7 +98,7 @@ sub start {
             if ($self->{stderr} &&
                 $self->{stderr} !~ m/^STDERR$/i) {
 
-                open(STDERR, ">", $self->{stderr}) or $self->throw("Unable to tee STDERR to \"" . $self->{stderr} . "\" (" . $! . ")");
+                open(STDERR, ">>", $self->{stderr}) or $self->throw("Unable to tee STDERR to \"" . $self->{stderr} . "\" (" . $! . ")");
                 select((select(STDERR), $|=1)[0]);
 
             }
@@ -87,7 +108,7 @@ sub start {
             if (ref($command) eq "CODE") { $exitcode = [ $command->(@parameters) ]; }
             else { $exitcode = [ system($command, @parameters) ]; }
 
-            $self->{_tmpDataFile} .= "_" . $$ . ".tmp";
+            $self->{_tmpDataFile} .= "." . $$ . ".tmp";
             store($exitcode, $self->{_tmpDataFile});
 
             $self->{onexit}->($self->{id}, $$, $exitcode) if (defined $self->{onexit});
@@ -95,7 +116,7 @@ sub start {
             exit(0);
 
         }
-        else { $self->{_tmpDataFile} .= "_" . $self->{_pid} . ".tmp"; }
+        else { $self->{_tmpDataFile} .= "." . $self->{_pid} . ".tmp"; }
 
     }
 
@@ -105,7 +126,7 @@ sub tee {
 
     my $self = shift;
 
-    ($self->{stdout}, $self->{stderr}) = @_ if (@_);
+    ($self->{stdout}, $self->{stderr}) = @_;
 
 }
 
@@ -125,7 +146,7 @@ sub _retrieveReturnData {
         unlink($self->{_tmpDataFile});
 
     }
-    else { $self->{_exitcode} = [ "Unable to open child process temporary data file \"" . $self->{_tmpDataFile} . "\"" ]; }
+    elsif (!defined $self->{_exitcode}) { $self->{_exitcode} = [ "Unable to open child process temporary data file \"" . $self->{_tmpDataFile} . "\"" ]; }
 
 }
 
@@ -146,7 +167,7 @@ sub wait {
 sub onstart {
 
     my $self = shift;
-    my $code = shift if (@_);
+    my $code = shift;
 
     if (defined $code) {
 
@@ -161,7 +182,7 @@ sub onstart {
 sub onexit {
 
     my $self = shift;
-    my $code = shift if (@_);
+    my $code = shift;
 
     if (defined $code) {
 

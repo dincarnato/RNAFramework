@@ -495,7 +495,7 @@ sub gamnln {
 sub choose {
 
     my $total = shift;
-    my $choose = shift if (@_);
+    my $choose = shift;
 
     return(1) if (!$choose ||
                   $total == $choose);
@@ -854,7 +854,7 @@ sub pnorm {
     # http://rangevoting.org/NHack.html
 
     my $z = shift;
-    my $lowertail = shift if (@_);
+    my $lowertail = shift;
 
     my ($ltone, $utzero, $con, $alnorm,
         @a, @b);

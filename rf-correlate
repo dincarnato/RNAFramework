@@ -179,7 +179,7 @@ $_->join() for(@pool);
 
 if ($singlefile && !$isRC) {
 
-    if (my $id = $results[0]->[0]) { print "\n[+] Correlation: " . sprintf("%.3f", $results[0]->[1]) . " (p-value: " .  sprintf("%.2e", $results[0]->[2]) . ")"; }
+    if (@results) { print "\n[+] Correlation: " . sprintf("%.3f", $results[0]->[1]) . " (p-value: " .  sprintf("%.2e", $results[0]->[2]) . ")"; }
     else { print "\n\n  [!] Error: Correlation calculation failed"; }
 
 }

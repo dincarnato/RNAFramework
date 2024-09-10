@@ -4,13 +4,14 @@ use strict;
 use Core::Mathematics;
 use Core::Process;
 use Core::Utils;
+use List::Util;
 
 use base qw(Core::Base);
 
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ stdout       => undef,
@@ -50,7 +51,7 @@ sub _validate {
 sub enqueue {
 
     my $self = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     $self->throw("Enqueuing requires a command") if (!exists $parameters{command});
     $self->throw("Command arguments must be an ARRAY reference") if (exists $parameters{arguments} &&
@@ -88,8 +89,9 @@ sub start {
 
                 my $pid = wait();
                 $self->{_children}--;
-                $self->{parentOnExit}->();
                 $self->{_done}->{$pid} = 1;
+		        $self->{_processes}->{$pid}->wait();
+                $self->{parentOnExit}->($self->{_processes}->{$pid}->id(), $pid);
 
             }
 
@@ -120,7 +122,13 @@ sub waitall {
         for (values %{$self->{_processes}}) {
 
             $_->wait();
-            $self->{parentOnExit}->() if (!exists $self->{_done}->{$_->pid()});
+            
+            if (!exists $self->{_done}->{$_->pid()}) {
+
+                $self->{_done}->{$_->pid()} = 1;
+                $self->{parentOnExit}->($_->id(), $_->pid());
+
+            }
 
         }
 
@@ -130,17 +138,104 @@ sub waitall {
 
 }
 
+sub killById {
+
+    my $self = shift;
+    my @ids = @_;
+
+    if (@ids) {
+
+        my %ids = map { $_ => 1 } @ids;
+
+        $self->{_processes}->{$_}->kill() for (grep { exists $ids{$self->{_processes}->{$_}->id()} } keys %{$self->{_processes}});
+
+    }
+
+}
+
+sub shuffleQueue {
+
+    my $self = shift;
+    my @q = @{$self->{_queue}};
+
+    @q = List::Util::shuffle(@q);
+    $self->{_queue} = \@q;
+
+}
+
+sub listQueue {
+
+    my $self = shift;
+    my @ids = @_;
+
+    my (@queue);
+
+    if (@ids) {
+
+        my %ids = map { $_ => 1 } @ids;
+        for (0 .. $#{$self->{_queue}}) { push(@queue, $self->{_queue}->[$_]) if (exists $ids{$self->{_queue}->[$_]->{id}}); }
+
+    }
+    else { @queue = @{$self->{_queue}}; }
+
+    return(@queue);
+
+}
+
+sub deleteQueue {
+
+    my $self = shift;
+    my @ids = @_;
+
+    if (@ids) {
+
+        my %ids = map { $_ => 1 } @ids;
+
+        for (my $i = 0; $i < @{$self->{_queue}}; $i++) {
+
+            if (exists $ids{$self->{_queue}->[$i]->{id}}) {
+
+                splice(@{$self->{_queue}}, $i, 1);
+                $i--;
+
+            }
+
+        }
+
+    }
+    else { $self->{_queue} = []; }
+
+}
+
+sub queueSize { return(scalar(@{$_[0]->{_queue}})); }
+
 sub dequeue {
 
     my $self = shift;
+    my $pid = shift;
 
-    if (values %{$self->{_processes}}) {
+    if (defined $pid) {
 
-        my ($process, $pid);
-        $pid = (keys %{$self->{_processes}})[0];
-        $process = $self->{_processes}->{$pid};
+        $self->throw("Invalid PID $pid") if (!exists $self->{_processes}->{$pid});
+        
+        if (!exists $self->{_done}->{$pid}) {
 
-        delete($self->{_processes}->{$pid});
+            $self->warn("Process $pid is still running");
+            
+            return();
+
+        }
+
+    }
+
+    if (keys %{$self->{_done}}) {
+
+        my ($p, $process);
+        $p = $pid // (keys %{$self->{_done}})[0];
+        $process = $self->{_processes}->{$p};
+
+        delete($self->{_processes}->{$p});
+        delete($self->{_done}->{$p});
 
         return($process);
 
@@ -151,7 +246,7 @@ sub dequeue {
 sub onstart {
 
     my $self = shift;
-    my $code = shift if (@_);
+    my $code = shift;
 
     if (defined $code) {
 
@@ -166,7 +261,7 @@ sub onstart {
 sub onexit {
 
     my $self = shift;
-    my $code = shift if (@_);
+    my $code = shift;
 
     if (defined $code) {
 
@@ -178,18 +273,25 @@ sub onexit {
 
 }
 
-sub tee {
+sub parentOnExit {
 
     my $self = shift;
+    my $code = shift;
 
-    ($self->{stdout}, $self->{stderr}) = @_ if (@_);
+    if (defined $code) {
+
+        $self->throw("parentOnExit parameter value must be a CODE reference") if (ref($code) ne "CODE");
+
+        $self->{parentOnExit} = $code;
+
+    }
 
 }
 
 sub processors {
 
     my $self = shift;
-    my $processors = shift if (@_);
+    my $processors = shift;
 
     $self->throw("Number of processors must be an integer >= 1") if (defined $processors &&
                                                                      (!isint($processors) ||
@@ -202,3 +304,4 @@ sub processors {
 }
 
 1;
+

@@ -10,7 +10,7 @@ use base qw(Data::XML);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ width       => 2480,
@@ -46,7 +46,7 @@ sub _validate {
 sub addobject {
     
     my $self = shift;
-    my $object = shift if (@_);
+    my $object = shift;
     my $spacing = shift // $self->{spacing};
  
     $self->throw("Vertical spacing must be >= 0") if (!ispositive($spacing));
@@ -69,7 +69,7 @@ sub addobject {
 sub addobjects {
     
     my $self = shift;
-    my @objects = @_ if (@_);
+    my @objects = @_;
     
     for(my $i=0; $i < @objects; $i++) {
         

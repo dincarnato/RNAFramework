@@ -25,7 +25,7 @@ use base qw(Core::Base);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
     
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ id          => undef,
@@ -105,7 +105,7 @@ sub _fixproperties {
 sub id {
     
     my $self = shift;
-    my $id = shift if (@_);
+    my $id = shift;
     
     $self->{id} = $id if (defined $id);
     
@@ -116,7 +116,7 @@ sub id {
 sub name {
     
     my $self = shift;
-    my $name = shift if (@_);
+    my $name = shift;
     
     $self->{name} = $name if (defined $name);
     
@@ -127,7 +127,7 @@ sub name {
 sub sequence {
     
     my $self = shift;
-    my $sequence = shift if (@_);
+    my $sequence = shift;
     
     if (isseq($sequence, "-")) {
     
@@ -143,7 +143,7 @@ sub sequence {
 sub accession {
     
     my $self = shift;
-    my $accession = shift if (@_);
+    my $accession = shift;
     
     $self->{accession} = $accession if (defined $accession);
     
@@ -154,7 +154,7 @@ sub accession {
 sub gi {
     
     my $self = shift;
-    my $gi = shift if (@_);
+    my $gi = shift;
     
     $self->{gi} = $gi if (defined $gi);
     
@@ -165,7 +165,7 @@ sub gi {
 sub gb {
     
     my $self = shift;
-    my $gb = shift if (@_);
+    my $gb = shift;
     
     $self->{gb} = $gb if (defined $gb);
     
@@ -176,7 +176,7 @@ sub gb {
 sub start {
     
     my $self = shift;
-    my $start = shift if (@_);
+    my $start = shift;
     
     $self->{start} = $start if (isreal($start));
     
@@ -187,7 +187,7 @@ sub start {
 sub end {
     
     my $self = shift;
-    my $end = shift if (@_);
+    my $end = shift;
     
     $self->{end} = $end if (isreal($end));
     
@@ -198,7 +198,7 @@ sub end {
 sub version {
     
     my $self = shift;
-    my $version = shift if (@_);
+    my $version = shift;
     
     $self->{version} = $version if (defined $version);
     
@@ -209,7 +209,7 @@ sub version {
 sub locus {
     
     my $self = shift;
-    my $locus = shift if (@_);
+    my $locus = shift;
     
     $self->{locus} = $locus if (defined $locus);
     
@@ -220,7 +220,7 @@ sub locus {
 sub orientation {
     
     my $self = shift;
-    my $orientation = shift if (@_);
+    my $orientation = shift;
     
     if ($orientation =~ m/^[53NC]$/) {
         
@@ -236,7 +236,7 @@ sub orientation {
 sub description {
     
     my $self = shift;
-    my $description = shift if (@_);
+    my $description = shift;
     
     $self->{description} = $description if (defined $description);
     
@@ -247,7 +247,7 @@ sub description {
 sub type {
     
     my $self = shift;
-    my $type = shift if (@_);
+    my $type = shift;
     
     if ($type =~ m/^([DR]NA|AA)$/i) {
     
@@ -263,7 +263,7 @@ sub type {
 sub circular {
     
     my $self = shift;
-    my $circular = shift if (@_);
+    my $circular = shift;
     
     $self->{circular} = $circular if ($circular =~ m/^[01]$/);
     

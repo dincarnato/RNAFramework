@@ -15,7 +15,7 @@ use constant MINDIST => 1e308;
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ data          => [],
@@ -203,7 +203,7 @@ sub cluster {
 sub _kmeans {
 
     my $self = shift;
-    my $centroids = shift if (@_);
+    my $centroids = shift;
     my $data = shift || $self->{data};
 
     $self->{_iterations}++;

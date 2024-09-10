@@ -23,7 +23,7 @@ use Core::Utils;
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = {};
 
@@ -38,7 +38,7 @@ sub new {
 sub _init {
 
     my $self = shift;
-    my ($default, $provided) = @_ if (@_);
+    my ($default, $provided) = @_;
 
     if (my $parameters = checkparameters($default, $provided)) {
 
@@ -53,7 +53,7 @@ sub _init {
 sub loadPackage {
 
     my $self = shift;
-    my $package = shift if (@_);
+    my $package = shift;
 
     $self->throw("No package specified") if (!defined $package);
 
@@ -64,7 +64,8 @@ sub loadPackage {
 
     return(1) if (exists $INC{$module});
 
-    my $eval = do { local $@;
+    my $eval = do { local $SIG{__DIE__} = sub {};
+                    local $@;
                     eval { require $module; };
                     $@; };
 
@@ -89,7 +90,7 @@ sub clone {
 sub verbosity {
 
     my $self = shift;
-    my $verbosity = shift if (@_);
+    my $verbosity = shift;
 
     if (defined $verbosity) {
 
@@ -110,7 +111,7 @@ sub verbosity {
 sub warn {
 
     my $self = shift;
-    my $message = shift if (@_);
+    my $message = shift;
 
     return if ($self->{verbosity} < 0);
 
@@ -121,7 +122,7 @@ sub warn {
 sub throw {
 
     my $self = shift;
-    my $message = shift if (@_);
+    my $message = shift;
 
     Core::Utils::throw($message, $self->{verbosity});
 
@@ -141,7 +142,7 @@ use base qw(Core::Base);
 sub new {
 
   my $class = shift;
-  my %parameters = @_ if (@_);
+  my %parameters = @_;
 
   my $self = $class->SUPER::new(%parameters);
   $self->_init({ parameter1 => undef,

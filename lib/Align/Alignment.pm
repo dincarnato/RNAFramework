@@ -10,7 +10,7 @@ use base qw(Core::Base);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ reference  => undef,
@@ -29,7 +29,7 @@ sub new {
 sub reference {
 
     my $self = shift;
-    my $reference = shift if (@_);
+    my $reference = shift;
 
     $self->{reference} = uc($reference) if (isseq($reference, "-"));
 
@@ -40,7 +40,7 @@ sub reference {
 sub query {
 
     my $self = shift;
-    my $query = shift if (@_);
+    my $query = shift;
 
     $self->{query} = uc($query) if (isseq($query, "-"));
 
@@ -51,7 +51,7 @@ sub query {
 sub alignment {
 
     my $self = shift;
-    my $alignment = shift if (@_);
+    my $alignment = shift;
 
     $self->{alignment} = uc($alignment) if (isseq($alignment, "-"));
 
@@ -62,7 +62,7 @@ sub alignment {
 sub score {
 
     my $self = shift;
-    my $score = shift if (@_);
+    my $score = shift;
 
     $self->{score} = $score if (isnumeric($score));
 

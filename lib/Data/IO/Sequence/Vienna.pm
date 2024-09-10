@@ -29,7 +29,7 @@ use base qw(Data::IO::Sequence);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ pseudoknots  => 0,
@@ -55,7 +55,7 @@ sub _validate {
 sub read {
 
     my $self = shift;
-    my $tsid = shift if (@_);
+    my $tsid = shift;
 
     my ($fh, $stream, $header, $id,
         $description, $gi, $accession, $version,
@@ -207,7 +207,7 @@ sub read {
 sub write {
 
     my $self = shift;
-    my @sequences = @_ if (@_);
+    my @sequences = @_;
 
     $self->throw("Filehandle isn't in write/append mode") unless ($self->mode() =~ m/^w\+?$/);
 

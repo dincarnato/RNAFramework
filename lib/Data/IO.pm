@@ -1,7 +1,7 @@
 package Data::IO;
 
 use strict;
-use Fcntl qw(SEEK_END SEEK_SET);
+use Fcntl qw(:flock SEEK_END SEEK_SET);
 use HTTP::Tiny;
 use Core::Mathematics;
 use Core::Utils;
@@ -11,7 +11,7 @@ use base qw(Core::Base);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ file       => undef,
@@ -31,7 +31,12 @@ sub new {
     $self->flush($self->{flush});
 
     # Open filehandle if creating a generic object
-    $self->_openfh() if ($class =~ m/^Data::IO$/);
+    if ($class eq "Data::IO") {
+
+        $self->_validate();
+        $self->_openfh();
+
+    }
 
     return($self);
 
@@ -188,7 +193,7 @@ sub read {
 sub write {
 
     my $self = shift;
-    my $string = shift if (@_);
+    my $string = shift;
 
     $self->throw("Unable to write on a read-only filehandle") if ($self->{mode} eq "r");
 
@@ -230,7 +235,7 @@ sub mode {
 sub binmode {
 
     my $self = shift;
-    my $binmode = shift if (@_);
+    my $binmode = shift;
 
     if ($binmode) {
 
@@ -264,7 +269,7 @@ sub file {
 sub flush {
 
     my $self = shift;
-    my $flush = shift if (@_);
+    my $flush = shift;
 
     $self->{flush} = $flush if ($flush =~ m/^[01]$/);
 
@@ -290,6 +295,23 @@ sub seek {
     $self->throw("Offset must be a positive INT") if (!ispositive($offset) || !isint($offset));
 
     return(seek($self->{_fh}, $offset, SEEK_SET)) if (fileno($self->{_fh}));
+
+}
+
+sub lock {
+
+    my $self = shift;
+
+    flock($self->{_fh}, LOCK_EX) or $self->throw("Cannot lock filehandle (" . $! . ")");
+    seek($self->{_fh}, 0, SEEK_END) or $self->throw("Cannot seek filehandle (" . $! . ")");
+
+}
+
+sub unlock {
+
+    my $self = shift;
+
+    flock($self->{_fh}, LOCK_UN) or $self->throw("Cannot unlock filehandle (" . $! . ")");
 
 }
 
@@ -327,15 +349,6 @@ sub close {
 
 }
 
-sub DESTROY {
-
-    my $self = shift;
-
-    delete($self->{file});
-    delete($self->{data});
-
-    $self->close();
-
-}
+sub DESTROY { $_[0]->Data::IO::close(); }
 
 1;

@@ -28,14 +28,14 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.8.8";
+$VERSION = "2.8.9";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
              mktree ncores blessed unbless shareDataStruct
-	     formatTime isGzipped);
+	         formatTime isGzipped);
 
 BEGIN {
 
@@ -74,7 +74,7 @@ sub warn {
 sub _exception {
 
     my $message = shift;
-    my ($verbosity, $mode) = @_ if (@_);
+    my ($verbosity, $mode) = @_;
 
     $message = "Undefined error" . ($verbosity == 1 ? "." : ". Increase verbosity level to 1 to get the complete stack trace-dump.") if (!defined $message);
     $message =~ s/(\n+?)/$1    /;
@@ -312,7 +312,7 @@ sub which {
 sub _randstring {
 
     my $type = shift;
-    my $length = shift if (@_);
+    my $length = shift;
 
     $length =~ s/[^\d]//g;
     $length ||= 1;
@@ -479,7 +479,7 @@ sub shareDataStruct {
 sub formatTime {
 
     my $time = shift;
-    my $extended = shift if (@_);
+    my $extended = shift;
 
     my ($i, @conv, @form);
     @conv = ( [ "second", 1                ],

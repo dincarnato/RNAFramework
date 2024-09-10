@@ -21,7 +21,7 @@ our (%scoremethods, %normmethods);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     if (exists $parameters{file} &&
         -e $parameters{file}) {

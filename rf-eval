@@ -35,12 +35,20 @@ $|++;
 
 my ($help, $output, $overwrite, $reactCutoff, 
     $structs, $reacts, $termAsUnpaired, $ignoreTerminal,
-    $keepLonelyPairs, $keepPseudoknots, $threads, @pool, %structs);
+    $keepLonelyPairs, $keepPseudoknots, $threads, 
+    $failed, @pool, %structs);
 
 my $progressBar : shared;
+my @overallCoeff : shared;
+my @overallAuc : shared;
+my @overallDsci : shared;
 my @ids : shared;
 my @metrics : shared;
 my %results : shared;
+
+%results = ( diffLen  => 0,
+             parseErr => 0,
+             success  => 0 );
 
 do {
 
@@ -152,13 +160,11 @@ if (-d $reacts) { # Directory of structure files
     print CLRRET . "[+] Importing XML file(s) [$imported imported]";
 
 }
-else { # Single structure file
+else { # Single reactivity file
 
-    die "\n\n  [!] Error: Provided file lacks .xml extension\n\n" if ($structs !~ m/\.xml$/);
+    die "\n\n  [!] Error: Provided file lacks .xml extension\n\n" if ($reacts !~ m/\.xml$/);
 
-    my $id = $reacts;
-    $id =~ s/\.xml$//;
-
+    my $id = (fileparse($reacts, ".xml"))[0];
     $structs{$id}->{reactFile} = $reacts if (exists $structs{$id});
 
     print CLRRET . "[+] Importing XML file(s) [1 imported]";
@@ -172,22 +178,43 @@ for (keys %structs) { delete($structs{$_}) if (!exists $structs{$_}->{reactFile}
 if (@ids) { print "\n[+] " . scalar(@ids) . " structures with matched reactivity file\n\n"; }
 else { die "\n\n  [!] Error: No matching structure-XML pair\n\n"; }
 
-$progressBar = shared_clone(Term::Progress->new( max   => scalar(@ids),
-                                                 width => 50 ));
-$progressBar->init("");
+$progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
+                                                 width   => 50,
+                                                 colored => 1 ));
+$progressBar->init();
 
 @pool = map{ threads->create(\&metrics) } 1 .. $threads;
 $_->join() for (@pool);
 
-print "\n\n[+] Writing metrics to file...";
+$failed = $results{diffLen} + $results{parseErr};
+print "\n\n[i] Successfully evaluated " . $results{success} . " structure(s)";
+print ", failed $failed (XML parsing failed: " . $results{parseErr} . "; Different length: " . $results{diffLen} . ")" if ($failed); 
 
-open(my $fh, ">", $output) or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
-select((select($fh), $|=1)[0]);
-print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
-print $fh join("\t", @$_) . "\n" for (sort { $a->[0] cmp $b->[0] } @metrics);
-close($fh);
+if ($results{success}) {
 
-print "\n[+] All done.\n\n";
+    my ($coeffUnpaired, $dsci, $auc);
+    $coeffUnpaired = $overallCoeff[0] / $overallCoeff[1];
+    $dsci = $overallDsci[0] / $overallDsci[1];
+    $auc = _auc(@overallAuc);
+
+    print "\n[i] Overall metrics:\n" .
+            "\n  [*] Coefficient unpaired: " . sprintf("%.3f", $coeffUnpaired) .
+            "\n  [*] DSCI:                 " . sprintf("%.3f", $dsci) .
+            "\n  [*] AUC:                  " . sprintf("%.3f", $auc) . "\n";
+
+    print "\n[+] Writing metrics to file...";
+
+    open(my $fh, ">", $output) or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
+    select((select($fh), $|=1)[0]);
+    print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
+    print $fh join("\t", @$_) . "\n" for (sort { $a->[0] cmp $b->[0] } @metrics);
+    print $fh join("\t", "Overall", $coeffUnpaired, $dsci, $auc) . "\n";
+    close($fh);
+
+    print "\n[+] All done.\n\n";
+
+}
+else { die "\n\n  [!] Error: Evaluation failed for all structures\n\n"; }
 
 sub metrics {
 
@@ -231,7 +258,8 @@ sub metrics {
 
         { lock(@metrics);
           push(@metrics, shared_clone([$id, $coeffUnpaired, $dsci, $auc])); 
-          $progressBar->update(1); }
+          $progressBar->update(1);
+          $results{success}++; }
 
     }
 
@@ -251,6 +279,10 @@ sub coeffUnpaired {
     $ss = scalar(grep { $reactivity->[$_] >= $reactCutoff } @unpaired);
     $coeff = $ss / $total;
 
+    { lock(@overallCoeff);
+      $overallCoeff[0] += $ss;
+      $overallCoeff[1] += $total; }
+
     return($coeff);
 
 }
@@ -259,7 +291,7 @@ sub dsci {
 
     my ($dotbracket, $reactivity) = @_;
 
-    my ($dsci, $paired, $unpaired);
+    my ($dsci, $paired, $unpaired, $total);
     ($unpaired, $paired) = getBaseIndexes($dotbracket);
     @$paired = grep { isnumeric($reactivity->[$_]) } @$paired;
     @$unpaired = grep { isnumeric($reactivity->[$_]) } @$unpaired;
@@ -276,7 +308,13 @@ sub dsci {
 
     }
 
-    return($dsci / (scalar(@$paired) * scalar(@$unpaired)));
+    $total = scalar(@$paired) * scalar(@$unpaired);
+
+    { lock(@overallDsci);
+      $overallDsci[0] += $dsci; 
+      $overallDsci[1] += $total; }
+
+    return($dsci / $total);
 
 }
 
@@ -299,17 +337,39 @@ sub roc {
         $tp = scalar(grep { $reactivity->[$_] >= $cutoff } @$unpaired);
         $fp = scalar(grep { $reactivity->[$_] >= $cutoff } @$paired);
 
-        push(@tp, $tp / @$unpaired);
-        push(@fp, $fp / @$paired);
+        push(@tp, $tp);
+        push(@fp, $fp);
 
     }
 
-    for(my $i = 0; $i < $#tp; $i++) {
+    { lock(@overallAuc);
+
+      if (!@overallAuc) { @overallAuc = (shared_clone(\@tp), shared_clone(\@fp), scalar(@$unpaired), scalar(@$paired)); }
+      else {
+
+          @{$overallAuc[0]} = map { $overallAuc[0]->[$_] + $tp[$_] } 0 .. $#tp;
+          @{$overallAuc[1]} = map { $overallAuc[1]->[$_] + $fp[$_] } 0 .. $#fp;
+          $overallAuc[2] += @$unpaired;
+          $overallAuc[3] += @$paired;
+
+      } }
+
+    return(_auc(\@tp, \@fp, scalar(@$unpaired), scalar(@$paired)));
+
+}
+
+sub _auc {
+
+    my ($tp, $fp, $nUnpaired, $nPaired) = @_;
+
+    my ($auc);
+
+    for (my $i = 0; $i < $#{$tp}; $i++) {
 
         my ($b1, $b2, $h);
-        $b1 = $tp[$i];
-        $b2 = $tp[$i+1];
-        $h = $fp[$i] - $fp[$i+1];
+        $b1 = $tp->[$i] / $nUnpaired;
+        $b2 = $tp->[$i+1] / $nUnpaired;
+        $h = $fp->[$i] / $nPaired - $fp->[$i+1] / $nPaired;
         $auc += ($b1 + $b2) * $h / 2;
 
     }

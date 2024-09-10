@@ -97,15 +97,25 @@ if ($command eq "index") {
 }
 elsif ($command =~ m/^view|stats$/) {
 
-    my $rcin = RF::Data::IO::RC->new( file          => $rc[0],
-                                      noPreloadIndex => $rc[1] ? 0 : 1,
-                                      index          => $index );
+    my ($file, $rcin);
+    $file = shift(@rc);
+    $rcin = RF::Data::IO::RC->new( file           => $file,
+                                   noPreloadIndex => @rc ? 0 : 1,
+                                   index          => $index );
 
-    if ($rc[1]) {
+    if (@rc) {
 
-        for (split(/[;,]/, $rc[1])) {
+        foreach my $region (@rc) {
 
-            my $entry = $rcin->read($_);
+            my ($length, @region, @coords);
+            @region = split(/:/, $region);
+            @coords = $command eq "stats" ? (0, 1) : split(/-/, $region[1]);
+            $length = $rcin->length($region[0]);
+
+            die "\n  [!] Error: Invalid sequence ID or target region \"$region\"\n\n" if (@region > 2 || @coords > 2 || !defined $length ||
+                                                                                          (@coords && (!isint(@coords) || !ispositive(@coords) || $coords[1] < $coords[0] || $coords[1] >= $length)));
+
+            my $entry = @coords ? $rcin->readBytewise($region[0], \@coords) : $rcin->read($region);
 
             if ($command eq "view") { formatentry($entry); }
             else { print $entry->id() . "\t" . $entry->readscount() . "\n"; }

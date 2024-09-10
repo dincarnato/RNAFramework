@@ -1,3 +1,25 @@
+## [2.8.9] - 2024-09-10
+### Added
+- Added multithread support to rf-count to speed up the analysis by processing multiple transcripts in parallel. Added the -P parameter to visualize progress per file, and the -ncl (--no-cov-low-qual) to prevent low coverage bases from being counted towards total coverage in -m mode
+- Added the -bs (--block-size) parameter to rf-count-genome to define the maximum size of the genome segment to be kept in memory
+- Added support to rf-rctools "view" to visualize specific regions of large chromosomes/transcripts (e.g., rf-rctools view chr1:1000-2000)
+- Added multithread support to rf-wiggle
+- Added the -mc (--min-cov) and -z (--report-zeroes) parameters to rf-wiggle to define, respectively, the minimum coverage of bases to be reported in the WIG files (when processing RC files) and whether bases with a value of 0 should be reported as well
+
+### Changed
+- Removed -r (--sorted), -fh (--from-header), -t (--tmp-dir) parameters from rf-count
+- Fixed a minor issue in rf-eval causing an exception to be thrown with single structure files
+- Fixed a minor issue in rf-fold causing no exception to be thrown in case one of the programs was not found in PATH
+
+### API changes
+- Replaced in all modules the "shift if (@_)" assignment with "shift"
+- Replaced writing to STDOUT and STDERR in Core::Process with append to enable multiple processes in a process queue to write to the same files without overwriting them
+- Added the killById(), shuffleQueue(), listQueue(), deleteQueue() and queueSize() methods to Core::Process::Queue
+- Added the lock() and unlock() methods to Data::IO to lock filehandles when multiple processes write to the same file
+- Added the "appendable" parameter to RF::Data::IO::MM to prevent an MM file from being closed (by adding the EOF marker) and allowing multiple partial MM files to be easily concatenated
+- Added the "showETA" and "updateRate" parameters, and the appendText() method to Term::Progress
+- Added the Term::Progress::Multiple module to handle multiple progress bars
+
 ## [2.8.8] - 2024-05-20
 ### Added
 - Added handling of the "rc:" prefix to rf-count mask files to reverse complement sequences to mask

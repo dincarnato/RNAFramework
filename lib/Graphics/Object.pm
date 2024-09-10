@@ -10,7 +10,7 @@ use base qw(Data::XML);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
     
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ height    => 100,
@@ -46,7 +46,7 @@ sub _validate {
 sub _width {
     
     my $self = shift;
-    my $width = shift if (@_);
+    my $width = shift;
     
     $self->throw("Method can be called only by a Graphics::Container object") unless((caller())[0] eq "Graphics::Container");
     
@@ -67,7 +67,7 @@ sub _width {
 sub _height {
     
     my $self = shift;
-    my $height = shift if (@_);
+    my $height = shift;
     
     $self->throw("Method can be called only by a Graphics::Container object") unless((caller())[0] eq "Graphics::Container");
     
@@ -87,7 +87,7 @@ sub _height {
 sub _starty {
     
     my $self = shift;
-    my $y = shift if (@_);
+    my $y = shift;
     
     $self->throw("Method can be called only by a Graphics::Container object") unless((caller())[0] eq "Graphics::Container");
     
@@ -106,7 +106,7 @@ sub _starty {
 sub _xpadding {
     
     my $self = shift;
-    my $padding = shift if (@_);
+    my $padding = shift;
     
     $self->throw("Method can be called only by a Graphics::Container object") unless((caller())[0] eq "Graphics::Container");
     
@@ -125,7 +125,7 @@ sub _xpadding {
 sub _textwidth {
 
     my $self = shift;
-    my $text = shift if (@_);
+    my $text = shift;
     my $fontsize = shift || $self->{fontsize};
     
     # WX calculated using Font::AFM library and Helvetica.afm file (/usr/lib/afm/Helvetica.afm)

@@ -194,18 +194,21 @@ $zukersubopt ||= 1000;
 $pkmethod ||= 1;
 $pkpercentmfe ||= 0.5;
 $suboptDeltaEnergy ||= 1;
-$viennarna = File::Spec->rel2abs($viennarna || which("RNAfold"));
-$rnasubopt = File::Spec->rel2abs($rnasubopt || which("RNAsubopt"));
-$rnastructure = File::Spec->rel2abs($rnastructure || which("Fold-smp") || which("Fold"));
-$shapeknots = File::Spec->rel2abs($shapeknots || which("ShapeKnots-smp") || which("ShapeKnots"));
-$partition = File::Spec->rel2abs($partition || which("partition-smp") || which("partition"));
-$probplot = File::Spec->rel2abs($probplot || which("ProbabilityPlot"));
+$viennarna = $viennarna || which("RNAfold");
+$rnasubopt = $rnasubopt || which("RNAsubopt");
+$rnastructure = $rnastructure || which("Fold-smp") || which("Fold");
+$shapeknots = $shapeknots || which("ShapeKnots-smp") || which("ShapeKnots");
+$partition = $partition || which("partition-smp") || which("partition");
+$probplot = $probplot || which("ProbabilityPlot");
 $data ||= $ENV{DATAPATH};
 $installed = eval { require RNA; 1; };
 
 $output =~ s/\/?$/\//;
 $tmpdir =~ s/\/?$/\//;
 $constraintDir =~ s/\/?$/\// if (defined $constraintDir);
+
+for ($viennarna, $rnasubopt, $rnastructure, 
+     $shapeknots, $partition, $probplot) { $_ = File::Spec->rel2abs($_) if (defined $_); }
 
 ##
 # Input validation

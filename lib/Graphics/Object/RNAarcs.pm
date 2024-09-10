@@ -10,7 +10,7 @@ use base qw(Graphics::Object);
 sub new {
     
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
     
     $parameters{stroke} = [$parameters{stroke}] if (ref($parameters{stroke}) ne "ARRAY");
     $parameters{pkstroke} = [$parameters{pkstroke}] if (ref($parameters{pkstroke}) ne "ARRAY");
@@ -132,7 +132,7 @@ sub xml {
 sub _orizontalign {
     
     my $self = shift;
-    my $x = shift if (@_);
+    my $x = shift;
     
     return(maprange(0, $self->{length} - 1, $self->{_xpadding}, $self->{_width} - $self->{_margin} * $self->{_width}, $x));
     

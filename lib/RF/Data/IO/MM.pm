@@ -13,42 +13,38 @@ use base qw(Data::IO);
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ index        => undef,
-                   mode         => "w",
+                   appendable   => 0,
                    _mappedreads => 0,
                    _offsets     => {},
                    _lastoffset  => 0 }, \%parameters);
 
     $self->{binmode} = ":raw";
 
-    $self->{mode} =~ s/\+$//; # Automatically change append mode to write
+    #$self->{mode} =~ s/\+$//; # Automatically change append mode to write
     #$self->throw("Filehandle isn't in write mode") if ($self->mode() ne "w");
 
     $self->_openfh();
     $self->_validate();
-    $self->_loadindex();
+    $self->_loadindex() if ($self->{mode} ne "w");
 
     return($self);
 
 }
 
-sub _validate {
+# sub _validate {
 
-    my $self = shift;
+#     my $self = shift;
 
-    my ($fh, $eof);
-    $fh = $self->{_fh};
+#     my ($fh, $eof);
+#     $fh = $self->{_fh};
 
-    $self->SUPER::_validate();
+#     $self->SUPER::_validate();
 
-    $self->{index} = $self->{file} . ".mmi" if (defined $self->{file} &&
-                                                !defined $self->{index} &&
-                                                $self->{mode} eq "r");
-
-}
+# }
 
 sub _loadindex {
 
@@ -89,7 +85,7 @@ sub _loadindex {
 sub read {
 
     my $self = shift;
-    my $seqid = shift if (@_);
+    my $seqid = shift;
 
     my ($fh, $data, $idlen, $id,
         $length, $sequence, $entry, $eightbytes,
@@ -112,7 +108,7 @@ sub read {
     read($fh, $eightbytes, 7);
     seek($fh, $offset, SEEK_SET);
 
-    if ($eightbytes eq EOF) {
+    if ($eightbytes eq EOF || eof($fh)) {
 
         $self->reset() if ($self->{autoreset});
 
@@ -158,7 +154,7 @@ sub read {
 sub append_transcript {
 
     my $self = shift;
-    my ($id, $sequence) = @_ if (@_);
+    my ($id, $sequence) = @_;
 
     $self->throw("No transcript ID provided") if (!$id);
     $self->throw("No transcript's sequence provided") if (!$sequence);
@@ -188,7 +184,7 @@ sub append_transcript {
 sub append_read {
 
     my $self = shift;
-    my ($start, $end, $n, $indexes) = @_ if (@_);
+    my ($start, $end, $n, $indexes) = @_;
 
     $self->throw("Read's start mapping position must be a positive integer") if (!isint($start));
     $self->throw("Read's end mapping position must be a positive integer") if (!isint($end));
@@ -231,9 +227,23 @@ sub close {
 
     my $fh = $self->{_fh};
 
-    $self->_updatereadscount();
+    if ($self->{mode} ne "r") {
 
-    print $fh EOF; # EOF Marker
+        my ($eof);
+
+        $self->_updatereadscount();
+
+        if ($self->{mode} eq "w+") {
+
+            seek($fh, -7, SEEK_END);
+            read($fh, $eof, 7);
+            seek($fh, 0, SEEK_END);
+
+        }
+
+        print $fh EOF if ($eof ne EOF && !$self->{appendable});
+
+    }
 
     if (defined $self->{index} && !-e $self->{index}) {
 

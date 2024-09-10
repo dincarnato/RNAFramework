@@ -15,7 +15,7 @@ use constant VERSION => 1;
 sub new {
 
     my $class = shift;
-    my %parameters = @_ if (@_);
+    my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ index          => undef,
@@ -23,6 +23,7 @@ sub new {
                    mappedreads    => 0,
                    blockSize      => 10000,
                    noPreloadIndex => 0,
+                   appendable     => 0,
                    _offsets       => {},
                    _lengths       => {},
                    _lastoffset    => 0,
@@ -33,7 +34,13 @@ sub new {
 
     $self->_openfh();
     $self->_validate();
-    $self->_loadindex() if ($self->mode() ne "w" && !$self->{noPreloadIndex}); # r | w+
+
+    if ($self->mode() ne "w") { # r | w+
+
+        $self->_getReadCount();
+        $self->_loadindex() if (!$self->{noPreloadIndex});
+
+    }
 
     return($self);
 
@@ -149,6 +156,16 @@ sub _loadindex {
 
     }
 
+    $self->reset();
+
+}
+
+sub _getReadCount {
+
+    my $self = shift;
+
+    my ($fh, $n);
+    $fh = $self->{_fh};
     seek($fh, -17, SEEK_END);
     read($fh, $n, 8);
 
@@ -162,7 +179,7 @@ sub _loadindex {
 sub readBytewise {
 
     my $self = shift;
-    my ($id, @ranges) = @_ if (@_);
+    my ($id, @ranges) = @_;
 
     return if (!exists $self->{_offsets}->{$id});
 
@@ -222,7 +239,7 @@ sub readBytewise {
 sub read {
 
     my $self = shift;
-    my $seqid = shift if (@_);
+    my $seqid = shift;
 
     my ($fh, $data, $idlen, $id,
         $length, $sequence, $entry, $eightbytes,
@@ -307,7 +324,7 @@ sub read {
 sub writeBytewise {
 
     my $self = shift;
-    my ($id, $pos, $counts, $coverage, $readCount) = @_ if (@_);
+    my ($id, $pos, $counts, $coverage, $readCount) = @_;
 
     $self->throw("Filehandle isn't in append mode") unless ($self->mode() eq "w+");
 
@@ -344,7 +361,7 @@ sub writeBytewise {
 sub updateBytewise {
 
     my $self = shift;
-    my ($id, $pos, $counts, $coverage, $code) = @_ if (@_);
+    my ($id, $pos, $counts, $coverage, $code) = @_;
 
     $self->throw("Filehandle isn't in append mode") unless ($self->mode() eq "w+");
 
@@ -388,7 +405,7 @@ sub updateBytewise {
 sub write {
 
     my $self = shift;
-    my @entries = @_ if (@_);
+    my @entries = @_;
 
     my ($fh, @offsets);
     $fh = $self->{_fh};
@@ -500,7 +517,7 @@ sub write {
 sub mappedreads {
 
     my $self = shift;
-    my $n = shift if (@_);
+    my $n = shift;
 
     $self->throw("Total mapped reads must be a positive integer") if (defined $n &&
                                                                       !ispositive($n));
@@ -517,13 +534,23 @@ sub close {
 
     if ($self->mode() =~ m/^w/) {
 
-        my $fh = $self->{_fh};
+        my ($fh, $eof);
+        $fh = $self->{_fh};
 
         seek($fh, -17, SEEK_END) if ($self->mode() eq "w+");
 
         print $fh pack("Q<", $self->{mappedreads}) .  # Total mapped reads (64bit int)
-                  pack("S<", VERSION) .
-                  EOF; # EOF Marker
+                  pack("S<", VERSION); # EOF Marker
+
+        if ($self->{mode} eq "w+") {
+
+            seek($fh, -7, SEEK_END);
+            read($fh, $eof, 7);
+            seek($fh, 0, SEEK_END);
+
+        }
+
+        print $fh EOF if ($eof ne EOF && !$self->{appendable});
 
         if ($self->{buildindex} &&
             defined $self->{index}) {
@@ -562,7 +589,7 @@ sub ids {
 sub length {
 
     my $self = shift;
-    my $id = shift if (@_);
+    my $id = shift;
 
     return() if (!defined $id || !exists $self->{_lengths}->{$id});
 
@@ -573,19 +600,23 @@ sub length {
 sub sequence {
 
     my $self = shift;
-    my $id = shift if (@_);
+    my ($id, $start, $end) = @_;
 
-    return() if (!defined $id || !exists $self->{_lengths}->{$id});
+    return() if (!defined $id || !exists $self->{_lengths}->{$id} ||
+                 (defined $start && $start >= $self->{_lengths}->{$id}) ||
+                 (defined $end && $end >= $self->{_lengths}->{$id}));
 
     my ($fh, $length, $sequence);
     $fh = $self->{_fh};
+    $start ||= 0;
     $length = $self->{_lengths}->{$id};
+    $end ||= $length - 1;
     seek($fh, $self->{_offsets}->{$id} + 4 + length($id) + 1 + 4, SEEK_SET); # sets the fh to the position of sequence
     read($fh, $sequence, ($length + ($length % 2)) / 2);
     $sequence = unpack("H*", $sequence);
     $sequence =~ tr/43210/NTGCA/;
 
-    return(substr($sequence, 0, $length));
+    return(substr($sequence, $start, $end - $start + 1));
 
 }
 

@@ -32,7 +32,7 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($tmp, $tmpdir, $output, $wt,
     $samtools, $multifasta, $sam, $sorted,
     $help, $overwrite, $error, $bam_trim5,
-    $offset, $threads, $processmanager, $madetmp, 
+    $offset, $threads, $processmanager, 
     $table, $mutcount, $rcio, $covonly, $nodel, $baseRC, 
     $dedupUMI, $pp, $po, $fromhead, $nodiscarddup,
     $minqual, $maxdel, $maxmut, $hashead,
@@ -49,7 +49,6 @@ do {
 
     GetOptions( "h|help"                     => \$help,
                 "br|baseRC=s"                => \$baseRC,
-                "t|tmp-dir=s"                => \$tmpdir,
                 "o|output-dir=s"             => \$output,
                 "du|dedupUMI"                => \$dedupUMI,
                 "ow|overwrite"               => \$overwrite,
@@ -83,17 +82,16 @@ do {
                 "dc|discard-consecutive=i"   => \$rmconsecutive,
                 "pn|primary-only"            => \$primaryonly,
                 "om|only-mut=s"              => \$onlyMut,
-                "ndd|no-discard-duplicates"  => \$nodiscarddup ) or help(1);
+                "ndd|no-discard-duplicates"  => \$nodiscarddup,
+                "bs|block-size=s"            => \$blockSize ) or help(1);
 
 };
 
 help() if ($help);
 
 # Default values
-$madetmp = 0;
 $tmp = randalphanum(0xf);
 $output ||= "rf_count_genome/";
-$tmpdir ||= $output . "/tmp/";
 $wt ||= 1;
 $offset = 0;
 $threads ||= 1;
@@ -109,8 +107,8 @@ $rmconsecutive //= 0;
 $blockSize ||= 100000;
 $samtools ||= which("samtools");
 
-$tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
+$tmpdir = $output . "/tmp/";
 
 ##
 # Input validation
@@ -132,6 +130,7 @@ die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noam
 die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($collapse && $rmconsecutive);
 die "\n  [!] Error: Discard shorter must be a positive INT >= 0\n\n" if (!isint($discardshorter) || !ispositive($discardshorter));
 die "\n  [!] Error: Invalid library strandedness\n\n" if (defined $libraryStrandAll && $libraryStrandAll !~ /^(?:1|f(?:irst)?(?:-strand)?)|(?:2|s(?:econd)?(?:-strand)?)|(?:0|u(?:nstranded)?)$/);
+die "\n  [!] Error: Block size must be a positive INT >= 1000\n\n" if (!isint($blockSize) || $blockSize < 1000);
 
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
@@ -199,23 +198,13 @@ if (-e $output) {
 
 mkpath($output, { mode  => 0755,
                   error => \$error });
+mkpath($tmpdir, { mode  => 0755,
+                  error => \$error });
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
 mkpath($output . "frequencies/", { mode  => 0755,
                                    error => \$error }) if ($onlyMut);
-
-if (!-e $tmpdir) {
-
-    mkpath($tmpdir, { mode  => 0755,
-                      error => \$error });
-
-    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-
-    $madetmp = 1;
-
-}
-else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
 
 ##
 # Prepare files
@@ -298,9 +287,9 @@ print "\n";
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-                                             stderr     => "/dev/null",
+                                             stderr     => $output . "error.out",
                                              tmpDir     => $tmpdir,
-                                             verbosity  => -1 );
+                                             verbosity  => 1 );
 
 ##
 # FASTA Parsing
@@ -376,7 +365,7 @@ foreach my $sample (@qcounter) {
 
         chomp($row);
 
-        if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)$/) {
+        if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)/) {
 
             my ($id, $length) = ($1, $2);
             $id =~ s/\//_/g;
@@ -898,8 +887,7 @@ sub cleanup {
 
     unlink(glob($tmpdir . $tmp . "*"));
 
-    rmtree($tmpdir) if ($madetmp &&
-                        isdirempty($tmpdir));
+    rmtree($tmpdir) if (isdirempty($tmpdir));
 
 }
 
@@ -1270,6 +1258,7 @@ sub help {
  -wt  or --working-threads         <int>          Number of working threads to use for each instance of SAMTools (Default: 1).
                                                   Note: RF Count executes 1 instance of SAMTools for each processor specified by -p.
                                                         At least -p <processors> * -wt <threads> processors are required.
+ -bs  or --block-size              <int>          Maximum size of the chromosome block to keep in memory (>1000, Default: 100000)
  -t   or --tmp-dir                 <string>       Temporary directory (Default: <output>/tmp)
  -o   or --output-dir              <string>       Output directory (Default: rf_count/)
  -ow  or --overwrite                              Overwrites output directory (if the specified path already exists)

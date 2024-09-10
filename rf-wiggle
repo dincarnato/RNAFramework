@@ -17,8 +17,11 @@
 
 use strict;
 use File::Basename;
+use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
+use threads;
+use threads::shared;
 
 use lib $Bin . "/lib";
 
@@ -28,12 +31,25 @@ use Data::Sequence::Utils;
 use RF::Data::IO::RC;
 use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
+use Term::Progress;
+use Term::Utils;
 
 $|++;
 
 my ($coverage, $overwrite, $ratio, $help,
-    $keepbases, $blockSize, %stats);
-%stats = ( processed => 0,
+    $keepbases, $blockSize, $minCov, $reportZeroes,
+    $processors, $output, $tmpdir, $error,
+    $barSize, @pool, %guessedSizes);
+
+my $progressBar : shared;
+my @files : shared;
+my %stats : shared;
+
+%stats = ( writeErr  => 0,
+           emptyDir  => 0,
+           failedXML => 0,
+           failedRC  => 0,
+           success   => 0,
            failed    => 0 );
 
 do {
@@ -42,184 +58,327 @@ do {
 
     GetOptions( "h|help"          => \$help,
                 "c|coverage"      => \$coverage,
+                "mc|min-cov=s"    => \$minCov,
                 "ow|overwrite"    => \$overwrite,
                 "r|ratio"         => \$ratio,
                 "kb|keep-bases=s" => \$keepbases,
-                "bs|block-size=s" => \$blockSize ) or help(1);
+                "bs|block-size=s" => \$blockSize,
+                "z|report-zeroes" => \$reportZeroes,
+                "o|output=s"      => \$output,
+                "p|processors=s"  => \$processors ) or help(1);
 
 };
 
-$blockSize ||= 1000000;
 help() if ($help);
 
 # Default
 $keepbases //= "N";
+$processors ||= 1;
+$minCov ||= 1;
+$blockSize ||= 1000000;
+$output ||= "rf_wiggle/";
+
+$output =~ s/\/?$/\//;
+$tmpdir = $output . "tmp/";
+$barSize = 0;
 
 ##
 # Input validation
 ##
 
 die "\n  [!] Error: No sample RC/XML file or folder provided\n\n" if (!@ARGV);
-die "\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio &&
-                                                                      $coverage);
-die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i &&
-                                                !isiupac($keepbases));
+die "\n  [!] Error: Number of processors must be a positive INT >= 1\n\n" if (!isint($processors) || $processors < 1);
+die "\n  [!] Error: Options -r and -c are mutually exclusive\n\n" if ($ratio && $coverage);
+die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepbases !~ m/^all$/i && !isiupac($keepbases));
 die "\n  [!] Error: Block size must be a positive INT >= 1" if (!isint($blockSize) || $blockSize < 1);
+die "\n  [!] Error: Minimum coverage must be a positive INT >= 1" if (!isint($minCov) || $minCov < 1);
 for (@ARGV) { die "\n  [!] Error: Provided path \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 
 $keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepbases))))))));
 
-print "\n[+] Processing input file(s) [Current: none]";
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+mkpath($tmpdir, { mode  => 0755,
+                  error => \$error });
+
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+print "\n[+] Checking input files and getting total sizes...";
 
 foreach my $input (@ARGV) {
 
-    my ($name, $isxml, $output, @input);
-    $name = $input;
-    $name =~ s/\/$//;
-    $name = fileparse($name, qr/\.[^.]*/);
-    $name =~ s/\.(?:xml|rc)$//;
-    $output = $name . ($coverage ? ".coverage" : ($ratio ? ".ratio" : undef)) . ".wig";
-
-    print CLRRET . "[+] Processing input file(s) [Current: " . $name . "]";
-
     if (!-d $input) { # Input is a file
 
-        die "\n\n  [!] Error: File lacks a valid RC/XML extension\n\n" if ($input !~ m/\.(xml|rc)$/);
+        next if ($input !~ /\.(xml|rc)$/);
 
-        push(@input, $input);
-        $isxml = 1 if ($input =~ m/\.xml$/);
+        push(@files, $input);
+
+        my ($size, $fileSize); 
+        $fileSize = -s $input;
+        $size = exists $guessedSizes{$fileSize} ? $guessedSizes{$fileSize} : getSize($input);
+        $guessedSizes{$fileSize} = $size;
+        $barSize += $size;
 
     }
     else {
 
-        opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read XML files from directory\n\n";
+        my ($isXML, @tmpFiles);
+        $isXML = 0;
+
+        opendir(my $dh, $input) or die "\n\n  [!] Error: Unable to read from input directory \"$input\"\n\n";
         while(my $file = readdir($dh)) {
 
-            next if ($file !~ m/\.(xml|rc)$/);
+            next if ($file !~ /\.(?:xml|rc)$/);
 
-            push(@input, $input . "/" . $file);
-            $isxml = 1 if ($file =~ m/\.xml$/);
+            push(@tmpFiles, "$input/$file");
+            $isXML++ if ($file =~ /\.xml$/);
+            
+            my ($size, $fileSize); 
+            $fileSize = -s "$input/$file";
+            $size = exists $guessedSizes{$fileSize} ? $guessedSizes{$fileSize} : getSize("$input/$file");
+            $guessedSizes{$fileSize} = $size;
+            $barSize += $size;
 
         }
         closedir($dh);
 
-        die "\n\n  [!] Error: Specified folder doesn't contain any RC/XML file\n\n" unless(@input);
+        if ($isXML == @tmpFiles) { push(@files, $input); }
+        else { push(@files, @tmpFiles); }
 
     }
 
-    if (-e $output) {
+}
 
-        if ($overwrite) {
+print " " . scalar(@files) . " files\/folders to process.";
 
-            unlink($output) or die "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n";
+die "\n\n  [!] Error: No valid RC/XML file found. Please check input and try again\n\n" if (!@files);
 
-        }
-        else { die "\n\n  [!] Error: Output file already exists." .
-                   "\n      Please use -ow (or --overwrite) to overwrite it\n\n"; }
+$stats{success} = @files;
+
+print "\n[+] Generating WIG files. Please wait...\n\n";
+
+$progressBar = shared_clone(Term::Progress->new( max     => $barSize,
+                                                 width   => 50,
+                                                 colored => 1 ));
+$progressBar->init();
+
+@pool = map{ threads->create(\&makeWig) } 1 .. $processors;
+$_->join() for (@pool);
+
+$progressBar->complete();
+
+cleanup();
+
+$stats{failed} = $stats{writeErr} + $stats{emptyDir} + $stats{failedXML} + $stats{failedRC};
+
+print "\n\n[+] Statistics:\n" .
+      "\n  [*] Generated WIGs: " . ($stats{success} - $stats{failed}) .
+      "\n  [*] Failed:         " . $stats{failed} . " total" .
+      "\n                      " . $stats{writeErr} . " error writing output XML file" .
+      "\n                      " . $stats{emptyDir} . " specified directory was empty" .
+      "\n                      " . $stats{failedXML} . " XML parsing error" .
+      "\n                      " . $stats{failedRC} . " RC parsing error" .
+      "\n\n[+] All done.\n\n";
+
+sub cleanup {
+
+    unlink(glob($tmpdir . "*"));
+    
+    rmtree($tmpdir);
+
+}
+
+sub getSize {
+
+    my $file = shift;
+
+    my $size = 0;
+
+    if ($file =~ /\.xml$/) { $size = 1; }
+    else {
+
+        my $rcIO = RF::Data::IO::RC->new(file => $file);
+        $size += $rcIO->length($_) for ($rcIO->ids());
 
     }
 
-    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output WIGGLE file (" . $! . ")\n\n";
-    select((select($wh), $|=1)[0]);
+    return($size);
 
-    print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
+}
 
-    foreach my $file (@input) {
+sub makeWig {
 
-        $stats{processed}++;
+    while(1) {
 
-        if ($file =~ m/\.xml$/) {
+        my ($input, $name, $outFile, $isxml, 
+            @input);
 
-            my ($xmlref, $i, $sequence, @data);
+        { lock(@files);
+          $input = shift(@files) if (@files); }
 
-            eval { $xmlref = RF::Data::IO::XML->new(file => $file); };
+        last unless($input);
 
-            if ($@) {
+        $name = $input;
+        $name =~ s/\/$//;
+        $name = fileparse($name, qr/\.[^.]*/);
+        $name =~ s/\.(?:xml|rc)$//;
+        $outFile = $name . ($coverage ? ".coverage" : ($ratio ? ".ratio" : undef)) . ".wig";
 
-                $stats{failed}++;
+        if (!-d $input) { # Input is a file
 
-                undef($@);
-
-                next;
-
-            }
-
-            $i = 0;
-            $sequence = $xmlref->sequence();
-            @data = $xmlref->tool() eq "rf-norm" ? $xmlref->reactivity() : ($ratio ? $xmlref->ratio() : $xmlref->score());
-
-            next if (!sum(grep {$_ !~ m/^NaN$/i} @data));
-
-            print $wh "variableStep chrom=" . $xmlref->id() . "\n";
-
-            undef($data[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
-
-            for (@data) {
-
-                $i++;
-
-                print $wh $i . " " . $_ . "\n" if ($_ &&
-                                                   !isnan($_));
-
-            }
+            push(@input, $input);
+            $isxml = 1 if ($input =~ /\.xml$/);
 
         }
         else {
 
-            my ($rcio);
+            if (opendir(my $dh, $input)) {
 
-            eval { $rcio = RF::Data::IO::RC->new(file => $input); };
+                while(my $file = readdir($dh)) {
 
-            if ($@) {
+                    next if ($file !~ /\.(xml|rc)$/);
 
-                $stats{failed}++;
+                    push(@input, $input . "/" . $file);
+                    $isxml = 1 if ($file =~ /\.xml$/);
 
-                undef($@);
+                }
+                closedir($dh);
 
-                next;
+            }
+            else {
+
+                lock(%stats);
+                $stats{emptyDir}++;
 
             }
 
-            foreach my $id ($rcio->ids()) {
+        }
 
-                my $length = $rcio->length($id);
+        next unless(@input);
 
-                print $wh "variableStep chrom=" . $id . "\n";
+        if (open(my $wh, ">", $output . $outFile)) {
 
-                for(my $i = 0; $i < $length; $i += $blockSize) {
+            select((select($wh), $|=1)[0]);
 
-                    print CLRRET . "[+] Processing input file(s) [Current: " . $name . ", " . $id . " (" . sprintf("%.2f", (min($length, $i + $blockSize) / $length * 100)) . "% done)]";
+            print $wh "track type=wiggle_0 name=\"" . $name . ($isxml ? " Reactivity" : ($coverage ? " Coverage" : ($ratio ? " Ratio" : " Counts"))) . "\"\n";
 
-                    my ($j, $end, $entry, $sequence,
-                        @counts, @coverage);
-                    $end = $i + $blockSize - 1;
-                    $end = $length - 1 if ($end >= $length);
-                    $entry = $rcio->readBytewise($id, [$i, $end]);
+            foreach my $file (@input) {
 
-                    next if (($coverage && !sum($entry->coverage())) ||
-                             (!$coverage && !sum($entry->counts())));
+                if ($file =~ m/\.xml$/) {
 
-                    $j = $i;
-                    $sequence = $entry->sequence();
-                    @counts = $entry->counts();
-                    @coverage = $entry->coverage();
+                    my ($xmlref, $i, $sequence, @data);
 
-                    while($sequence =~ m/[^$keepbases]/g) {
+                    eval { $xmlref = RF::Data::IO::XML->new(file => $file); };
 
-                        undef($counts[$-[0]]);
-                        undef($coverage[$-[0]]);
+                    if ($@) {
+
+                        lock(%stats);
+                        $stats{failedXML}++;
+                        
+                        undef($@);
+
+                        next;
 
                     }
 
-                    for (0 .. $#coverage) {
+                    $i = 0;
+                    $sequence = $xmlref->sequence();
+                    @data = $xmlref->tool() eq "rf-norm" ? $xmlref->reactivity() : ($ratio ? $xmlref->ratio() : $xmlref->score());
 
-                        $j++;
+                    next if (!sum(grep {$_ !~ m/^NaN$/i} @data));
 
-                        if ($coverage[$_]) {
+                    print $wh "variableStep chrom=" . $xmlref->id() . "\n";
 
-                            if ($coverage) { print $wh $j . " " . $coverage[$_] . "\n"; }
-                            elsif ($ratio) { print $wh $j . " " . ($counts[$_] / $coverage[$_]) . "\n" if ($counts[$_]); }
-                            else { print $wh $j . " " . $counts[$_] . "\n" if ($counts[$_]); }
+                    undef($data[$-[0]]) while($sequence =~ m/[^$keepbases]/g);
+
+                    for (@data) {
+
+                        $i++;
+
+                        print $wh $i . " " . $_ . "\n" if ($_ && !isnan($_));
+
+                    }
+
+                    { lock($progressBar);
+                      $progressBar->update(1); }
+
+                }
+                else {
+
+                    my ($rcio);
+
+                    eval { $rcio = RF::Data::IO::RC->new(file => $input); };
+
+                    if ($@) {
+
+                        lock(%stats);
+                        $stats{failedRC}++;
+
+                        undef($@);
+
+                        next;
+
+                    }
+
+                    foreach my $id ($rcio->ids()) {
+
+                        my $length = $rcio->length($id);
+
+                        print $wh "variableStep chrom=" . $id . "\n";
+
+                        for (my $i = 0; $i < $length; $i += $blockSize) {
+
+                            { lock($progressBar);
+                              $progressBar->update($blockSize + $i < $length ? $blockSize : $length - $i); }
+
+                            my ($j, $end, $entry, $sequence,
+                                @counts, @coverage);
+                            $end = $i + $blockSize - 1;
+                            $end = $length - 1 if ($end >= $length);
+                            $entry = $rcio->readBytewise($id, [$i, $end]);
+
+                            next if (($coverage && !sum($entry->coverage())) ||
+                                    (!$coverage && !sum($entry->counts())));
+
+                            $j = $i;
+                            $sequence = $entry->sequence();
+                            @counts = $entry->counts();
+                            @coverage = $entry->coverage();
+
+                            while($sequence =~ m/[^$keepbases]/g) {
+
+                                undef($counts[$-[0]]);
+                                undef($coverage[$-[0]]);
+
+                            }
+
+                            for (0 .. $#coverage) {
+
+                                $j++;
+
+                                if ($coverage[$_]) {
+
+                                    if ($coverage) { print $wh $j . " " . $coverage[$_] . "\n"; }
+                                    elsif ($ratio) { print $wh $j . " " . ($counts[$_] / $coverage[$_]) . "\n" if (((!$reportZeroes && $counts[$_]) || $reportZeroes) && $coverage[$_] >= $minCov); }
+                                    else { print $wh $j . " " . $counts[$_] . "\n" if (($counts[$_] || $reportZeroes) && $coverage[$_] >= $minCov); }
+
+                                }
+
+                            }
 
                         }
 
@@ -229,26 +388,19 @@ foreach my $input (@ARGV) {
 
             }
 
+            close($wh);
+
+        }
+        else {
+
+            lock(%stats);
+            $stats{writeErr}++;
+
         }
 
     }
 
-    close($wh);
-
 }
-
-print CLRRET . "[+] Processing input file(s) [Total: " . $stats{processed} . "]";
-
-if ($stats{failed}) {
-
-    die "\n\n  [!] Error: Parsing failed for all files." .
-        "\n      Please check your input and try again\n\n" if ($stats{failed} == $stats{processed});
-
-    warn "\n\n  [!] Warning: Parsing failed for " . $stats{failed} . " files.\n\n";
-
-}
-
-print "\n[+] All done.\n\n";
 
 sub help {
 
@@ -267,12 +419,15 @@ sub help {
           rf-wiggle [Options] RC_XML_folder/
 
  Options                                     Description
+ -p  or --processors        <int>            Number of processors (>=1, Default: 1)
+ -o  or --output            <string>         Output directory (Default: rf_wiggle/)
  -ow or --overwrite                          Overwrites output file (if the specified file already exists)
  -c  or --coverage                           Reports per-base coverage instead of RT-stop/mutation count
                                              Note: this option only works for RC files
  -r  or --ratio                              Reports per-base ratio between RT-stop/mutation count and coverage for RC files,
                                              or the ratio from rf-modcall XML files
-                                             Note: this option only works for RC files or XML files generated with rf-modcall
+ -mc or --min-coverage      <int>            Minimum coverage to report a base (requires an RC input file) (>=1, Default: 1)
+ -z  or --report-zeroes                      Bases with 0 count/ratio will be reported if their coverage exceeds --min-coverage
  -kb or --keep-bases        <string>         Bases to report in the WIGGLE file (Default: N)
  -bs or --block-size        <int>            Defines the size of the memory block (in bp) to process RC files containing whole 
                                              chromosome data (such as that generated by rf-count-genome) (>=1, Default: 1000000)

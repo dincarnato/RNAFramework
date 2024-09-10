@@ -517,7 +517,7 @@ sub maprange {
 
 sub intersect {
 
-    my @intervals = @_ if (@_);
+    my @intervals = @_;
 
     Core::Utils::throw("Intervals array is empty") if (!@intervals);
 
@@ -543,7 +543,7 @@ sub intersect {
 
 sub inrange {
 
-    my ($value, $range) = @_ if (@_);
+    my ($value, $range) = @_;
 
     return(1) if (intersect($range, [$value, $value]));
 
