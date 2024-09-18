@@ -446,6 +446,37 @@ if (my @unsorted = grep { !$_->{sorted} } @qcounter) {
 }
 
 ##
+# Converting SAM>BAM files (if needed)
+##
+
+if (my @sam = grep { $_->{type} eq "SAM" } @qcounter) { 
+
+    print "\n[+] Converting " . scalar(@sam) . " sorted SAM file(s) to BAM format...\n";
+
+    $processmanager->onstart(sub { print "\n  [-] Converting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+
+    foreach my $sample (@sam) {
+
+        my $path = $tmpdir . $sample->{file} . ".bam";
+
+        $processmanager->enqueue( command => "$samtools view -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\"",
+                                  id      => $sample->{file} );
+
+        $sample->{path} = $path;
+        $sample->{type} = "BAM";
+
+    }
+
+    $processmanager->start();
+    $processmanager->waitall();
+
+    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to convert sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
+
+    print "\n";
+
+}
+
+##
 # Indexing BAM files (if needed)
 ##
 
@@ -994,8 +1025,8 @@ sub guessTypeAndSorting {
             $i++;
             my @row = split "\t";
 
-            die "\n  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
-                                                                                      @row < 12 || !isint($row[1]) || !isdna($row[9]));
+            die "  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
+                                                                                    @row < 12 || !isint($row[1]) || !isdna($row[9]));
 
             $sorted = 0 if (@data && ($header{$row[2]} < $header{$data[0]} ||
                                       ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])));
