@@ -34,6 +34,7 @@ use Data::XML;
 use RF::Config;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
+use Term::Progress;
 
 $|++;
 
@@ -50,6 +51,7 @@ my ($help, $output, $overwrite, $configfile,
     $denatured, $dynwin, $maxmutrate, $normfactor,
     $ignoreLower, @index, @pool, @normfactor);
 
+my $progressBar : shared;
 my @ids : shared;
 my %results : shared;
 %results = ( cov      => 0,
@@ -246,12 +248,17 @@ print "\n[+] Loading transcript IDs... ";
 @ids = $rc->ids();
 
 print scalar(@ids) . " transcripts loaded." .
-      "\n[+] Normalizing reactivities [Last: none]";
+      "\n[+] Normalizing reactivities. Please wait...\n\n";
+
+$progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
+                                                 width   => 50,
+                                                 colored => 1 ));
+$progressBar->init();
 
 @pool = map{ threads->create(\&norm) } 1 .. $threads;
 $_->join() for(@pool);
 
-print "\n[+] Normalization statistics:\n" .
+print "\n\n[+] Normalization statistics:\n" .
       "\n  [*] Covered transcripts:   " . $results{cov} .
       "\n  [*] Discarded transcripts: " . ($results{incov} + $results{diffuseq} + $results{diffdseq} + $results{nocov} + $results{nouid} + $results{nodid}) . " total" .
       "\n                             " . $results{incov} . " insufficient coverage";
@@ -289,8 +296,8 @@ sub norm {
 
         last unless(defined $id);
 
-        my ($tentry, $sequence, $seqmask, @seqmask,
-            @tcounts, @ucounts, @dcounts, @tcov,
+        my ($tentry, $sequence, $seqmask, $uReads, $tReads,
+            @seqmask, @tcounts, @ucounts, @dcounts, @tcov,
             @ucov, @dcov, @last, @norm);
         $tentry = $trc->read($id);
 
@@ -305,6 +312,7 @@ sub norm {
         }
 
         $sequence = $tentry->sequence();
+        $tReads = $tentry->readscount();
         @seqmask = split(//, $sequence);
         @tcounts = $tentry->counts();
         @tcov = $tentry->coverage();
@@ -332,6 +340,7 @@ sub norm {
 
                 }
 
+                $uReads = $uentry->readscount();
                 @ucounts = $uentry->counts();
                 @ucov = $uentry->coverage();
 
@@ -420,6 +429,9 @@ sub norm {
 
                 for (0 .. $#tcounts) {
 
+                    $uReads -= $ucounts[$_];
+                    $tReads -= $tcounts[$_];
+
                     $ucounts[$_] = log($ucounts[$_] + $config->pseudocount());
                     $tcounts[$_] = log($tcounts[$_] + $config->pseudocount());
 
@@ -429,11 +441,10 @@ sub norm {
                 }
 
                 my ($umean, $tmean);
-                $umean = mean(@ucounts);
-                $tmean = mean(@tcounts);
+                $umean = mean(@ucounts, log(max(0, $uReads) + $config->pseudocount()));
+                $tmean = mean(@tcounts, log(max(0, $tReads) + $config->pseudocount()));
 
-                if (!$umean ||
-                    !$tmean) {
+                if (!$umean || !$tmean) {
 
                     lock(%results);
                     $results{incov}++;
@@ -701,8 +712,7 @@ sub norm {
 
         { lock(%results);
           $results{cov}++;
-
-          print CLRRET . "[+] Normalizing reactivities [Last: $id]"; }
+          $progressBar->update(1); }
 
     }
 
@@ -744,16 +754,14 @@ sub norm_28 {  # 2-8% Normalization
 
     if (!defined $normfactor) {
         
-        my ($p2, $p8);
-        $p2 = round(@reactivity * 0.02);
-        $p8 = round(@reactivity * 0.08);
+        my ($p2, $p10);
+        $p2 = max(1, round(@reactivity * 0.02) - 1);
+        $p10 = max(1, round(@reactivity * 0.1) - 1);
 
-        return() unless($p8);
+        return() unless($p10);
 
         @norm = sort {$b <=> $a} @reactivity;
-
-        $avg += $norm[$_] for ($p2 .. ($p2 + $p8));
-        $avg /= $p8;
+        $avg = mean(@norm[$p2 .. $p10]);
 
         return() if ($avg == 0);
 
@@ -790,8 +798,7 @@ sub boxplot {  # Box-plot Normalization
 
         return unless($p10);
 
-        $avg += $norm[$_] for (0 .. $p10 - 1);
-        $avg /= $p10;
+        $avg = mean(@norm[0 .. $p10 - 1]);
 
         return() if ($avg == 0);
 
