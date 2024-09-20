@@ -899,7 +899,7 @@ sub help {
  -mc or --mean-coverage       <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
  -ec or --median-coverage     <float>               Discards any transcript with median coverage below this threshold (>=0, Default: 0)
  -D  or --decimals            <int>                 Number of decimals for reporting reactivities (1-10, Default: 3)
- -n  or --nan                 <int>                 Transcript positions with read coverage behind this threshold will be reported as NaN in
+ -n  or --nan                 <int>                 Transcript positions with read coverage below this threshold will be reported as NaN in
                                                     the reactivity profile (>0, Default: 10)
 
  Scoring method #1 options (Ding et al., 2014) options

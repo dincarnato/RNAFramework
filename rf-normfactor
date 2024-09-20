@@ -272,7 +272,7 @@ sub getCoveredBases {
     TRANSCRIPT:
     while (1) {
 
-        my ($id, @refCov, @i, %entries);
+        my ($id, @refCov, @i, @alli, %entries);
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
@@ -284,10 +284,9 @@ sub getCoveredBases {
         next if ($entries{$files[0]}->mediancoverage() < $medianCoverage);
 
         @refCov = $entries{$files[0]}->coverage();
-        @i = grep { substr($entries{$files[0]}->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } 0 .. $entries{$files[0]}->length() - 1;
-        @i = grep { $refCov[$_] >= $minCov } @i;
+        @alli = grep { $refCov[$_] >= $minCov } 0 .. $entries{$files[0]}->length() - 1;
 
-        next if (!@i);
+        #next if (!@i);
 
         foreach my $file (@files[1 .. $#files]) {
 
@@ -296,9 +295,9 @@ sub getCoveredBases {
                 next TRANSCRIPT if ($entry->mediancoverage() < $medianCoverage);
 
                 my @cov = $entry->coverage();
-                @i = grep { $cov[$_] >= $minCov } @i;
+                @alli = grep { $cov[$_] >= $minCov } @alli;
 
-                next TRANSCRIPT if (!@i);
+                next TRANSCRIPT if (!@alli);
 
                 $entries{$file} = $entry;
 
@@ -306,6 +305,8 @@ sub getCoveredBases {
             else { next TRANSCRIPT; }
 
         }
+
+        @i = grep { substr($entries{$files[0]}->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } @alli;
 
         if (@i) { 
         
@@ -317,8 +318,10 @@ sub getCoveredBases {
 
         for my $i (0 .. $#treatFiles) {
 
-            my ($treatEntry, @treatCounts, @treatCov, @react);
+            my ($treatEntry, $treatReads, @treatCounts, @treatCov, 
+                @react);
             $treatEntry = $entries{$treatFiles[$i]};
+            $treatReads = $treatEntry->readscount();
             @treatCounts = $treatEntry->counts();
             @treatCov = $treatEntry->coverage();
 
@@ -334,17 +337,21 @@ sub getCoveredBases {
 
             if (@ctrlFiles) {
 
-                my ($ctrlEntry, @ctrlCounts, @ctrlCov);
+                my ($ctrlEntry, $ctrlReads, @ctrlCounts, @ctrlCov);
                 $ctrlEntry = $entries{$ctrlFiles[$i]};
+                $ctrlReads = $ctrlEntry->readscount();
                 @ctrlCounts = $ctrlEntry->counts();
                 @ctrlCov = $ctrlEntry->coverage();
 
                 if ($scoreMethod == 1) { 
                     
                     my ($tMean, $cMean);
-                    @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount)} @i;
-                    $tMean = mean(map { $_->[1] } @react);
-                    $cMean = mean(@ctrlCounts);
+                    $ctrlReads -= sum(@ctrlCounts);
+                    $treatReads -= sum(@treatCounts);
+                    $tMean = mean((map { log($treatCounts[$_] + $pseudoCount) } @alli), log(max(0, $treatReads) + $pseudoCount));
+                    $cMean = mean((map { log($ctrlCounts[$_] + $pseudoCount) } @alli), log(max(0, $ctrlReads) + $pseudoCount)); 
+
+                    @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount) } @i;
                     @ctrlCounts = map { $_ / $cMean } @ctrlCounts;
                     @react = map { [ $react[$_]->[0], $react[$_]->[1] / $tMean ] } 0 .. $#react;
                     
@@ -447,11 +454,11 @@ sub norm_28 {  # 2-8% Normalization
 
     return if (!@reactivity);
 
-    my ($avg, $p2, $p8, @norm);
-    $p2 = round(@reactivity * 0.02);
-    $p8 = round(@reactivity * 0.08);
+    my ($avg, $p2, $p10, @norm);
+    $p2 = max(1, round(@reactivity * 0.02) - 1);
+    $p10 = max(1, round(@reactivity * 0.1) - 1);
 
-    return($p8 ? map { $reactivity[$_]->[0] } $p2 .. ($p2 + $p8) : ());
+    return($p10 ? map { $reactivity[$_]->[0] } $p2 .. $p10 : ());
 
 }
 
