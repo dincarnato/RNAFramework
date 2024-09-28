@@ -5,6 +5,7 @@ use Core::Mathematics;
 use Core::Process;
 use Core::Utils;
 use List::Util;
+use POSIX qw(:sys_wait_h);
 
 use base qw(Core::Base);
 
@@ -72,40 +73,57 @@ sub start {
 
     my $self = shift;
     my $processors = shift || $self->{processors};
+    my $cleanup = 0;
 
-    $self->throw("Processors number must be a positive integer >= 1") if (!isint($processors) ||
-                                                                          $processors < 1);
+    $self->throw("Processors number must be a positive integer >= 1") if (!isint($processors) || $processors < 1);
 
-    if (!@{$self->{_queue}}) { $self->warn("Empty queue"); }
+    if (!@{$self->{_queue}}) { $self->warn("Empty queue"); } 
     else {
-
+    
         $self->throw("Cannot start while executing another queue") if ($self->{_children});
 
         undef($self->{processes});
 
-        while (my $parameters = shift(@{$self->{_queue}})) {
+        $SIG{CHLD} = sub { $cleanup = 1; };
 
-            if ($self->{_children} == $processors) {
+        while (@{$self->{_queue}}) {
 
-                my $pid = wait();
-                $self->{_children}--;
-                $self->{_done}->{$pid} = 1;
-		        $self->{_processes}->{$pid}->wait();
-                $self->{parentOnExit}->($self->{_processes}->{$pid}->id(), $pid);
+            if ($cleanup) {
+
+                while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
+
+                    if (exists $self->{_processes}->{$pid}) {
+
+                        $self->{_children}--;
+                        $self->{_done}->{$pid} = 1;
+                        $self->{_processes}->{$pid}->wait();
+                        $self->{parentOnExit}->($self->{_processes}->{$pid}->id(), $pid);
+
+                    }
+                
+                }
+
+                $cleanup = 0;
 
             }
 
-            my $process = Core::Process->new( id      => $parameters->{id},
-                                              stdout  => $parameters->{stdout} || $self->{stdout},
-                                              stderr  => $parameters->{stderr} || $self->{stderr},
-                                              onstart => $self->{onstart},
-                                              onexit  => $self->{onexit},
-                                              tmpDir  => $parameters->{tmpDir} );
-            $process->start($parameters->{command}, @{$parameters->{arguments}});
+            if ($self->{_children} < $self->{processors}) {
 
-            $self->{_processes}->{$process->pid()} = $process;
+                my ($parameters, $process);
+                $parameters = shift(@{$self->{_queue}});
+                $process = Core::Process->new( id      => $parameters->{id},
+                                               stdout  => $parameters->{stdout} || $self->{stdout},
+                                               stderr  => $parameters->{stderr} || $self->{stderr},
+                                               onstart => $self->{onstart},
+                                               onexit  => $self->{onexit},
+                                               tmpDir  => $parameters->{tmpDir} );
 
-            $self->{_children}++;
+                $process->start($parameters->{command}, @{$parameters->{arguments}});
+
+                $self->{_processes}->{$process->pid()} = $process;
+                $self->{_children}++;
+
+            }
 
         }
 
@@ -121,19 +139,22 @@ sub waitall {
 
         for (values %{$self->{_processes}}) {
 
+            next if exists $self->{_done}->{$_->pid()};  # Skip already completed processes
+            
             $_->wait();
             
             if (!exists $self->{_done}->{$_->pid()}) {
-
+            
+                $self->{_children}--;
                 $self->{_done}->{$_->pid()} = 1;
                 $self->{parentOnExit}->($_->id(), $_->pid());
-
+            
             }
-
+        
         }
-
+        
         $self->{_children} = 0;
-
+    
     }
 
 }

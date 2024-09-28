@@ -36,15 +36,15 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $overwrite, $error, $bam_trim5, $offset, 
     $threads, $processmanager, $mbfile, $table, 
     $mutcount, $seqio, $rcio, $includeclip, 
-    $covonly, $mutmap, $nodel, $pp, $po, 
+    $covonly, $mutmap, $nodel, $pp, $po, $tsPerJob,
     $nodiscarddup, $minqual, $maxdel, $maxmut, 
     $hashead, $progressBar, $mapqual, $noambiguous, 
     $medianqual, $noins, $collapse, $maxmutdist, 
     $evalsurround, $leftalign, $discardshorter, $leftdel, 
     $rightdel, $rmconsecutive, $maxcov, $primaryonly, 
     $whitelist, $onlyMut, $noCovLowQual, $outRawCounts, 
-    $fast, $multiBar, @mutClasses, @bam_trim5, 
-    @pool, @qcounter, %transcripts, %spacer, %files, 
+    $fast, $multiBar, @mutClasses, @bam_trim5, @ids,
+    @qcounter, %transcripts, %spacer, %files, 
     %masks, %realid, %onlyMut, %allStats, %allFreqs);
 
 do {
@@ -331,6 +331,9 @@ while (my $entry = $seqio->read()) {
 
 $rcio->close();
 
+@ids = sort keys %transcripts;
+$tsPerJob = max(1, round(@ids / 500));
+
 ##
 # SAM/BAM Header validation
 ##
@@ -576,15 +579,21 @@ foreach my $sample (@qcounter) {
 
 print "\n[+] Queuing jobs...";
 
-foreach my $transcript (keys %transcripts) {
+for (my $i = 0; $i < @ids; $i += $tsPerJob) {
+
+    my ($last, @ts);
+    $last = min($#ids, $i + $tsPerJob - 1);
+    @ts = @ids[$i .. $last]; 
 
     foreach my $sample (@qcounter) {
 
-        $processmanager->enqueue( command      => \&count,
-                                  arguments    => [ $sample, $transcript ],
-                                  id           => $sample->{file} );
+        $processmanager->enqueue( command   => \&count,
+                                  arguments => [ $sample, \@ts ],
+                                  id        => $sample->{file} );
 
     }
+
+    last if ($last == $#ids);
 
 }
 
@@ -592,7 +601,7 @@ print "\n[+] Calculating per-base " . ($covonly ? "coverage" : ($mutcount ? "mut
 
 if ($multiBar) {
 
-    $progressBar = Term::Progress::Multiple->new( sets    => { map { $_->{file} => scalar(keys %transcripts) } @qcounter },
+    $progressBar = Term::Progress::Multiple->new( sets    => { map { $_->{file} => $processmanager->queueSize() / @qcounter } @qcounter },
                                                   colored => 1 ); 
     $progressBar->initAll();
 
@@ -636,24 +645,29 @@ $processmanager->parentOnExit(sub {
         else {
 
             $allStats{$sample}->{$_} += $stats->{$_} for (qw(A C G T mutated total totalPrimary));
-            $allStats{$sample}->{covered}++;
+            $allStats{$sample}->{covered} += scalar(@{$stats->{ids}});
             
             if (defined $whitelist && $stats->{medianCov} >= $whitelist) {
 
                 my $wlIO = Data::IO->new( file  => $output . "whitelists/" . $sample . ".txt",
-                                        mode  => "w+",
-                                        flush => 1 );
-                $wlIO->write($stats->{id} . "\n");
+                                          mode  => "w+",
+                                          flush => 1 );
+                $wlIO->write("$_\n") for (@{$stats->{ids}});
 
             }
 
             if ($mutcount && $outRawCounts) {
 
                 my $rawIO = Data::IO->new( file  => $output . "raw_counts/" . $sample . ".txt",
-                                        mode  => "w+",
-                                        flush => 1 );
-                $rawIO->write($stats->{id} . "\n" .
-                              join("\n", map { join("\t", $_, join(",", @{$stats->{rawCounts}->{$_}})) } @mutClasses) . "\n\n");
+                                           mode  => "w+",
+                                           flush => 1 );
+
+                for my $i (0 .. $#{$stats->{ids}}) {
+
+                    $rawIO->write($stats->{ids}->[$i] . "\n" .
+                                  join("\n", map { join("\t", $_, join(",", @{$stats->{rawCounts}->[$i]->{$_}})) } @mutClasses) . "\n\n");
+
+                }
 
             }
 
@@ -703,7 +717,7 @@ foreach my $sample (sort keys %allStats) {
         if (!$covonly) {
 
             my $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
-            $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100) } qw(A C G T)) . "]" if ($total);
+            $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T)) . "]" if ($total);
             $stats .= " - " . $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . 
                     " (" . sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100) . "\%) mutated alignments" if ($mutcount && $allStats{$sample}->{total});
 
@@ -757,14 +771,15 @@ sub reassembleMM {
 
 sub count {
 
-    my ($sample, $id) = @_;
+    my ($sample, $ids) = @_;
 
     $seqio->forceReopenFh(); # On fork() filehandle is cloned. With this we close it and reopen it for all children.
 
-    my ($sequence, $tsLen, $stats, $readscount,
+    my ($stats, $readsCount,
         $mmIO, $rcIO, $rcEntry, $readsToMaxCov, 
-        @lastPos, @counts, @coverage, %stats, %rawCounts);
-    %stats = ( id           => $id,
+        @lastPos, @counts, @coverage, %last,
+        %stats, %rawCounts);
+    %stats = ( ids          => [],
                A            => 0,
                C            => 0,
                G            => 0,
@@ -772,40 +787,25 @@ sub count {
                mutated      => 0,
                total        => 0,
                totalPrimary => 0,
-               medianCov    => 0,
+               medianCov    => [],
+               rawCounts    => [],
                onlyMut      => undef,
-               rawCounts    => undef,
                warning      => undef );
 
-    $mmIO = RF::Data::IO::MM->new( file       => $tmpdir . $sample->{file} . ".$id.mm",
+    $rcIO = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
+                                   index => $output . "index.rci",
+                                   mode  => "w+" );
+
+    $mmIO = RF::Data::IO::MM->new( file       => $tmpdir . $sample->{file} . ".$$.mm",
                                    appendable => 1,
                                    mode       => "w" ) if ($mutmap);
 
-    if (open(my $fh, "-|", "$samtools view $samtoolsParams " . $sample->{path} . " $id 2>&1")) {
-
-        if ($fast) { $sequence = $transcripts{$id}; }
-        else {
-
-            my $entry = $seqio->read($realid{$id});
-            $entry->unmask();
-            $sequence = $entry->sequence();
-
-        }
-
-        $tsLen = $fast ? length($transcripts{$id}) : $transcripts{$id};
-        $readscount = 0;
-        $readsToMaxCov = $tsLen < $sample->{medianReadLen} ? $maxcov : round(($tsLen * $maxcov / $sample->{medianReadLen}) / ($tsLen - $sample->{medianReadLen} + 1)) if ($maxcov);
-        @lastPos = (0, 0); # position, count
-        @counts = (0) x $tsLen;
-        @coverage = (0) x $tsLen;
-        %rawCounts = map { $_ => [ (0) x $tsLen ] } @mutClasses if ($outRawCounts);
-
-        $mmIO->append_transcript($id, $sequence) if ($mutmap);
+    if (open(my $fh, "-|", "$samtools view $samtoolsParams " . $sample->{path} . " " . join(" ", @$ids) . " 2>&1")) {
 
         while (!eof($fh)) {
 
             my ($row, $clip5, $cov, $ins,
-                $editdist, $truelen, @row);
+                $id, $editdist, $truelen, @row);
             $row = <$fh>;
             chomp($row);
 
@@ -816,6 +816,8 @@ sub count {
 
             next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
 
+            $id = $row[2];
+            $id =~ s/\//_/g;
             ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
             @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
             $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
@@ -823,14 +825,60 @@ sub count {
             next if ($mutcount && $truelen < ($discardshorter =~ /^median$/i ? $sample->{medianReadLen} : $discardshorter));
             next if ($mutcount && $editdist / $cov > $maxmut);
             next if ($mutcount && median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
-            #next if ($po && $row[1] & 1 && $row[1] & 8); # Read is one of a pair, but one mate is unmapped
-            #next if ($pp && $row[1] & 1 && !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
-            #next if ($row[1] & 16 && !$mutcount && !$covonly); # In RT-stops count mode Libraries should be stranded, so all reads should map to the forward strand
             next if ($clip5 && !$mutcount && !$covonly && !$includeclip); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
-            #next if ($row[4] < $mapqual); # Discard reads with too low mapping quality
-            #next if ($primaryonly && $row[1] & 256); # Discard secondary alignments
-            #next if ($row[1] & 512); # Discard reads that fail platform quality checks
-            #next if ($row[1] & 1024 && !$nodiscarddup); # Discard reads that are optical/PCR duplicates
+           
+            if ($id ne $last{id}) {
+
+                if (defined $last{id}) {
+
+                    if (exists $masks{$last{id}}) {
+
+                        @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                        @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+
+                    }
+
+                    my $rcEntry = RF::Data::RC->new( id         => $last{id},
+                                                     sequence   => $last{sequence},
+                                                     counts     => \@counts,
+                                                     coverage   => \@coverage,
+                                                     readscount => $readsCount );
+
+                    $rcIO->write($rcEntry);
+
+                    push(@{$stats{ids}}, $last{id});
+                    push(@{$stats{medianCov}}, median(@coverage));
+                    push(@{$stats{rawCounts}}, \%rawCounts) if ($outRawCounts);
+
+                }
+
+                $last{id} = $id;
+
+                if ($fast) { 
+                    
+                    $last{sequence} = $transcripts{$id}; 
+                    $last{length} = length($last{sequence}); 
+
+                }
+                else {
+
+                    my $entry = $seqio->read($row[2]);
+                    $entry->unmask();
+                    $last{sequence} = $entry->sequence();
+                    $last{length} = $transcripts{$id};
+
+                }
+
+                $readsCount = 0;
+                $readsToMaxCov = $last{length} < $sample->{medianReadLen} ? $maxcov : round(($last{length} * $maxcov / $sample->{medianReadLen}) / ($last{length} - $sample->{medianReadLen} + 1)) if ($maxcov);
+                @lastPos = (0, 0); # position, count
+                @counts = (0) x $last{length};
+                @coverage = (0) x $last{length};
+                %rawCounts = map { $_ => [ (0) x $last{length} ] } @mutClasses if ($outRawCounts);
+
+                $mmIO->append_transcript($last{id}, $last{sequence}) if ($mutmap);
+
+            }
 
             if ($mutcount || $covonly) {  # Mutations count / Coverage only modes
 
@@ -839,8 +887,8 @@ sub count {
 
                 if ($maxcov) {
 
-                    next if ($tsLen >= $sample->{medianReadLen} &&
-                             $start > $tsLen - $sample->{medianReadLen});
+                    next if ($last{length} >= $sample->{medianReadLen} &&
+                             $start > $last{length} - $sample->{medianReadLen});
 
                     if ($lastPos[0] == $start && $lastPos[1] == $readsToMaxCov) { next; }
                     elsif ($lastPos[0] < $start) { @lastPos = ($start, 0); }
@@ -849,28 +897,22 @@ sub count {
 
                 unless ($row[1] & 256) {
 
-                    $readscount++;
+                    $readsCount++;
                     $stats{totalPrimary}++;
 
                 }
 
                 $stats{total}++;
-                @covered = ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..($row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2);
+                @covered = ($row[3] - 1 < 0 ? 0 : $row[3] - 1) ..($row[3] + $cov - 2 > $last{length} - 1 ? $last{length} - 1 : $row[3] + $cov - 2);
 
                 # Parse the MD flag only when edit distance != 0
                 if ($mutcount && $row !~ /NM:i:0/) {
 
                     my ($end, $muts, $rawMuts, $lowQual, $missingMD);
-                    $end = $row[3] + $cov - 2 > $tsLen - 1 ? $tsLen - 1 : $row[3] + $cov - 2;
-                    ($muts, $rawMuts, $lowQual, $missingMD) = parsemd(\@row, $sequence);
+                    $end = $row[3] + $cov - 2 > $last{length} - 1 ? $last{length} - 1 : $row[3] + $cov - 2;
+                    ($muts, $rawMuts, $lowQual, $missingMD) = parsemd(\@row, $last{sequence});
 
-                    if ($missingMD) {
-
-                        $stats{warning} = "Warning: Missing MD tag, run 'samtools calmd' to fix";
-
-                        last;
-
-                    }
+                    return({ error => "Error: Missing MD tag, run 'samtools calmd' to fix" }) if ($missingMD);
 
                     if ($noCovLowQual) { @covered = grep { !exists $lowQual->{$_} } @covered; }
 
@@ -892,7 +934,7 @@ sub count {
                         for (@$muts) {
 
                             $counts[$_]++;
-                            $stats{substr($sequence, $_, 1)}++;
+                            $stats{substr($last{sequence}, $_, 1)}++;
 
                         }
 
@@ -919,7 +961,6 @@ sub count {
                 $lastPos[1]++;
                 map {$coverage[$_]++} @covered;
 
-
             }
             else {  # RT-stops count mode
 
@@ -928,15 +969,15 @@ sub count {
                 if ($row[3] >= 0) { # Read 5'-end is not before transcript 5'-end
 
                     $counts[$row[3]]++;
-                    $stats{substr($sequence, $row[3], 1)}++;
+                    $stats{substr($last{sequence}, $row[3], 1)}++;
 
                 }
 
-                map { $coverage[$_]++ } max(0, $row[3]) .. min($tsLen - 1, $row[3] + $cov + $clip5);
+                map { $coverage[$_]++ } max(0, $row[3]) .. min($last{length} - 1, $row[3] + $cov + $clip5);
 
                 unless ($row[1] & 256) {
 
-                    $readscount++;
+                    $readsCount++;
                     $stats{totalPrimary}++;
 
                 }
@@ -949,32 +990,32 @@ sub count {
 
         close($fh);
 
-        # Applies masks
-        if (exists $masks{$id}) {
+        if (defined $last{id}) {
 
-            @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$id}});
-            @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$id}});
+            if (exists $masks{$last{id}}) {
+
+                @counts[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+                @coverage[$_->[0] .. $_->[1]] = (0) x ($_->[1] - $_->[0] + 1) for (@{$masks{$last{id}}});
+
+            }
+
+            my $rcEntry = RF::Data::RC->new( id         => $last{id},
+                                             sequence   => $last{sequence},
+                                             counts     => \@counts,
+                                             coverage   => \@coverage,
+                                             readscount => $readsCount );
+
+            $rcIO->write($rcEntry);
+
+            push(@{$stats{ids}}, $last{id});
+            push(@{$stats{medianCov}}, median(@coverage));
+            push(@{$stats{rawCounts}}, \%rawCounts) if ($outRawCounts);
 
         }
-
-        # Writes the entry to RC file
-        $rcIO = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
-                                       index => $output . "index.rci",
-                                       mode  => "w+" );
-        $rcEntry = RF::Data::RC->new( id         => $id,
-                                      sequence   => $sequence,
-                                      counts     => \@counts,
-                                      coverage   => \@coverage,
-                                      readscount => $readscount );
         
-        #$rcIO->lock();
-        $rcIO->write($rcEntry);
-        #$rcIO->unlock();
         $rcIO->close();
         $mmIO->close() if ($mutmap);
 
-        $stats{medianCov} = median(@coverage);
-        $stats{rawCounts} = \%rawCounts;
         $stats{onlyMut} = \%onlyMut;
 
         return(\%stats);
@@ -1002,7 +1043,6 @@ sub guessTypeAndSorting {
     my ($type, $header, $eof, $sorted, 
         $i, $h, @data, %header);
     $i = $h = 0;
-    $sorted = 1;
     $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
     $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
@@ -1011,11 +1051,19 @@ sub guessTypeAndSorting {
 
         if (substr($_, 0, 1) eq "@") {
 
-            if (substr($_, 1, 2) eq "SQ") {
+            my $tag = substr($_, 1, 2);
+
+            if ($tag eq "SQ") {
 
                 my @row = split "\t";
                 $header{(split(":", $row[1]))[1]} = $h;
                 $h++;
+
+            }
+            elsif ($tag eq "HD") {
+
+                my @row = split "\t";
+                $sorted = 1 if ((split(":", $row[1]))[1] eq "coordinate");
 
             }
 
@@ -1028,8 +1076,18 @@ sub guessTypeAndSorting {
             die "  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
                                                                                     @row < 12 || !isint($row[1]) || !isdna($row[9]));
 
-            $sorted = 0 if (@data && ($header{$row[2]} < $header{$data[0]} ||
-                                      ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])));
+            if (@data) {
+                
+                if ($header{$row[2]} < $header{$data[0]} || ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])) {
+
+                    $sorted = 0;
+
+                    last;
+
+                }
+                else { $sorted = 1; }
+
+            }
 
             @data = ($row[2], $row[3]);
 
@@ -1130,8 +1188,8 @@ sub parsemd { # SAM MD flag parser
                     }
                     else {
 
-                        # $before = $collapsed{$real}->[0] - length($del);
-                        # $after = $collapsed{$real}->[0] + 1;
+                        $before = $collapsed{$real}->[0] - length($del);
+                        $after = $collapsed{$real}->[0] + 1;
                         @truedel = $rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]));
                         # if (($evalsurround &&
                         #     ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&

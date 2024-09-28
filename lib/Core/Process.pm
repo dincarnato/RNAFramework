@@ -156,8 +156,6 @@ sub wait {
 
     my $self = shift;
 
-    local $SIG{CHLD} = "IGNORE";
-
     waitpid($self->{_pid}, 0);
 
     $self->_retrieveReturnData();

@@ -32,9 +32,8 @@ use RF::Data::RC;
 $|++;
 
 my ($output, $overwrite, $command, $help,
-    $tmp, $madetmp, $index, $tab, 
-    $annoFile, $GTFfeature, $GTFattribute, @rc, 
-    %commands);
+    $index, $tab, $annoFile, $GTFfeature, 
+    $GTFattribute, @rc, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge stats extract);
 
@@ -59,7 +58,6 @@ do {
 help() if ($help);
 
 # Default
-$tmp = randalphanum(0xf);
 $command = lc($command);
 $GTFfeature ||= "exon";
 $GTFattribute ||= "transcript_id";
@@ -420,7 +418,6 @@ HELP
  Options                                     Description
  -o  or --output     <string>                Output RC filename (Default: merge.rc)
  -ow or --overwrite                          Overwrites output file if already exists
- -T  or --tmp-dir    <string>                Temporary directory (Default: /tmp)
 
 HELP
 
