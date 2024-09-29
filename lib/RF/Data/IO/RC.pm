@@ -55,21 +55,23 @@ sub _validate {
 
     $self->SUPER::_validate();
 
-    if ($self->mode() eq "r") {
+    if ($self->mode() =~ /^w/) {
 
-        seek($fh, -7, SEEK_END);
-        read($fh, $eof, 7);
+        $self->throw("Total mapped reads must be a positive integer") if (!ispositive($self->{mappedreads}));
 
-        $self->throw("Invalid RC file (EOF marker is absent)") unless ($eof eq EOF);
+        if ($self->mode() eq "w+" && $self->{appendable}) {
 
-        $self->reset();
+            seek($fh, -7, SEEK_END);
+            read($fh, $eof, 7);
+
+            $self->throw("RC file is not appendable as it already has an EOF") unless ($eof eq EOF);
+
+            $self->reset();
+
+        }
 
     }
-    else { $self->throw("Total mapped reads must be a positive integer") if (!ispositive($self->{mappedreads})); }
-
-    $self->{index} = $self->{file} . ".rci" if ($self->{buildindex} &&
-                                                defined $self->{file} &&
-                                                !defined $self->{index});
+    $self->{index} = $self->{file} . ".rci" if ($self->{buildindex} && defined $self->{file} && !defined $self->{index});
 
 }
 
@@ -537,11 +539,6 @@ sub close {
         my ($fh, $eof);
         $fh = $self->{_fh};
 
-        seek($fh, -17, SEEK_END) if ($self->mode() eq "w+");
-
-        print $fh pack("Q<", $self->{mappedreads}) .  # Total mapped reads (64bit int)
-                  pack("S<", VERSION); # EOF Marker
-
         if ($self->{mode} eq "w+") {
 
             seek($fh, -7, SEEK_END);
@@ -550,7 +547,19 @@ sub close {
 
         }
 
-        print $fh EOF if ($eof ne EOF && !$self->{appendable});
+        if ($eof ne EOF && !$self->{appendable}) {
+
+            print $fh pack("Q<", $self->{mappedreads}) .  # Total mapped reads (64bit int)
+                      pack("S<", VERSION) .
+                      EOF; # EOF Marker
+
+        }
+        elsif ($eof eq EOF) {
+
+            seek($fh, -17, SEEK_END);
+            print $fh pack("Q<", $self->{mappedreads});
+
+        }
 
         if ($self->{buildindex} &&
             defined $self->{index}) {

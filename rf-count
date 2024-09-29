@@ -315,7 +315,7 @@ while (my $entry = $seqio->read()) {
 
     my ($id, $rentry, $offset);
     $id = $entry->id();
-    $id =~ s/[^\w\.]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
+    $id =~ s/[^\w\.-]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
 
     $rentry = RF::Data::RC->new( id       => $id,
                                  sequence => $entry->sequence(),
@@ -800,7 +800,7 @@ sub count {
                                    appendable => 1,
                                    mode       => "w" ) if ($mutmap);
 
-    if (open(my $fh, "-|", "$samtools view $samtoolsParams " . $sample->{path} . " " . join(" ", @$ids) . " 2>&1")) {
+    if (open(my $fh, "-|", "$samtools view $samtoolsParams " . $sample->{path} . " " . join(" ", map { $realid{$_} } @$ids) . " 2>&1")) {
 
         while (!eof($fh)) {
 
@@ -810,14 +810,14 @@ sub count {
             chomp($row);
 
             if ($row =~ /Could not retrieve index file/) { return({ error => "Error: Missing BAM index" }); }
-            #elsif ($row =~ /invalid region or unknown reference/) { return({ warning => "Warning: Transcript \"$id\" absent in BAM file" }); }
+            elsif ($row =~ /\[main_samview\] (.+)$/) { return({ warning => "Warning: $1" }); }
 
             @row = split(/\t/, $row);
 
             next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
 
             $id = $row[2];
-            $id =~ s/\//_/g;
+            $id =~ s/[^\w\.-]/_/g;
             ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
             @{$ins} = map { $_ + $row[3] - 1 } @{$ins}; # Adjust insertion relative position to true position
             $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
