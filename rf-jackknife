@@ -40,14 +40,14 @@ use Term::Table;
 
 $|++;
 
-my ($input, $output, $overwrite, $reference,
-    $refio, $help, $tmpdir, $madetmp,
-    $tmp, $error, $rffold, $processmanager,
+my ($output, $overwrite, $reference, $refio,  
+    $error, $rffold, $processmanager,
     $threads, $slope, $intercept, $sstep,
     $istep, $rfparams, $relaxed, $mFMI,
-    $kp, $kl, $m, $am,
-    $ignoreseq, @slope, @intercept, %files,
-    %reference, %table, %results);
+    $kp, $kl, $m, $am, $help, $tmpdir,
+    $ignoreseq, $onlyCommon, @slope, @intercept, 
+    @samples, %files, %reference, %table, 
+    %results);
 %results = ( used          => 0,
              ioerr         => 0,
              diffseq       => 0,
@@ -63,7 +63,6 @@ do {
                 "r|reference=s"        => \$reference,
                 "p|processors=i"       => \$threads,
                 "o|output-dir=s"       => \$output,
-                "t|tmp-dir=s"          => \$tmpdir,
                 "ow|overwrite"         => \$overwrite,
                 "sl|slope=s"           => \$slope,
                 "in|intercept=s"       => \$intercept,
@@ -77,9 +76,10 @@ do {
                 "m|mFMI"               => \$mFMI,
                 "e|median"             => \$m,
                 "am|arithmetic-mean"   => \$am,
-                "i|ignore-sequence"    => \$ignoreseq ) or help(1);
+                "i|ignore-sequence"    => \$ignoreseq,
+                "oc|only-common"       => \$onlyCommon ) or help(1);
 
-    $input = $ARGV[0];
+    @samples = uniq(@ARGV);
 
 };
 
@@ -87,10 +87,7 @@ help() if ($help);
 
 # Default values
 $threads ||= 1;
-$madetmp = 0;
 $output ||= "rf_jackknife/";
-$tmpdir ||= $output . "/tmp/";
-$tmp = randalphanum(0xf);
 $rffold ||= which("rf-fold");
 $slope ||= "0:5";
 $intercept ||= "-3:0";
@@ -98,8 +95,7 @@ $istep ||= 0.2;
 $sstep ||= 0.2;
 
 $output =~ s/\/?$/\//;
-$tmpdir =~ s/\/?$/\//;
-$input =~ s/\/?$/\// if (-d $input);
+$tmpdir = $output . "/tmp/";
 @slope = sort {$a <=> $b} split(/[,;:]/, $slope);
 @intercept = sort {$a <=> $b} split(/[,;:]/, $intercept);
 
@@ -107,7 +103,6 @@ $input =~ s/\/?$/\// if (-d $input);
 # Input validation
 ##
 
-die "\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $input);
 die "\n  [!] Error: No reference structures file provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $reference);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
@@ -125,12 +120,9 @@ for (0 .. 1) {
 
 }
 
-die "\n  [!] Error: Parameters -m and -am are mutually exclusive\n\n" if ($m &&
-                                                                          $am);
-die "\n  [!] Error: Intercept step value must be a positive value > 0\n\n" if (!ispositive($istep) ||
-                                                                               !$istep);
-die "\n  [!] Error: Slope step value must be a positive value > 0\n\n" if (!ispositive($sstep) ||
-                                                                           !$sstep);
+die "\n  [!] Error: Parameters -m and -am are mutually exclusive\n\n" if ($m && $am);
+die "\n  [!] Error: Intercept step value must be a positive value > 0\n\n" if (!ispositive($istep) || !$istep);
+die "\n  [!] Error: Slope step value must be a positive value > 0\n\n" if (!ispositive($sstep) || !$sstep);
 
 if (!defined $rffold) { die "\n  [!] Error: rf-fold is not in PATH\n\n"; }
 elsif (!-e $rffold) { die "\n  [!] Error: rf-fold doesn't exist\n\n"; }
@@ -158,26 +150,16 @@ if (-e $output) {
 
 }
 
-mkpath($output, { mode  => 0755,
+mkpath($tmpdir, { mode  => 0755,
                   error => \$error });
 
-if (!-e $tmpdir) {
-
-    mkpath($tmpdir, { mode  => 0755,
-                      error => \$error });
-
-    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-
-    $madetmp = 1;
-
-}
-else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
 ##
 # Check structures
 ##
 
-print "\n[+] Checking input reference structures and probing data [0 imported]";
+print "\n[+] Importing input reference structures and probing data...";
 
 $refio = Data::IO::Sequence->new( file        => $reference,
                                   pseudoknots => $kp,
@@ -185,56 +167,77 @@ $refio = Data::IO::Sequence->new( file        => $reference,
 
 while(my $ref = $refio->read()) {
 
-    my ($file, $queryio);
+    my (@files);
 
-    if (-d $input) {
+    foreach my $sample (@samples) {
 
-        if (!-e $input . $ref->id() . ".xml") {
+        die "\n\n  [!] Error: Sample XML file/directory \"$sample\" does not exist\n\n" if (!-e $sample);
 
-            $results{missingstruct}++;
+        if (-d $sample) {
+
+            next if (!-e "$sample/" . $ref->id() . ".xml");
+
+            push(@files, "$sample/" . $ref->id() . ".xml");
+
+        }
+        else {
+
+            my ($fileid, undef, $format) = fileparse($sample, qr/\.[^.]*/);
+
+            next if ($fileid ne $ref->id() || $format ne ".xml");
+
+            push(@files, $sample);
+
+        }
+
+    }
+
+    if (!@files || ($onlyCommon && @files != @samples)) {
+
+        $results{missingstruct}++;
+
+        next;
+
+    }
+
+    foreach my $file (@files) {
+
+        my ($eval, $queryIO);
+        $eval = do { 
+
+            local $@;
+
+            eval { $queryIO = RF::Data::IO::XML->new(file => $file); };
+
+            $@;
+
+        };
+
+        if ($@) {
+
+            $results{ioerr}++;
 
             next;
 
         }
 
-        $file = $input . $ref->id() . ".xml";
+        if ((!$ignoreseq && dna2rna($queryIO->sequence()) ne dna2rna($ref->sequence())) ||
+            ($ignoreseq && $queryIO->length() != $ref->length())) {
+
+            $results{diffseq}++;
+
+            next;
+
+        }
+
+        $files{$ref->id()} = \@files;
+        $reference{$ref->id()} = $ref->structure();
 
     }
-    else {
-
-        my ($fileid, undef, $format) = fileparse($input, qr/\.[^.]*/);
-        $file = $input;
-
-        next if ($fileid ne $ref->id() ||
-                 $format ne ".xml");
-
-    }
-
-    eval { $queryio = RF::Data::IO::XML->new(file => $file); };
-
-    if ($@) {
-
-        $results{ioerr}++;
-
-        next;
-
-    }
-
-    if ((!$ignoreseq && dna2rna($queryio->sequence()) ne dna2rna($ref->sequence())) ||
-        ($ignoreseq && $queryio->length() != $ref->length())) {
-
-        $results{diffseq}++;
-
-        next;
-
-    }
-
-    $files{$ref->id()} = $file;
-    $reference{$ref->id()} = $ref->structure();
-
-    print CLRRET . "[+] Checking input reference structures and probing data [" . keys(%files) . " imported]";
 
 }
+
+print " " . keys(%files) . " imported.";
 
 if (keys %files) {
 
@@ -261,9 +264,13 @@ if (keys %files) {
 
     }
 
+    # This ensures that, if the program is not up-to-date, RF Fold won't throw a warning that
+    # will end up in the error.out
+    $ENV{"RF_NOCHECKUPDATES"} = 1;
+
     $processmanager = Core::Process::Queue->new( processors => $threads,
-                                                 stderr     => "/dev/null",
-                                                 verbosity  => -1 );
+                                                 stderr     => "$output/error.out",
+                                                 verbosity  => 1 );
 
     $processmanager->onstart(sub { print CLRRET . "[+] Jackknifing folding parameters (this may take a while) [Current: " . $_[0] . "]"; });
 
@@ -279,7 +286,7 @@ if (keys %files) {
 
                 push(@tested, shared_clone([$id, $sl, $in]));
 
-                $processmanager->enqueue( command => join(" ", $rffold, $rfparams, "-sl", $sl, "-in", $in, "-o", $tmpdir . join("_", @{$tested[-1]}), $files{$id}),
+                $processmanager->enqueue( command => join(" ", $rffold, $rfparams, "-sl", $sl, "-in", $in, "-o", $tmpdir . join("_", @{$tested[-1]}), $ignoreseq ? "-is" : undef, @{$files{$id}}),
                                           id      => $id . "; Slope: " . $sl . "; Intercept: " . $in,
                                           stdout  => "/dev/null" );
 
@@ -349,7 +356,7 @@ if (keys %files) {
     print "\n";
 
 }
-else { warn "\n\n [!] Error: No reference structure passed checks\n"; }
+else { die "\n\n [!] Error: No reference structure passed checks. Please ensure reference ID matches XML IDs\n"; }
 
 $results{missingstruct} = 1 unless (sum(values %results));
 
@@ -358,11 +365,11 @@ print "\n[+] Jackknifing statistics:\n" .
       "\n  [*] Excluded transcripts: " . ($results{ioerr} + $results{diffseq} + $results{missingstruct}) . " total" .
       "\n                            " . $results{ioerr} . " XML file parsing failed" .
       "\n                            " . $results{diffseq} . " mismatch between reference and XML transcript sequences" .
-      "\n                            " . $results{missingstruct} . " missing XML file";
-
-print "\n\n[+] All done.\n\n";
+      "\n                            " . $results{missingstruct} . " missing XML file\n";
 
 cleanup();
+
+print "\n[+] All done.\n\n";
 
 sub calc {
 
@@ -400,10 +407,12 @@ sub calc {
 
 sub cleanup {
 
-    unlink(glob($tmpdir . $tmp . "*"));
+    unlink(glob($tmpdir . "*"));
 
-    rmtree($tmpdir) if ($madetmp &&
-                        isdirempty($tmpdir));
+    if (!-s $output . "error.out") { unlink($output . "error.out"); }
+    else { print "\n  [!] Warning: Execution completed with error(s)/warning(s). Please check the \"${output}error.out\" file\n"; }
+
+    rmtree($tmpdir);
 
 }
 
@@ -421,14 +430,16 @@ sub help {
           FMI (geometric mean of PPV and sensitivity), or modified FMI (mFMI)
           using a set of reference structures
 
- Usage:   rf-jackknife [Options] XML_folder/                # Multiple transcripts
-          rf-jackknife [Options] file.xml                   # Single transcript
+ Usage:   rf-jackknife [Options] XML_folder/                                    # Multiple transcripts
+          rf-jackknife [Options] file.xml                                       # Single transcript
+          rf-jackknife [Options] XML_folder_1/ XML_folder_2/ .. XML_folder_n/   # Replicates
 
  Options                                      Description
  -r  or --reference        <string>           A file containing reference structures in Vienna format (dotbracket notation)
+ -oc or --only-common                         In case of replicates, only transcripts covered across all experiments will
+                                              be used to derive the optimal slope/intercept pair
  -p  or --processors       <int>              Number of processors to use (Default: 1)
  -o  or --output-dir       <string>           Output directory (Default: rf_jackknife/)
- -t  or --tmp-dir          <string>           Temporary directory (Default: <output>/tmp)
  -ow or --overwrite                           Overwrites output directory (if the specified path already exists)
  -sl or --slope            <float>,<float>    Range of slope values to test (Default: 0,5)
  -in or --intercept        <float>,<float>    Range of intercept values to test (Default: -3,0)
@@ -437,7 +448,7 @@ sub help {
  -x  or --relaxed                             Uses relaxed criteria (Deigan et al., 2009) to calculate FMI
  -kp or --keep-pseudoknots                    Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs                    Keeps lonely basepairs (helices of length 1 bp) in reference structure
- -i  or --ignore-sequence                     Ignores sequence differences (e.g. SNVs) between the compared structures
+ -i  or --ignore-sequence                     Ignores nucleotide differences (e.g. SNVs) between the compared structures
  -m  or --mFMI                                Uses modified FMI (mFMI, Lan et al., 2022) instead of standard FMI to quantify the
                                               agreement between predicted and reference structure
  -e  or --median                              FMI values across multiple reference structures are aggregated by median

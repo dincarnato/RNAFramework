@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 
 use strict;
-use Config;
 use File::Basename;
 use File::Copy;
 use File::Path qw(mkpath);
@@ -27,9 +26,6 @@ use Term::Table;
 use Term::Utils;
 
 $|++;
-
-die "\n  [!] Error: This program requires ithreads." .
-    "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
 my ($tmpdir, $output, $wt, $samtoolsParams,
     $samtools, $multifasta, $sam, $help, 
@@ -614,7 +610,7 @@ else {
 
 }
 
-$processmanager->processors($threads * $wt);
+$processmanager->processors(min(ncores(), $threads * $wt));
 $processmanager->onstart(sub {});
 $processmanager->onexit(sub {});
 $processmanager->parentOnExit(sub { 
@@ -701,6 +697,19 @@ if ($mutmap) {
     $processmanager->start();
     $processmanager->waitall();
 
+    print "\n[+] Indexing MM files...";
+
+    foreach my $sample (keys %allStats) {
+
+        $processmanager->enqueue( command      => \&indexMM,
+                                  arguments    => [ $sample ],
+                                  id           => $sample );
+
+    }
+
+    $processmanager->start();
+    $processmanager->waitall();
+
 }
 
 print "\n[+] Statistics:\n";
@@ -769,6 +778,18 @@ sub reassembleMM {
 
 }
 
+sub indexMM {
+
+    my $sample = shift;
+
+    my $mmIO = RF::Data::IO::MM->new( file => "$output$sample.mm",
+                                      index => "$output$sample.mm.mmi",
+                                      mode => "r" );
+    $mmIO->buildIndex();
+    $mmIO->close(); # adds the EOF marker
+
+}
+
 sub count {
 
     my ($sample, $ids) = @_;
@@ -810,11 +831,23 @@ sub count {
             chomp($row);
 
             if ($row =~ /Could not retrieve index file/) { return({ error => "Error: Missing BAM index" }); }
-            elsif ($row =~ /\[main_samview\] (.+)$/) { return({ warning => "Warning: $1" }); }
+            elsif ($row =~ /\[main_samview\] (.+)$/) { 
+                
+                $stats{"warning"} = "Warning: $1";
+                
+                next;
+                
+            }
 
             @row = split(/\t/, $row);
 
-            next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
+            if (@row < 11 || $row[5] eq "*") {
+
+                $stats{"warning"} = "Warning: Malformed BAM entry (< 11 fields or invalid CIGAR)";
+                
+                next;
+
+            }
 
             $id = $row[2];
             $id =~ s/[^\w\.-]/_/g;
@@ -1030,7 +1063,7 @@ sub cleanup {
     unlink(glob($tmpdir . "*"));
     
     if (!-s $output . "error.out") { unlink($output . "error.out"); }
-    else { print "\n\n  [!] Warning: One or more errors occurred. Please check the \"$output/error.log\" file\n"; }
+    else { print "\n\n  [!] Warning: Execution completed with error(s)/warning(s). Please check the \"${output}/error.out\" file\n"; }
 
     rmtree($tmpdir);
 

@@ -3,7 +3,7 @@ package Data::IO;
 use strict;
 use Fcntl qw(:flock SEEK_END SEEK_SET);
 use HTTP::Tiny;
-use Core::Mathematics;
+use Core::Mathematics qw(:all);
 use Core::Utils;
 
 use base qw(Core::Base);
@@ -25,7 +25,8 @@ sub new {
                    binmode    => undef,
                    iseparator => "\n",
                    _prev      => [],
-                   _fh        => undef }, \%parameters);
+                   _fh        => undef,
+                   _binary    => 0 }, \%parameters);
 
     $self->_checkfile();
     $self->flush($self->{flush});
@@ -51,18 +52,29 @@ sub _validate {
     $self->{mode} = lc($self->{mode});
 
     $self->throw("Invalid mode \"" . $self->{mode} . "\"") unless ($self->{mode} =~ m/^(r|w\+?)$/i);
-    $self->throw("No file or data provided") if ($self->{mode} =~ m/^r$/i &&
-                                                 !defined $self->{file} &&
-                                                 !defined $self->{data});
-    $self->throw("No output file has been specified") if ($self->{mode} =~ m/^w\+?$/i &&
-                                                          !defined $self->{file});
+    $self->throw("No file or data provided") if ($self->{mode} =~ m/^r$/i && !defined $self->{file} && !defined $self->{data});
+    $self->throw("No output file has been specified") if ($self->{mode} =~ m/^w\+?$/i && !defined $self->{file});
     $self->throw("Flush parameter's allowed values are 0 or 1") if ($self->{flush} !~ m/^[01]$/);
     $self->throw("Overwrite parameter's allowed values are 0 or 1") if ($self->{overwrite} !~ m/^[01]$/);
-    $self->throw("Timeout parameter must be an integer greater than 0") if (!isint($self->{timeout}) &&
-                                                                            $self->{timeout} <= 0);
-    $self->throw("Retries parameter must be an integer greater than 0") if (!isint($self->{retries}) &&
-                                                                            $self->{retries} <= 0);
+    $self->throw("Timeout parameter must be an integer greater than 0") if (!isint($self->{timeout}) && $self->{timeout} <= 0);
+    $self->throw("Retries parameter must be an integer greater than 0") if (!isint($self->{retries}) && $self->{retries} <= 0);
+
     $self->{binmode} =~ s/^:?/:/ if (defined $self->{binmode});
+
+    if (defined $self->{file} && $self->{file} !~ /^(https?|ftp):\/\//) {
+
+        $self->{_binary} = isBinary($self->{file});
+        $self->{_size} = -s $self->{file};
+
+    }
+    else {
+
+        $self->{_binary} = isBinary(${$self->{data}});
+        $self->{_size} = length(${$self->{data}});
+
+    }
+
+    $self->warn("Data looks binary, but binMode is not set to \":raw\"") if ($self->{_binary} && $self->{binmode} ne ":raw");
 
 }
 
@@ -79,7 +91,7 @@ sub _checkfile {
         if (defined $data) { $self->{data} = \$data; }
         else {
 
-            if ($file =~ m/^(https?|ftp):\/\//) {
+            if ($file =~ /^(https?|ftp):\/\//) {
 
                 for (1 .. $self->{retries}) {
 
@@ -91,6 +103,8 @@ sub _checkfile {
                     else {
 
                         $data = $reply->{content};
+                        $self->{_binary} = isBinary($data);
+                        $self->{_size} = length($data);
 
                         last;
 
@@ -115,8 +129,7 @@ sub _checkfile {
     elsif ($self->{mode} eq "w") {
 
         $self->throw("Specified file \"" . $file . "\" already exists.\n" .
-                     "Change IO mode to append, or enable overwrite parameter.") if (-e $file &&
-                                                                                     !$self->{overwrite});
+                     "Change IO mode to append, or enable overwrite parameter.") if (-e $file && !$self->{overwrite});
 
     }
 
@@ -167,11 +180,11 @@ sub iseparator {
 sub read {
 
     my $self = shift;
+    my $size = shift || 0;
 
     $self->throw("Unable to read from a write/append filehandle") if ($self->{mode} ne "r");
 
-    my ($fh, $row);
-    $fh = $self->{_fh};
+    my $fh = $self->{_fh};
 
     if (eof($fh)) {
 
@@ -181,12 +194,26 @@ sub read {
 
     }
 
-    local $/ = $self->{iseparator};
+    if (!$self->{_binary}) {
 
-    $row = <$fh>;
-    chomp($row);
+        local $/ = $self->{iseparator};
 
-    return($row ? $row : $self->read());
+        my $row = <$fh>;
+        chomp($row);
+
+        return($row ? $row : $self->read());
+
+    }
+    else {
+
+        my ($buffer, $offset);
+        $offset = tell($fh); 
+        $size ||= $self->{_size} - $offset + 1;
+        read($fh, $buffer, $size);
+
+        return($buffer);
+
+    }
 
 }
 

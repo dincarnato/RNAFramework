@@ -33,7 +33,7 @@ $|++;
 
 my ($output, $overwrite, $command, $help,
     $index, $tab, $annoFile, $GTFfeature, 
-    $GTFattribute, @rc, %commands);
+    $GTFattribute, $blockSize, @rc, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge stats extract);
 
@@ -48,7 +48,8 @@ do {
                 "t|tab"            => \$tab,
                 "a|annotation=s"   => \$annoFile,
                 "f|GTFfeature=s"   => \$GTFfeature,
-                "b|GTFattribute=s" => \$GTFattribute ) or help(1);
+                "b|GTFattribute=s" => \$GTFattribute,
+                "s|blockSize=s"    => \$blockSize ) or help(1);
 
     $command = shift(@ARGV);
     @rc = uniq(@ARGV);
@@ -69,9 +70,9 @@ $GTFattribute = quotemeta($GTFattribute);
 # Input validation
 ##
 
-die "\n  [!] Error: No command specified\n\n" unless($command);
-die "\n  [!] Error: Invalid command \"" . $command . "\"\n\n" unless(exists $commands{$command});
-die "\n  [!] Error: No RC file specified\n\n" unless(@rc);
+die "\n  [!] Error: No command specified\n\n" if (!$command);
+die "\n  [!] Error: Invalid command \"" . $command . "\"\n\n" if (!exists $commands{$command});
+die "\n  [!] Error: No RC file specified\n\n" if (!@rc);
 die "\n  [!] Error: Provided RCI index file does not exist\n\n" if (defined $index && !-e $index);
 
 if ($command eq "extract") {
@@ -97,6 +98,7 @@ elsif ($command =~ m/^view|stats$/) {
 
     my ($file, $rcin);
     $file = shift(@rc);
+    $index ||= "$file.rci" if (-e "$file.rci");
     $rcin = RF::Data::IO::RC->new( file           => $file,
                                    noPreloadIndex => @rc ? 0 : 1,
                                    index          => $index );
@@ -139,7 +141,10 @@ elsif ($command eq "merge") {
 
     $output ||= "merge.rc";
     $output =~ s/(?:\.rc)?$/.rc/;
+    $index ||= $rc[0] . ".rci" if (-e $rc[0] . ".rci");
+    $blockSize ||= 1000000;
 
+    die "\n  [!] Error: Block size must be a positive INT >= 1" if (!isint($blockSize) || $blockSize < 1);
     die "\n  [!] Error: Output RC file already exists." .
         "\n      Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output &&
                                                                                     !$overwrite);
@@ -148,54 +153,56 @@ elsif ($command eq "merge") {
     # Easy check: RC files should have the same size, so if one of them differs, then it cannot be merged
     die "\n [!] Error: Provided RC files have different sizes\n\n" if (sum(map { (-s $rc[$_]) - (-s $rc[$_ - 1]) } 1 .. $#rc));
 
-    my ($rcout, $mappedreads, @rcin);
-    $mappedreads = 0;
+    my ($rcout, $mappedReads, @rcin);
+    $mappedReads = 0;
+    
+    copy($rc[0], $output) or die "\n  [!] Error: Failed to copy temporary RC file ($!)\n\n";
+    if (defined $index) { copy($index, "$output.rci") or die "\n  [!] Error: Failed to copy temporary RCI file ($!)\n\n"; }
+    
     $rcout = RF::Data::IO::RC->new( file       => $output,
                                     index      => $output . ".rci",
-                                    buildindex => 1,
-                                    mode       => "w",
-                                    overwrite  => $overwrite );
+                                    buildindex => defined $index ? 0 : 1,
+                                    mode       => "w+" );
     @rcin = map { RF::Data::IO::RC->new( file           => $rc[$_],
-                                         noPreloadIndex => 1 ) } 0 .. $#rc; # Speeds up, files to be merged should have the same base structure
+                                         noPreloadIndex => 1 ) } 1 .. $#rc; # Speeds up, files to be merged should have the same base structure
+    $_->copyIndexFromObject($rcout) for (@rcin); # Faster than actually loading indexes
 
-    while(my $entry = $rcin[0]->read()) {
+    foreach my $id ($rcin[0]->ids()) {
 
-        my ($merge, $readscount, @counts, @coverage,
-            @entries);
-        @counts = $entry->counts();
-        @coverage = $entry->coverage();
-        $readscount = $entry->readscount();
+        my $length = $rcin[0]->length($id);
 
-        @entries = map { $rcin[$_]->read() } 1 .. $#rcin;
+        for (my $i = 0; $i < $length; $i += $blockSize) {
 
-        for (0 .. $#entries) {
+            my ($j, $end, $entry, $readCount, 
+                $sequence, @counts, @coverage);
+            $end = $i + $blockSize - 1;
+            $end = $length - 1 if ($end >= $length);
+            $entry = $rcout->readBytewise($id, [$i, $end]);
+            $readCount = $entry->readscount() if ($end == $length - 1);
+            @counts = $entry->counts();
+            @coverage = $entry->coverage();
 
-            die "\n  [!] Error: Transcripts in RC files do not follow the same order (" . $rc[0] . 
-                " != " . $rc[$_ + 1] . ")\n\n" if ($entry->id() ne $entries[$_]->id());
-            die "\n  [!] Error: Different sequence for transcript " . $entries[$_]->id() .
-                " between files \"" . $rc[0] . "\" and \"" . $rc[$_+1] . "\"\n\n" if ($entry->sequence() ne $entries[$_]->sequence());
+            foreach my $rcIn (@rcin) {
 
-            my (@tmpcounts, @tmpcoverage);
-            $readscount += $entries[$_]->readscount();
-            @tmpcounts = $entries[$_]->counts();
-            @tmpcoverage = $entries[$_]->coverage();
-            @counts = map { $counts[$_] + $tmpcounts[$_] } 0 .. $#counts;
-            @coverage = map { $coverage[$_] + $tmpcoverage[$_] } 0 .. $#coverage;
+                my ($tmpEntry, @tmpCounts, @tmpCoverage);
+                $tmpEntry = $rcIn->readBytewise($id, [$i, $end]);
+                @tmpCounts = $tmpEntry->counts();
+                @tmpCoverage = $tmpEntry->coverage();
+                $readCount += $tmpEntry->readscount() if ($end == $length - 1);
+                @counts = map { $counts[$_] + $tmpCounts[$_] } 0 .. $#counts;
+                @coverage = map { $coverage[$_] + $tmpCoverage[$_] } 0 .. $#coverage;
+
+            }
+
+            $entry = $rcout->writeBytewise($id, $i, \@counts, \@coverage, $readCount);
 
         }
 
-        $merge = RF::Data::RC->new( id         => $entry->id(),
-                                    sequence   => $entry->sequence(),
-                                    counts     => \@counts,
-                                    coverage   => \@coverage,
-                                    readscount => $readscount );
-        $rcout->write($merge);
-
     }
 
-    $mappedreads += $_->mappedreads() for (@rcin);
+    $mappedReads += $_->mappedreads() for ($rcout, @rcin);
 
-    $rcout->mappedreads($mappedreads);
+    $rcout->mappedreads($mappedReads);
     $rcout->close();
 
 }
@@ -374,8 +381,7 @@ sub formatentry {
 sub help {
 
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    print "\n  [!] Error: Invalid command \"" . $command . "\"\n" if ($command &&
-                                                                      !exists $commands{$command});
+    print "\n  [!] Error: Invalid command \"" . $command . "\"\n" if ($command && !exists $commands{$command});
 
     print <<HELP;
 
@@ -400,10 +406,16 @@ HELP
         die <<HELP;
 
  Description: Displays the content of RC files in human-readable form
- Usage:       rf-rctools view [options] Sample.rc [transcript#1,transcript#2,..,transcript#n]
+ Usage:       rf-rctools view [options] Sample.rc 
+              rf-rctools view [options] Sample.rc transcript#1 transcript#2
+              rf-rctools view [options] Sample.rc transcript#1:1000-2000
 
- Options                Description
- -t  or --tab           Switch to tabular output format
+ Options                         Description
+ -t  or --tab                    Switch to tabular output format
+ -i  or --index     <string>     RCI index file
+                                 Note: if an RCI index is not specified, the program will look in the same 
+                                       directory of the input RC file for a file named after the RC file with 
+                                       one of the following extensions: .rci, .plus.rc.rci, .minus.rc.rci
 
 HELP
 
@@ -416,8 +428,16 @@ HELP
  Usage:       rf-rctools merge [options] Sample1.rc Sample2.rc ... Samplen.rc
 
  Options                                     Description
- -o  or --output     <string>                Output RC filename (Default: merge.rc)
+ -o  or --output         <string>            Output RC filename (Default: merge.rc)
  -ow or --overwrite                          Overwrites output file if already exists
+ -i  or --index          <string>            RCI index file
+                                             Note: if an RCI index is not specified, the program will look in the same 
+                                                   directory of the input RC file for a file named after the RC file with 
+                                                   one of the following extensions: .rci, .plus.rc.rci, .minus.rc.rci
+ -s  or --blockSize      <int>               Maximum size of the chromosome/transcript block to read from
+                                             each RC file (>=1000, Default: 1000000)
+                                             Note: this is particularly useful when merging genome-level RC
+                                                   files, to prevent entire chromosomes from be kept in memory
 
 HELP
 
@@ -434,6 +454,9 @@ HELP
  -o  or --output       <string>     Output RC filename (Default: <annotation>.rc)
  -ow or --overwrite                 Overwrites output file if already exists
  -i  or --index        <string>     RCI index file
+                                    Note: if an RCI index is not specified, the program will look in the same 
+                                          directory of the input RC file for a file named after the RC file with 
+                                          one of the following extensions: .rci, .plus.rc.rci, .minus.rc.rci
  -a  or --annotation   <string>     BED/GTF file containing a list of regions to be extracted (mandatory)
  -f  or --GTFfeature   <string>     If a GTF file is provided, only entries corresponding to this feature type
                                     will be extracted (Default: exon)

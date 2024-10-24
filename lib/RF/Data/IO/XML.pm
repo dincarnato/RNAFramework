@@ -4,19 +4,7 @@ use strict;
 use Core::Utils;
 use Data::Sequence::Utils;
 
-use base qw(Data::IO);
-
-my (%allowedtags);
-
-BEGIN {
-
-    %allowedtags = map { $_            => 1,
-                         $_ . "-error" => 1 } qw(sequence reactivity score ratio
-                                                 probability shannon structure meta-data
-                                                 organism probe source citation
-                                                 pmid replicate condition);
-
-}
+use base qw(Data::IO::XML);
 
 sub new {
 
@@ -24,37 +12,13 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ _id                  => undef,
-                   _sequence            => undef,
-                   _length              => undef,
-                   _tool                => undef,
-                   _algorithm           => undef,
-                   _keep                => undef,
-                   _maxdist             => undef,
-                   _scoring             => undef,
-                   _norm                => undef,
-                   _reactive            => undef,
-                   _win                 => undef,
-                   _offset              => undef,
-                   _remap               => undef,
-                   _max                 => undef,
-                   _pseudo              => undef,
-                   _maxumut             => undef,
-                   _maxmutrate          => undef,
-                   _tosmaller           => undef,
-                   _combined            => undef,
-                   _structure           => undef,
-                   _reactivity          => [],
-                   _probability         => [],
-                   _shannon             => [],
-                   _score               => [],
-                   _ratio               => [],
-                   "_reactivity-error"  => [],
-                   "_probability-error" => [],
-                   "_shannon-error"     => [],
-                   "_score-error"       => [],
-                   "_ratio-error"       => []}, \%parameters);
-
+    $self->_init({ (map { "_" . $_ => undef } qw(id sequence length tool algorithm
+                                                 keep maxdist scoring norm reactive
+                                                 win offset remap max pseudo maxumut
+                                                 maxmutrate tosmaller combined structure)),
+                   (map { "_" . $_            => [],
+                          "_" . $_ . "-error" => [] } qw(reactivity probability shannon score
+                                                         ratio)) }, \%parameters);
 
     $self->_validate();
     $self->_openfh();
@@ -68,148 +32,51 @@ sub _readxml {
 
     my $self = shift;
 
-    my ($fh, $line, $lasttag, %values);
-    $fh = $self->{_fh};
+    my ($tree, %attribs);
+    $tree = $self->read();
+    
+    $self->throw("File does not look like a valid RNA Framework XML file") if (!$tree->hasNode("/data/transcript") || !$tree->hasNode("/data/transcript/sequence"));
 
-    while(<$fh>) {
+    $tree = $tree->getNode("/data");
+    %attribs = $tree->attribute();
 
-        chomp();
-        $_ =~ s/^\s+//g;
-        $line++;
+    foreach my $attrib (keys %attribs) {
 
-        next unless($_);
-        next if ($_ =~ m/^<\?xml/);
+        $self->warn("Unrecognized attribute \"$attrib\"") if (!exists $self->{"_" . $attrib});
 
-        if ($_ =~ m/^<([^\s>]+)/) {
-
-            $lasttag = $1;
-
-            if ($lasttag =~ /^data|transcript$/) {
-
-                $_ =~ s/^<$lasttag\s?|>$//g;
-
-                foreach my $attribute (split(/\s/, $_)) {
-
-                    my @attribute = split("=", $attribute);
-                    $attribute[0] = "_" . $attribute[0];
-                    $attribute[1] =~ s/"//g;
-                    $self->{$attribute[0]} = $attribute[1] if (exists $self->{$attribute[0]});
-
-                }
-
-            }
-            else {
-
-                next if ($lasttag =~ m/^\//);
-
-                $_ =~ s/^<$lasttag>|<\/$lasttag>$//g;
-
-                $self->throw("Malformed XML at line " . $line) if (!exists $allowedtags{$lasttag});
-
-                $values{$lasttag} .= $_;
-
-            }
-
-        }
-        else {
-
-            $self->throw("Malformed XML at line " . $line) if (!exists $allowedtags{$lasttag});
-
-            $values{$lasttag} .= $_;
-
-        }
+        $self->{"_" . $attrib} = $attribs{$attrib};
 
     }
 
-    foreach my $tag (keys %values) {
+    $tree = $tree->getNode("/transcript");
+    %attribs = $tree->attribute();
 
-        my $value = $values{$tag};
-        $value =~ s/\n|\r//g;
-        $value =~ s/<\/.+?>//g;
-        $value =~ s/ //g;
+    foreach my $attrib (keys %attribs) {
 
-        $self->throw("Sequence contains invalid characters") if ($tag eq "sequence" &&
-                                                                 !isna($value));
+        $self->warn("Unrecognized attribute \"$attrib\"") if (!exists $self->{"_" . $attrib});
 
-        $self->{"_" . $tag} = $tag eq "sequence" ? $value : [ split(",", $value) ] if (exists $self->{"_" . $tag});
+        $self->{"_" . $attrib} = $attribs{$attrib};
 
     }
 
-    $self->throw("Sequence and reactivity have unequal lengths") if (@{$self->{_reactivity}} &&
-                                                                     length($self->{_sequence}) != @{$self->{_reactivity}});
-    $self->throw("Sequence and reactivity-error have unequal lengths") if (@{$self->{"_reactivity-error"}} &&
-                                                                           length($self->{_sequence}) != @{$self->{"_reactivity-error"}});
-    $self->throw("Sequence and probability have unequal lengths") if (@{$self->{_probability}} &&
-                                                                      length($self->{_sequence}) != @{$self->{_probability}});
-    $self->throw("Sequence and Shannon entropy have unequal lengths") if (@{$self->{_shannon}} &&
-                                                                          length($self->{_sequence}) != @{$self->{_shannon}});
-    $self->throw("Sequence and score have unequal lengths") if (@{$self->{_score}} &&
-                                                                length($self->{_sequence}) != @{$self->{_score}});
-    $self->throw("Sequence and ratio have unequal lengths") if (@{$self->{_ratio}} &&
-                                                                length($self->{_sequence}) != @{$self->{_ratio}});
+    foreach my $node ($tree->listNodes()) {
+
+        $self->{"_$node"} = $tree->getNode("/$node")->value();
+        $self->{"_$node"} =~ s/\s//g;
+
+        if ($node ne "sequence") { $self->{"_$node"} = [ split(",", $self->{"_" . $node}) ]; }
+        else { $self->throw("Sequence contains invalid characters") if (!isna($self->{"_$node"})); }
+
+    }
+
+    $self->throw("Sequence and reactivity have unequal lengths") if (@{$self->{_reactivity}} && length($self->{_sequence}) != @{$self->{_reactivity}});
+    $self->throw("Sequence and reactivity-error have unequal lengths") if (@{$self->{"_reactivity-error"}} && length($self->{_sequence}) != @{$self->{"_reactivity-error"}});
+    $self->throw("Sequence and probability have unequal lengths") if (@{$self->{_probability}} && length($self->{_sequence}) != @{$self->{_probability}});
+    $self->throw("Sequence and Shannon entropy have unequal lengths") if (@{$self->{_shannon}} && length($self->{_sequence}) != @{$self->{_shannon}});
+    $self->throw("Sequence and score have unequal lengths") if (@{$self->{_score}} && length($self->{_sequence}) != @{$self->{_score}});
+    $self->throw("Sequence and ratio have unequal lengths") if (@{$self->{_ratio}} && length($self->{_sequence}) != @{$self->{_ratio}});
 
 }
-
-#sub _readxml {
-#
-#    my $self = shift;
-#
-#    my ($xmlref, $reactivity, $probability, $shannon,
-#        $score, $ratio, $rerror);
-#
-#    eval { $xmlref = XML::LibXML->load_xml(location => $self->{file}); };
-#
-#    if ($@) {
-#
-#        $@ =~ s/[\n\^]//g;
-#        $self->throw("XML::LibXML error (\"" . $@ . "\")");
-#
-#    }
-#
-#    for (qw(tool algorithm keep maxdist
-#            scoring norm reactive win
-#            offset remap max pseudo
-#            maxumut tosmaller combined)) {
-#
-#        my $key = "_" . $_;
-#        $self->{"_" . $_} = $xmlref->findnodes("/data/\@" . $_)->to_literal();
-#        $self->{$key} = "$self->{$key}";
-#
-#    }
-#
-#    $self->{"_" . $_} = $self->{"_" . $_} =~ m/^TRUE|yes|1$/i ? 1 : 0 for (qw(remap tosmaller combined));
-#
-#    $self->{_keep} = join("", iupac2nt($self->{_keep}));
-#    $self->{_reactive} = join("", iupac2nt($self->{_reactive}));
-#
-#    $self->{_id} = $xmlref->findnodes("/data/transcript/\@id")->to_literal();
-#    $self->{_length} = $xmlref->findnodes("/data/transcript/\@length")->to_literal();
-#    $self->{_sequence} = $xmlref->findnodes("/data/transcript/sequence")->to_literal();
-#
-#    $reactivity = $xmlref->findnodes("/data/transcript/reactivity")->to_literal();
-#    $rerror = $xmlref->findnodes("/data/transcript/reactivity-error")->to_literal();
-#    $probability = $xmlref->findnodes("/data/transcript/probability")->to_literal();
-#    $shannon = $xmlref->findnodes("/data/transcript/shannon")->to_literal();
-#    $ratio = $xmlref->findnodes("/data/transcript/ratio")->to_literal();
-#    $score = $xmlref->findnodes("/data/transcript/score")->to_literal();
-#
-#    $self->{_sequence} =~ s/\s+?//g;
-#    $self->{_sequence} = dna2rna($self->{_sequence});
-#    $reactivity =~ s/\s+?//g;
-#    $rerror =~ s/\s+?//g;
-#    $probability =~ s/\s+?//g;
-#    $score =~ s/\s+?//g;
-#    $ratio =~ s/\s+?//g;
-#    $shannon =~ s/\s+?//g;
-#
-#    $self->{_reactivity} = [ split(/,/, $reactivity) ];
-#    $self->{_rerror} = [ split(/,/, $rerror) ];
-#    $self->{_probability} = [ split(/,/, $probability) ];
-#    $self->{_score} = [ split(/,/, $score) ];
-#    $self->{_ratio} = [ split(/,/, $ratio) ];
-#    $self->{_shannon} = [ split(/,/, $shannon) ];
-#
-#}
 
 sub id { return($_[0]->{_id}); }
 

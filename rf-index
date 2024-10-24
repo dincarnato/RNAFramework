@@ -16,20 +16,20 @@
 ##
 
 use strict;
-use DBI;
 use Digest::MD5 qw(md5_hex);
 use File::Path qw(mkpath);
-use File::Slurp;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use HTTP::Tiny;
-use XML::LibXML;
 
 use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
 use Core::Utils;
+use Data::IO::XML;
+use Net::DB::MySQL;
 use Term::Constants qw(:screen);
+use Term::Progress;
 use Term::Table;
 
 $|++;
@@ -40,12 +40,8 @@ my ($dbh, $sth, $assembly, $annotation,
     $overwrite, $error, $bowtie2, $name,
     $list, $prebuilt, $codonly, $nconly,
     $sed, $listanno, $host, $port,
-    $threads, $unspliced, $nchromosomes, @columns,
-    %columns, %chromosomes, %ids);
-
-@columns = qw(name chrom strand txStart
-              txEnd cdsStart cdsEnd exonCount
-              exonStarts exonEnds);
+    $threads, $unspliced, $nchromosomes,
+    $refChrOnly, %columns, %chromosomes, %ids);
 
 do {
 
@@ -55,6 +51,7 @@ do {
                 "g|genome-assembly=s" => \$assembly,
                 "a|annotation=s"      => \$annotation,
                 "r|reference=s"       => \$reference,
+                "rco|ref-chr-only"    => \$refChrOnly,
                 "o|output-dir=s"      => \$output,
                 "ow|overwrite"        => \$overwrite,
                 "t|timeout=i"         => \$timeout,
@@ -87,32 +84,34 @@ $bb ||= $bowtie2 ? which("bowtie2-build") : which("bowtie-build");
 $bt ||= which("bedtools");
 $sed = which("sed");
 
-if ($list ||
-    $prebuilt) {
+if ($list || $prebuilt) {
 
-    my ($xmlref, $table, %indexes);
+    my ($xmlIO, $table, $tree, %indexes);
 
-    eval { $xmlref = XML::LibXML->load_xml(location => "http://www.incarnatolab.com/datasets/RNAframework/indexes.xml"); };
-
-    if ($@) { die "\n  [!] Error: Unable to retrieve prebuilt indexes list (" . $! . ")\n\n"; }
-
+    $xmlIO = Data::IO::XML->new(file=>"http://www.incarnatolab.com/datasets/RNAframework/indexes.xml");
     $table = Term::Table->new(indent => 2);
     $table->head("ID", "Name", "Description");
+    $tree = $xmlIO->read();
 
-    foreach my $index ($xmlref->findnodes("/data/index")) {
+    if ($tree->hasNode("/data/index")) {
 
-        my $id = $index->findvalue("./\@id");
+        foreach my $indexTree ($tree->getNode("/data/index")) {
 
-        $indexes{$id} = { name   => $index->findvalue("./name"),
-                          desc   => $index->findvalue("./description"),
-                          file   => $index->findvalue("./file"),
-                          folder => $index->findvalue("./folder"),
-                          date   => $index->findvalue("./date"),
-                          md5    => $bowtie2 ? $index->findvalue("./md5/bowtie2") : $index->findvalue("./md5/bowtie1") };
+            my $id = $indexTree->attribute("id");
 
-        $table->row($id, $indexes{$id}->{name}, $indexes{$id}->{desc});
+            $indexes{$id} = { name   => $indexTree->getNode("name")->value(),
+                              desc   => $indexTree->getNode("description")->value(),
+                              file   => $indexTree->getNode("file")->value(),
+                              folder => $indexTree->getNode("folder")->value(),
+                              date   => $indexTree->getNode("date")->value(),
+                              md5    => $bowtie2 ? $indexTree->getNode("md5/bowtie2")->value() : $indexTree->getNode("md5/bowtie1")->value() };
+
+            $table->row($id, $indexes{$id}->{name}, $indexes{$id}->{desc});
+
+        }
 
     }
+    else { die "\n  [!] Error: Malformed response from server. If the issue persists, please report it on GitHub\n\n"; } 
 
     if ($list) {
 
@@ -193,7 +192,7 @@ if ($list ||
 
         print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [Checking MD5 checksum]";
 
-        if (md5_hex(read_file($output . $indexes{$prebuilt}->{file})) ne $indexes{$prebuilt}->{md5}) {
+        if (md5_hex(slurpFile($output . $indexes{$prebuilt}->{file})) ne $indexes{$prebuilt}->{md5}) {
 
             print CLRRET . "[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index [FAIL]";
 
@@ -244,8 +243,7 @@ else {
     die "\n  [!] Error: Provided reference FASTA file doesn't exist\n\n" if (defined $reference &&
                                                                              !-e $reference);
 
-    if (-e $output &&
-        !$listanno) {
+    if (-e $output && !$listanno) {
 
         if ($overwrite) {
 
@@ -273,8 +271,7 @@ else {
 
         my ($v1, $v2) = ($1, $2);
 
-        die "\n  [!] Error: RF Index requires BEDTools v2.17.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 ||
-                                                                                                                         $v2 < 17);
+        die "\n  [!] Error: RF Index requires BEDTools v2.31.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 || $v2 < 31);
 
     }
     else { warn "\n  [!] Warning: Unable to detect BEDTools version\n"; }
@@ -283,16 +280,16 @@ else {
 
     print "\n[+] Connecting to UCSC genome database (" . $host . ":" . $port . ")...";
 
-    eval { $dbh = DBI -> connect( "DBI:mysql:database=" . $assembly . ";host=" . $host . ";port=" . $port . ";mysql_connect_timeout=" . $timeout . ";",
-                                  "genomep",
-                                  "password",
-                                  { RaiseError => 1,
-                                    PrintError => 0,
-                                    AutoCommit => 1 } ); };
+    $dbh = Net::DB::MySQL->new( database => $assembly,
+                                host     => $host,
+                                port     => $port,
+                                user     => "genomep",
+                                password => "password",
+                                timeout  => $timeout );
 
-    if ($@) {
+    if (!$dbh->connect()) {
 
-        die "\n\n  [!] Error: Connection to UCSC genome database failed." .
+        die "\n\n  [!] Error: Connection to UCSC genome database failed (" . $dbh->error() . ")." .
             "\n             Please check the genome assembly and try again.\n\n";
 
     }
@@ -301,23 +298,19 @@ else {
 
         my (@tables);
 
-        $sth = $dbh->prepare("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME like 'exonCount' AND TABLE_SCHEMA like '" . $assembly . "' ORDER by TABLE_NAME");
-        eval { $sth->execute() };
+        if ($dbh->query("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME like 'exonCount' AND TABLE_SCHEMA like '$assembly' ORDER by TABLE_NAME")) {
 
-        if ($@) {
+            print "\n[+] Listing available gene annotation tables:\n\n";
 
-            die "\n\n  $@ [!] Error: Failed to retrieve gene annotations' list\n\n";
+            while (my $table = $dbh->read()) { push(@tables, $table->{TABLE_NAME}); }
+
+            if (@tables) { print "  [*] " . join("\n  [*] ", @tables); }
+            else { print "  [!] Error: No available gene annotation table found"; }
+
+            print "\n\n";
 
         }
-
-        print "\n[+] Listing available gene annotation tables:\n\n";
-
-        while (my $table = $sth->fetchrow_hashref()) {  push(@tables, $table->{TABLE_NAME}); }
-
-        if (@tables) { print "  [*] " . join("\n  [*] ", @tables); }
-        else { print "  [!] Error: No available gene annotation table found"; }
-
-        print "\n\n";
+        else { die "\n\n  [!] Error: Failed to retrieve gene annotations' list (" . $dbh->error() . ")\n\n"; }
 
     }
     else {
@@ -335,22 +328,19 @@ else {
 
         print "\n[+] Annotation found. Validating columns...";
 
-        $sth = $dbh->prepare("SELECT * FROM `" . $annotation . "` LIMIT 0,1");
-        eval { $sth->execute() };
+        if ($dbh->query("SELECT * FROM `$annotation` LIMIT 0,1")) {
 
-        %columns = map { $_ => 1 } @{$sth->{NAME}};
+            my %columns = map { $_ => 1} $dbh->columns();
 
-        for (@columns) {
+            for (qw(name chrom strand txStart txEnd cdsStart 
+                    cdsEnd exonCount exonStarts exonEnds)) { 
 
-            if (!exists $columns{$_}) {
-
-                rmtree($output);
-
-                die "\n\n  [!] Error: Table \"" . $annotation . "\" doesn't look like a genes annotation (missing \"" . $_ . "\" column)\n\n";
+                die "\n\n  [!] Error: Table \"$annotation\" doesn't look like a genes annotation (missing \"" . $_ . "\" column)\n\n" if (!exists $columns{$_});
 
             }
 
         }
+        else { die "\n\n  [!] Error: Failed to obtain annotation from UCSC SQL server (" . $dbh->error() . ")\n\n"; }
 
         print "\n[+] Making output directory...";
 
@@ -361,19 +351,11 @@ else {
 
         print "\n[+] Downloading annotation data. Please wait...";
 
-        $sth = $dbh->prepare("SELECT * FROM `" . $annotation . "`");
-        eval { $sth->execute() };
+        if ($dbh->query("SELECT * FROM `$annotation`")) {
 
-        if ($@) {
+            while (my $ref = $dbh->read()) {
 
-            rmtree($output);
-
-            die "\n\n  [!] Error: Annotation data download failed\n\n";
-
-        }
-        else {
-
-            while (my $ref = $sth->fetchrow_hashref()) {
+                next if ($refChrOnly && ($ref->{chrom} =~ /^chrUn|(?:fix|random)$/));
 
                 my $id = $name && (defined $ref->{name2} || defined $ref->{geneName}) ? $ref->{name2} || $ref->{geneName} : $ref->{name};
 
@@ -388,18 +370,17 @@ else {
 
                 }
 
-                next if (($codonly &&
-                          $ref->{cdsStart} == $ref->{cdsEnd}) ||
-                         ($nconly &&
-                          $ref->{cdsStart} != $ref->{cdsEnd}));
+                next if (($codonly && $ref->{cdsStart} == $ref->{cdsEnd}) ||
+                         ($nconly && $ref->{cdsStart} != $ref->{cdsEnd}));
 
-                if ((exists $ids{$id} &&
-                     $ids{$id}->{length} < sum(@lengths)) ||
-                    !exists $ids{$id}) {
+                # Left for debug, should never happen
+                die "\n\n  [!] Error: Truncated SQL response. Please try again.\n\n" if (!@lengths);
+
+                if ((exists $ids{$id} && $ids{$id}->{length} < sum(@lengths)) || !exists $ids{$id}) {
 
                     $ids{$id} = { length => sum(@lengths),
                                   entry  => join("\t", $ref->{chrom}, $ref->{txStart}, $ref->{txEnd}, $id, 0, $ref->{strand}, $ref->{cdsStart}, $ref->{cdsEnd}, "0,0,0", $ref->{exonCount}) .
-                                            "\t" .  join(",", @lengths) . ",\t" . join(",", @starts) . ",\n"};
+                                                 "\t" .  join(",", @lengths) . ",\t" . join(",", @starts) . ",\n"};
 
                 }
 
@@ -414,83 +395,77 @@ else {
 
             close($wh);
 
-            $sth->finish();
-            $dbh->disconnect();
+            $dbh->close();
+
+        }
+        else {
+
+            rmtree($output);
+
+            die "\n\n  [!] Error: Failed to obtain annotation from UCSC SQL server (" . $dbh->error() . ")\n\n";
 
         }
 
         $nchromosomes = scalar(keys %chromosomes);
+        my $startTime = time;
 
         if (!defined $reference) {
 
-            my $longer = length(shift(@{[sort {length($b) <=> length($a)} keys %chromosomes]}));    # Takes the length of the longer chromosome name
+            print "\n\n  [i] Note: No reference FASTA file has been provided." .
+                  "\n            RF Index will now try to download the reference genome sequence" .
+                  "\n            from the UCSC DAS server." .
+                  "\n            This may take up to hours, depending on your connection's speed.\n" .
+                  "\n[+] Downloading sequence data for " . keys(%chromosomes) . " chromosomes. Please wait...\n\n";
 
-            print "\n\n  [!] Warning: No reference FASTA file has been provided." .
-                  "\n               RF Index will now try to download the reference genome sequence" .
-                  "\n               from the UCSC DAS server." .
-                  "\n               This may take up to hours, depending on your connection's speed.\n" .
-                  "\n[+] Downloading sequence data for " . keys(%chromosomes) . " chromosomes. Please wait...\n";
-
-            open(my $wh, ">" . $output . $assembly . ".fa") or die "\n\n  [!] Error: Unable to write reference output FASTA file (" . $! . ")\n\n";
+            open(my $wh, ">", $output . $assembly . ".fa") or die "\n  [!] Error: Unable to write reference output FASTA file (" . $! . ")\n\n";
             select((select($wh), $|=1)[0]);
 
             foreach my $chromosome (sort keys %chromosomes) {
 
-                my ($ua, $downloaded, $content, $reply,
-                    $status, $xml, $spacer, $size);
+                my ($ua, $content, $reply, $status, 
+                    $xmlIO, $size, $progressBar);
                 $ua = HTTP::Tiny->new(timeout => $timeout);
-                $downloaded = 0;
                 $size = 0;
-                $spacer = " " x ($longer - length($chromosome) + 1);
+                $progressBar = Term::Progress->new(colored => 1);
 
-                print "\n  [*] Chromosome " . $chromosome . $spacer . "[0.00%]";
-
-                $reply = $ua->get("http://genome.ucsc.edu/cgi-bin/das/" . $assembly . "/dna?segment=" . $chromosome,
+                $reply = $ua->get("http://genome.ucsc.edu/cgi-bin/das/$assembly/dna?segment=$chromosome",
                                   { data_callback => sub {
 
                                     my ($chunk, $response) = @_;
-                                    my $percentage = 0;
 
                                     # We estimate the size of the data from the DNA tag
-                                    if (!$size && $chunk =~ m/<DNA length="(\d+)">/) { $size = $1; }
+                                    if (!$size && $chunk =~ m/<DNA length="(\d+)">/) { 
+                                        
+                                        $size = $1; 
+                                        $progressBar->max($size);
+                                        $progressBar->init($chromosome);
 
-                                    $downloaded += length($chunk);
-                                    $percentage = sprintf("%.2f", $downloaded / $size * 100);
-
-                                    print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[" . ($percentage > 100 ? "100.00" : $percentage) . "%]";
-
+                                    }
+                                    
+                                    $progressBar->update(length($chunk));
+                                    
                                     $content .= $chunk; } } );
 
                 ($status) = $reply->{headers}->{"x-das-status"} =~ m/(\d+)/;
 
-                if (!$reply->{success} ||
-                    $status != 200) {
+                if (!$reply->{success} || $status != 200) {
 
-                    delete($chromosomes{$chromosome});
-                    print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[FAIL] (Server response: " . $reply->{reason} . ")";
+                    die "\n  [!] Error: Failed to download chromosome $chromosome (Server response: " . $reply->{reason} . ")\n\n";
 
                 }
                 else {
+                    
+                    $progressBar->status("Parsing XML data");
+                    $xmlIO = Data::IO::XML->new(data => $content);
+                    my $tree = $xmlIO->read();
 
-                    print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[Parsing XML]";
+                    if ($tree->hasNode("/DASDNA/SEQUENCE/DNA")) {
 
-                    eval { $xml = XML::LibXML->load_xml( string       => $content,
-                                                         huge         => 1,
-                                                         load_ext_dtd => 0 ); };
-
-                    if ($@) {
-
-                        unlink(glob($output . "*"));
-
-                        rmtree($output);
-
-                        die "\n\n  [!] Error: Failed to parse UCSC DAS XML reply (" . $@ . ")\n\n";
+                        print $wh ">" . $chromosome . "\n" . uc($tree->getNode("/DASDNA/SEQUENCE/DNA")->value()) . "\n";
+                        $progressBar->status("Done");
 
                     }
-
-                    print $wh ">" . $chromosome . uc($xml->findnodes("/DASDNA/SEQUENCE/DNA")->to_literal());
-
-                    print CLRRET . "  [*] Chromosome " . $chromosome . $spacer . "[DONE]";
+                    else { die CLRRET . "  [!] Error: Malformed response from UCSC DAS server\n\n"; }
 
                 }
 
@@ -498,9 +473,8 @@ else {
 
             close($wh);
 
-            print "\n";
-
             $reference = $output . $assembly . ".fa";
+            print CLRRET;
 
         }
 
@@ -510,17 +484,21 @@ else {
 
             rmtree($output);
 
-            die "\n\n  [!] Error: Download failed for all chromosomes\n\n";
+            die "\n  [!] Error: Download failed for all chromosomes\n\n";
 
         }
-        else { print "\n[+] Successfully downloaded " . scalar(keys %chromosomes) . "/" . $nchromosomes . " (" . sprintf("%.2f", scalar(keys %chromosomes) / $nchromosomes * 100) . "\%) chromosomes."; }
+        else { 
+            
+            print CLRRET . "  [i] All chromosomes downloaded (Elapsed time: " . formatTime(time - $startTime) . ")\n";
+            
+        }
 
         print "\n[+] Extracting transcript sequences...";
 
         $ret = system($bt . " -fi \"" . $reference . "\" -fo \"" . $output . $prefix . ".fa\" -bed \"" . $output . $prefix . ".bed\" -nameOnly -s" . ($unspliced ? " " : " -split ") . "2> \"" . $output . "logs/fastaFromBed.log\"");
 
         die "\n\n  [!] Error: Transcript sequences extraction failed." .
-            "\n             Please check the log file and ensure that the installed bedTools version is >= 2.17.0.\n\n" if ($ret);
+            "\n             Please check the log file and ensure that the installed bedTools version is >= 2.31.0.\n\n" if ($ret);
 
         # Added to remove strand information left by newer BEDTools versions
         system($sed . " -i" . ($^O eq "darwin" ? " '' " : " ") . "'s/([\\+-])//g' \"" . $output . $prefix . ".fa\" 2>/dev/null") if ($sed);
@@ -540,7 +518,13 @@ else {
 
 rmtree($output . "logs/");
 
-sub table_exists { return(scalar(@{$dbh->selectcol_arrayref("SHOW TABLES LIKE '" . $_[0] . "'")})); }
+sub table_exists {
+
+    if ($dbh->query("SHOW TABLES LIKE '" . $_[0] . "'")) { return(@{$dbh->columns()}); }
+    
+    return;
+
+}
 
 sub help {
 
@@ -569,21 +553,23 @@ sub help {
                                         Note: to obtain a list of available prebuild indexes, use -lp (or --list-prebuilt)
 
  Reference index building
- -H  or --host             <string>     UCSC server hostname (Default: genome-mysql.cse.ucsc.edu)
- -P  or --port             <int>        UCSC server port (Default: 3306)
- -g  or --genome-assembly  <string>     Genome assembly for the species of interest (Default: mm9)
- -la or --list-annotations              Lists available gene annotation UCSC tables
- -a  or --annotation       <string>     Name of the UCSC table containing the gene annotation (Default: refFlat)
- -n  or --gene-name                     If available, gene name/symbol will be used ("name2"/"geneName" columns)
- -co or --coding-only                   Builds reference index using only protein-coding transcripts
- -no or --noncoding-only                Builds reference index using only non-coding transcripts
- -u  or --unspliced                     Builds reference index using pre-mRNA sequences (including introns)
- -t  or --timeout          <int>        Connection's timeout in seconds (Default: 180)
- -r  or --reference        <string>     Path to a FASTA file containing chromosome (or scaffold) sequences for the chosen genome assembly
-                                        Note: if no file is specified, RF Index will try to obtain sequences from UCSC DAS server.
-                                        This process may take up to hours, depending on your connection's speed.
- -b  or --bowtie-build     <string>     Path to bowtie-build (or bowtie2-build) executable (Default: assumes bowtie(2)-build is in PATH)
- -e  or --bedtools         <string>     Path to bedtools executable (Default: assumes bedtools is in PATH)
+ -H   or --host             <string>     UCSC server hostname (Default: genome-mysql.cse.ucsc.edu)
+ -P   or --port             <int>        UCSC server port (Default: 3306)
+ -g   or --genome-assembly  <string>     Genome assembly for the species of interest (Default: mm9)
+ -rco or --ref-chr-only                  Chromosome patches ("_fix") and unassigned genomic chunks ("_random" and "chrUn")
+                                         will be ignored
+ -la  or --list-annotations              Lists available gene annotation UCSC tables
+ -a   or --annotation       <string>     Name of the UCSC table containing the gene annotation (Default: refFlat)
+ -n   or --gene-name                     If available, gene name/symbol will be used ("name2"/"geneName" columns)
+ -co  or --coding-only                   Builds reference index using only protein-coding transcripts
+ -no  or --noncoding-only                Builds reference index using only non-coding transcripts
+ -u   or --unspliced                     Builds reference index using pre-mRNA sequences (including introns)
+ -t   or --timeout          <int>        Connection's timeout in seconds (Default: 180)
+ -r   or --reference        <string>     Path to a FASTA file containing chromosome (or scaffold) sequences for the chosen genome assembly
+                                         Note: if no file is specified, RF Index will try to obtain sequences from UCSC DAS server.
+                                               This process may take up to hours, depending on your connection's speed.
+ -b    or --bowtie-build     <string>     Path to bowtie-build (or bowtie2-build) executable (Default: assumes bowtie(2)-build is in PATH)
+ -e    or --bedtools         <string>     Path to bedtools executable (Default: assumes bedtools is in PATH)
 
 HELP
 

@@ -46,6 +46,19 @@ sub new {
 
 }
 
+sub copyIndexFromObject {
+
+    my $self = shift;
+    my $obj = shift;
+
+    $self->throw("Object is not a valid RF::Data::IO::RC object") if (blessed($obj) && ref($obj) ne "RF::Data::IO::RC");
+    $self->throw("Object is not indexed") if (!keys %{$obj->{_offsets}});
+
+    $self->{_offsets} = clonehashref($obj->{_offsets});
+    $self->{_lengths} = clonehashref($obj->{_lengths});
+
+}
+
 sub _validate {
 
     my $self = shift;
@@ -114,29 +127,9 @@ sub _loadindex {
     }
     else { # Builds missing index
 
-        my ($data, $offset, $idlen, $id,
-            $length);
-        $offset = 0;
+        my ($data, $idlen, $id, $length);
 
-        while($offset < (-s $self->{file}) - 17) { # While the 8 + 2 + 7 bytes of total mapped reads + RC version + EOF Marker are reached
-
-            read($fh, $data, 4);
-            $idlen = unpack("L<", $data);
-
-            read($fh, $data, $idlen);
-            $id = substr($data, 0, -1); # Removes the "\x00" string terminator
-
-            read($fh, $data, 4);
-            $length = unpack("L<", $data);
-
-            $self->{_offsets}->{$id} = $offset;
-            $self->{_lengths}->{$id} = $length;
-
-            $offset += 4 * ($length * 2 + 3) + length($id) + 1 + ($length + ($length % 2)) / 2;
-
-            seek($fh, $offset, SEEK_SET);
-
-        }
+        $self->_buildIndex();
 
         if ($self->{buildindex} &&
             defined $self->{index}) {
@@ -155,6 +148,39 @@ sub _loadindex {
             close($ih);
 
         }
+
+    }
+
+    $self->reset();
+
+}
+
+sub _buildIndex {
+
+    my $self = shift;
+
+    my ($fh, $offset, $data, $id, 
+        $idLen, $length); 
+    $fh = $self->{_fh};
+    $offset = 0;
+
+    while($offset < (-s $self->{file}) - 17) { # While the 8 + 2 + 7 bytes of total mapped reads + RC version + EOF Marker are reached
+
+        read($fh, $data, 4);
+        $idLen = unpack("L<", $data);
+
+        read($fh, $data, $idLen);
+        $id = substr($data, 0, -1); # Removes the "\x00" string terminator
+
+        read($fh, $data, 4);
+        $length = unpack("L<", $data);
+
+        $self->{_offsets}->{$id} = $offset;
+        $self->{_lengths}->{$id} = $length;
+
+        $offset += 4 * ($length * 2 + 3) + length($id) + 1 + ($length + ($length % 2)) / 2;
+
+        seek($fh, $offset, SEEK_SET);
 
     }
 
@@ -203,6 +229,8 @@ sub readBytewise {
 
         $self->{_lastSeq} = { id       => $id,
                               sequence => substr($data, 0, $length) };
+
+        $self->throw("Sequence \"$id\" contains invalid characters") if (!isna($self->{_lastSeq}->{sequence}));
 
         undef($data);
 
@@ -355,8 +383,13 @@ sub writeBytewise {
     print $fh pack("L<*", @{$counts});
     seek($fh, $beginArray + 4 * $length + 4 * $pos, SEEK_SET);
     print $fh pack("L<*", @{$coverage});
-    seek($fh, $beginArray + 4 * $length * 2, SEEK_SET);
-    print $fh pack("L<", $readCount);
+
+    if (defined $readCount) {
+
+        seek($fh, $beginArray + 4 * $length * 2, SEEK_SET);
+        print $fh pack("L<", $readCount);
+
+    }
 
 }
 
@@ -589,7 +622,14 @@ sub ids {
 
     my $self = shift;
 
-    my @ids = sort keys %{$self->{_offsets}};
+    if (!keys %{$self->{_offsets}}) {
+
+        if (!$self->{noPreloadIndex}) { $self->_buildIndex(); }
+        else { $self->throw("Method requires an indexed file, but noPreloadIndex is TRUE"); }
+
+    }
+
+    my @ids = sort {$self->{_offsets}->{$a} <=> $self->{_offsets}->{$b}} keys %{$self->{_offsets}};
 
     return(wantarray() ? @ids : \@ids);
 
@@ -599,6 +639,13 @@ sub length {
 
     my $self = shift;
     my $id = shift;
+
+    if (!keys %{$self->{_offsets}}) {
+
+        if (!$self->{noPreloadIndex}) { $self->_buildIndex(); }
+        else { $self->throw("Method requires an indexed file, but noPreloadIndex is TRUE"); }
+
+    }
 
     return() if (!defined $id || !exists $self->{_lengths}->{$id});
 
@@ -611,9 +658,16 @@ sub sequence {
     my $self = shift;
     my ($id, $start, $end) = @_;
 
-    return() if (!defined $id || !exists $self->{_lengths}->{$id} ||
-                 (defined $start && $start >= $self->{_lengths}->{$id}) ||
-                 (defined $end && $end >= $self->{_lengths}->{$id}));
+    if (!keys %{$self->{_offsets}}) {
+
+        if (!$self->{noPreloadIndex}) { $self->_buildIndex(); }
+        else { $self->throw("Method requires an indexed file, but noPreloadIndex is TRUE"); }
+
+    }
+
+    return if (!defined $id || !exists $self->{_lengths}->{$id} ||
+               (defined $start && $start >= $self->{_lengths}->{$id}) ||
+               (defined $end && $end >= $self->{_lengths}->{$id}));
 
     my ($fh, $length, $sequence);
     $fh = $self->{_fh};

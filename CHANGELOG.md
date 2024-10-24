@@ -1,3 +1,28 @@
+
+## [2.9.0] - 2024-10-24
+### Added
+- Added multithread support to rf-count-genome. Added the -P parameter to visualize progress per file
+- Added rf-mmtools module for manipulation of MM files
+- Added handling of replicates as well as multiple experiments using different chemical probes in rf-fold
+- Added handling of replicates in rf-jackknife
+- Added -rco (--ref-chr-only) parameter to rf-index to only retrieve reference chromosomes and omitting chromosome fixes and randoms
+- Added the -s (--blockSize) parameter to rf-rctools merge to specify the size of the chromosome/transcript chunk to load in memory, to enable efficient merging of large genome-level RC files generated with rf-count-genome
+
+### Changed
+- Removed -cm (--constraint-method) from rf-fold and dropped support for Zarringhalam soft constraints. Only Deigan's method is now available
+- Modified behaviour of the -i (--index) parameter in rf-norm. The parameter will now only accept a single index file, to be used for all RC files (untreated, treated, denatured). If the RC files have different structures, and a distinct RCI index is needed for each of them, the program will now automatically look for an RCI file named after each individual RC file within the same folder (e.g., for Sample.rc the program will look for Sample.rc.rci)
+
+### API changes
+- Added Core::Utils functions spaceLeft(), bytesToHuman() and humanToBytes(), isBinary(), rmEndSpaces()
+- Improved handling of process queues in Core::Process::Queue and solved situations in which the program would hang and only use 1 process even if more processors were still available
+- Dropped dependency on Config::Simple module. Now RF::Config parses the configuration file itself
+- Added the copyIndexFromObject() method to RF::Data::IO::RC
+- Improved MMI index structure
+- Introduced environment variables RF_NOCHECKUPDATES and RF_VERBOSITY
+- Implemented pure-Perl XML handling via the Data::IO::XML and Data::XML::Tree modules, and dropped the requirement for libXML
+- Implemented connection to SQL databases via the Net::DB::SQL module, and dropped the requirement for the Perl DBI non-core module
+- Added the status() method to Term::Progress to update the status message of an existing progress bar
+
 ## [2.8.9] - 2024-09-10
 ### Added
 - Added multithread support to rf-count to speed up the analysis by processing multiple transcripts in parallel. Added the -P parameter to visualize progress per file, and the -ncl (--no-cov-low-qual) to prevent low coverage bases from being counted towards total coverage in -m mode

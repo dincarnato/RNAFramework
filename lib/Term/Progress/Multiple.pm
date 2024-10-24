@@ -18,6 +18,7 @@ sub new {
                    colored     => 0,
                    showETA     => 0,
                    updateRate  => 0,
+                   updateTime  => 0,
                    sets        => {},
                    _progresses => {},
                    _positions  => {},
@@ -79,7 +80,8 @@ sub init {
                                                                 width      => $self->{width},
                                                                 colored    => $self->{colored},
                                                                 showETA    => $self->{showETA},
-                                                                updateRate => $self->{updateRate} );
+                                                                updateRate => $self->{updateRate},
+                                                                updateTime => $self->{updateTime} );
             $self->{_progresses}->{$set}->init($status);
             $self->{_positions}->{$set} = [$self->{_lastRow}, -t STDOUT ? (getCursorPos())[1] : 0];
             $self->{_lastCol} = $self->{_positions}->{$set}->[1];

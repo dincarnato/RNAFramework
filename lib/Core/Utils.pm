@@ -1,23 +1,11 @@
 #!/usr/bin/perl
 
-##
-# Chimaera Framework
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 package Core::Utils;
 
 use strict;
 use Carp;
+use Core::Mathematics;
+use Cwd qw(getcwd);
 use Fcntl qw(F_GETFL SEEK_SET);
 use File::Find qw(finddepth);
 use File::Spec;
@@ -28,23 +16,28 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.8.9";
+$VERSION = "2.9.0";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
              mktree ncores blessed unbless shareDataStruct
-	         formatTime isGzipped);
+             formatTime isGzipped isBinary spaceLeft bytesToHuman
+             humanToBytes slurpFile rmEndSpaces);
 
 BEGIN {
 
-    my ($dir, $git);
-    $dir = dirname($INC{"Core/Utils.pm"}) . "/../../";
-    $git = `git -C $dir remote show origin 2>&1`;
+    if (!$ENV{"RF_NOCHECKUPDATES"}) {
 
-    if ($git =~ /master pushes to master \(local out of date\)/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
-    elsif ($git =~ /not a git repository/) { CORE::warn  "\n  [!] Warning: Cannot check for updates. RNA Framework install dir does not appear to be a git repository.\n"; }
+        my ($dir, $git);
+        $dir = dirname($INC{"Core/Utils.pm"}) . "/../../";
+        $git = `git -C $dir remote show origin 2>&1`;
+
+        if ($git =~ /master pushes to master \(local out of date\)/) { CORE::warn  "\n  [i] Note: An update to RNA Framework is available. Please issue a 'git pull'.\n"; }
+        elsif ($git =~ /not a git repository/) { CORE::warn  "\n  [!] Warning: Cannot check for updates. RNA Framework install dir does not appear to be a git repository.\n"; }
+
+    }
 
 }
 
@@ -61,11 +54,11 @@ sub uniq {
 
 }
 
-sub throw { croak _exception($_[0], $_[1] // $ENV{verbosity} // $ENV{verbose}  // $ENV{VERBOSE}  // $ENV{VERBOSITY} // 0, 1); }
+sub throw { croak _exception($_[0], $_[1] // $ENV{"RF_VERBOSITY"} // 0, 1); }
 
 sub warn {
 
-    my $verbosity = $_[1] // $ENV{verbosity} // $ENV{verbose}  // $ENV{VERBOSE}  // $ENV{VERBOSITY} // 0;
+    my $verbosity = $_[1] // $ENV{"RF_VERBOSITY"} // 0;
 
     carp _exception($_[0], $verbosity, 0) if ($verbosity >= 0);
 
@@ -409,6 +402,14 @@ sub ncores {
     if ($^O eq "darwin") { chomp($ncores = `sysctl -n hw.ncpu`); }
     elsif ($^O eq "linux") { chomp($ncores = `grep -c -P '^processor\\s+:' /proc/cpuinfo`); }
 
+    if (!isint($ncores) || $ncores < 1) {
+
+        Core::Utils::warn("Unable to determine number of available processors/cores");
+
+        $ncores = 1000000;
+
+    }
+
     return($ncores);
 
 }
@@ -518,7 +519,8 @@ sub isGzipped {
 
     my ($data);
 
-    open(my $fh , "<:raw", $file);
+    open(my $fh , "<", $file);
+    binmode($fh);
     read($fh, $data, 1);
 
     return if ($data ne "\x1F");
@@ -528,6 +530,142 @@ sub isGzipped {
     return if ($data ne "\x8B");
 
     return(1);
+
+}
+
+# Checks if file or variable is binary, by implementing the same logic of -B
+sub isBinary {
+
+    my $data = shift;
+    my $blockSize = shift || 512;
+
+    if (-e $data) { return(1) if (-s $data && -B $data); }
+    else {
+
+        return if (!length($data));
+
+        my ($chars, $nonText);
+        $chars = join("", map { chr($_) } (32 .. 126)) . "\n\r\t\f\b";
+        $data = substr($data, 0, $blockSize);
+        
+        return(1) if ($data =~ /\x00/);
+        
+        $nonText = $data =~ s/[^d]//gr;
+
+        return(1) if (length($nonText) / length($data) > 0.3);
+
+    }
+
+    return;
+
+}
+
+sub spaceLeft {
+
+    my $dir = shift || getcwd();
+
+    Core::Utils::throw("Directory \"$dir\" does not exist") if (!-d $dir);
+
+    return(humanToBytes((split(" ", (split(/\n/, `df -H $dir`))[1]))[3]));
+
+}
+
+sub bytesToHuman {
+
+    my $bytes = shift;
+
+    my %units = ( (1024)      => "K",
+                  (1024 ** 2) => "M",
+                  (1024 ** 3) => "G",
+                  (1024 ** 4) => "T",
+                  (1024 ** 5) => "P" );
+
+    if (!Core::Mathematics::ispositive($bytes) || !Core::Mathematics::isint($bytes)) {
+
+        Core::Utils::warn("Invalid size");
+
+        return();
+
+    }
+    else {
+
+        return($bytes . "B") if ($bytes < 1024);
+
+        my $unit = Core::Mathematics::max(grep { $_ <= $bytes } keys %units);
+
+        return(sprintf("%.1f", $bytes / $unit) . $units{$unit});
+
+    }
+
+}
+
+sub humanToBytes {
+
+    my $size = uc(shift);
+
+    my %units = ( K => 1024,
+                  M => 1024 ** 2,
+                  G => 1024 ** 3,
+                  T => 1024 ** 4,
+                  P => 1024 ** 5 );
+
+    if ($size =~ m/^(\d+(?:\.\d+)?)([BKMGTP])?$/i) {
+
+        my ($bytes, $unit) = ($1, $2);
+
+        return($bytes) if (!defined $unit || $unit eq "B");
+
+        return($bytes * $units{$unit});
+
+    }
+    else {
+
+        Core::Utils::warn("Invalid size");
+
+        return();
+
+    }
+
+}
+
+sub slurpFile {
+
+    my $file = shift;
+
+    my ($fh, $size, $slurpedFile);
+
+    open($fh, "<", $file);
+    binmode($fh);
+
+    $size = -s $file;
+
+    while ($size) {
+
+        my ($buffer, $bufferSize);
+        $bufferSize = Core::Mathematics::min($size, 1048576);
+        read($fh, $buffer, $bufferSize);
+        $slurpedFile .= $buffer;
+        $size -= $bufferSize;
+
+    }
+
+    close($fh);
+
+    return($slurpedFile);
+
+}
+
+sub rmEndSpaces {
+
+    my $string = shift;
+
+    my $start = 0;
+    $start++ while (substr($string, $start, 1) eq " ");
+
+    my $end = length($string) - 1;
+    $end-- while ($end >= 0 && substr($string, $end, 1) eq " ");
+
+    return(substr($string, $start, $end - $start + 1));
 
 }
 

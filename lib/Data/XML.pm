@@ -2,6 +2,7 @@ package Data::XML;
 
 use strict;
 use Core::Mathematics;
+use Data::IO::XML;
 
 use base qw(Core::Base);
 
@@ -254,13 +255,17 @@ sub addxmlblock {
     
     if (defined $xml) {
         
-        my $islibXMLinstalled = eval { require XML::LibXML; 1; };
+        if ($validate) {
+            
+            my $eval = do { 
+                
+                local $@;
+                eval { my $dom = Data::IO::XML->new(data => $xml); };
+                $@;
 
-        if ($islibXMLinstalled && $validate) {
+            };
             
-            eval { my $dom = XML::LibXML->load_xml(string => $xml); };
-            
-            $self->throw("Malformed XML code block") if ($@);
+            $self->throw("Malformed XML code block") if ($eval);
             
         }
         
@@ -295,7 +300,7 @@ sub _validatetag {
         $tag =~ s/ /_/g;  # Remove spaces
         
         $self->throw("Tag name cannot begin with the reserved word \"XML\"") if ($tag =~ m/^XML/i);
-        print "\ntag: $tag\n" and $self->throw("Tag name can contain only letters, digits, hyphens and underscores") if ($tag !~ m/^[\w-]+$/);
+        $self->throw("Tag name can contain only letters, digits, hyphens and underscores") if ($tag !~ m/^[\w-]+$/);
         $self->throw("Tag name must begin with a letter or an underscore") if ($tag =~ m/^\d/);
         
     }

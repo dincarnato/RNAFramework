@@ -11,7 +11,7 @@ our %EXPORT_TAGS = ( colors => [ qw(RESET BOLD UNDERLINE BLINK
                                     BBLUE BMAGENTA BCYAN BWHITE) ],
                      screen => [ qw(RLADD RLRESET CLRALL CLRROW
                                     CURTOP RET CLRTOP CLRRET
-                                    BACK) ] );
+                                    CLRTOEND BACK) ] );
 
 { my (%seen);
   push(@{$EXPORT_TAGS{all}}, grep {!$seen{$_}++} @{$EXPORT_TAGS{$_}}) foreach (keys %EXPORT_TAGS); }
@@ -44,6 +44,7 @@ use constant RLADD     => "\001";
 use constant RLRESET   => "\002";
 use constant CLRALL    => "\e[2J";
 use constant CLRROW    => "\e[2K";
+use constant CLRTOEND  => "\e[K";
 use constant CURTOP    => "\e[0;0H";
 use constant RET       => "\r";
 use constant CLRTOP    => CLRALL . CURTOP;

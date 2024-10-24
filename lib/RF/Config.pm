@@ -1,7 +1,6 @@
 package RF::Config;
 
 use strict;
-use Config::Simple;
 use Core::Mathematics qw(:all);
 use Core::Utils;
 use Data::Sequence::Utils;
@@ -23,49 +22,54 @@ sub new {
     my $class = shift;
     my %parameters = @_;
 
-    if (exists $parameters{file} &&
-        -e $parameters{file}) {
+    my ($self, $default);
+    $self = $class->SUPER::new(%parameters);
+    $default = { file              => undef,
+                 scoremethod       => "Ding",
+                 normmethod        => "2-8\%",
+                 normwindow        => 1e9,
+                 windowoffset      => 50,
+                 reactivebases     => "all",
+                 normindependent   => 0,
+                 pseudocount       => 1,
+                 maxscore          => 10,
+                 meancoverage      => 0,
+                 mediancoverage    => 0,
+                 remapreactivities => 0,
+                 maxuntreatedmut   => 0.05,
+                 maxmutationrate   => 0.2,
+                 raw               => 0,
+                 autowrite         => 1 };
 
-        eval { Config::Simple->import_from($parameters{file}, \%parameters); } or Core::Utils::throw("Malformed configuration file");
+    if (exists $parameters{file} && -e $parameters{file}) {
 
-        # This removes the leading 'default.' prefix added by Config::Simple when parsing 'key=value' pairs
-        for (keys %parameters) {
+        # This drops the requirement for Config::Simple. In future release will be removed completely
+        open(my $fh, "<", $parameters{file}) or $self->throw("Unable to read config file ($!)");
+        while(my $line = <$fh>) {
 
-            if ($_ =~ m/^default\.(.+)$/) {
+            chomp;
 
-                my $parameter = lc($1);
-                $parameters{$parameter} = $parameters{$_};
+            next if ($line =~ /^(?:#.+)?$/);
 
-            }
+            my @param = split /=/, $line;
+
+            $self->throw("Invalid line in config file: \"$line\"") if (@param != 2);
+
+            $_ =~ s/^\s+|\s+$//g for (@param);
+
+            if (exists $default->{lc($param[0])}) { $parameters{lc($param[0])} = $param[1]; }
+            else { $self->warn("Unrecognized parameter \"" . $param[0] . "\" in config"); }
 
         }
+        close($fh);
 
     }
 
-    my $self = $class->SUPER::new(%parameters);
-    $self->_init({ file              => undef,
-                   scoremethod       => "Ding",
-                   normmethod        => "2-8\%",
-                   normwindow        => 1e9,
-                   windowoffset      => 50,
-                   reactivebases     => "all",
-                   normindependent   => 0,
-                   pseudocount       => 1,
-                   maxscore          => 10,
-                   meancoverage      => 0,
-                   mediancoverage    => 0,
-                   remapreactivities => 0,
-                   maxuntreatedmut   => 0.05,
-                   maxmutationrate   => 0.2,
-                   raw               => 0,
-                   autowrite         => 1 }, \%parameters);
-
+    $self->_init($default, \%parameters);
     $self->_validate();
     $self->_fixproperties();
 
-    $self->write() if (defined $self->{file} &&
-                       !-e $self->{file} &&
-                       $self->{autowrite});
+    $self->write() if (defined $self->{file} && !-e $self->{file} && $self->{autowrite});
 
     return($self);
 
@@ -79,16 +83,12 @@ sub _validate {
 
     $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
     $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|[123])$/i);
-    $self->throw("2-8% normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i &&
-                                                                                      $self->{normmethod} =~ m/^(2-8\%|1)$/i);
-    $self->throw("Box-plot normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i &&
-                                                                                          $self->{normmethod} =~ m/^(Box-?plot|3)$/i);
+    $self->throw("2-8% normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(2-8\%|1)$/i);
+    $self->throw("Box-plot normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(Box-?plot|3)$/i);
     $self->throw("Invalid normWindow value") if (!isint($self->{normwindow}));
     $self->throw("normWindow value should be greater than or equal to 3") if ($self->{normwindow} < 3);
-    $self->throw("Invalid windowOffset value") if (!isint($self->{windowoffset}) ||
-                                                   $self->{windowoffset} < 1);
-    $self->throw("Invalid reactive bases") if ($self->{reactivebases} !~ m/^all$/i &&
-                                               !isiupac($self->{reactivebases}));
+    $self->throw("Invalid windowOffset value") if (!isint($self->{windowoffset}) || $self->{windowoffset} < 1);
+    $self->throw("Invalid reactive bases") if ($self->{reactivebases} !~ m/^all$/i && !isiupac($self->{reactivebases}));
     $self->throw("normIndependent value must be boolean") if ($self->{normindependent} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
     $self->throw("Rqw value must be boolean") if ($self->{raw} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
     $self->throw("Invalid pseudoCount value") if (!ispositive($self->{pseudocount}));
