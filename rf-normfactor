@@ -145,7 +145,7 @@ if (-e $output) {
 
     if ($overwrite) { unlink($output) or die "\n  [!] Error: $!\n\n"; }
     else { die "\n\n  [!] Error: Output file already exists." .
-               "\n    Please use -ow (or --overwrite) to overwrite it\n\n"; }
+               "\n      Please use -ow (or --overwrite) to overwrite it\n\n"; }
 
 }
 

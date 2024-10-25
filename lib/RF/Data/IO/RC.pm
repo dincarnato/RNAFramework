@@ -3,6 +3,7 @@ package RF::Data::IO::RC;
 use strict;
 use Core::Mathematics qw(:all);
 use Core::Utils;
+use Data::Sequence::Utils;
 use Fcntl qw(SEEK_SET SEEK_END);
 use POSIX ();
 use RF::Data::RC;

@@ -355,7 +355,7 @@ else {
 
             while (my $ref = $dbh->read()) {
 
-                next if ($refChrOnly && ($ref->{chrom} =~ /^chrUn|(?:fix|random)$/));
+                next if ($refChrOnly && ($ref->{chrom} =~ /^chrUn|_(?:fix|random|alt)$/));
 
                 my $id = $name && (defined $ref->{name2} || defined $ref->{geneName}) ? $ref->{name2} || $ref->{geneName} : $ref->{name};
 
@@ -556,7 +556,7 @@ sub help {
  -H   or --host             <string>     UCSC server hostname (Default: genome-mysql.cse.ucsc.edu)
  -P   or --port             <int>        UCSC server port (Default: 3306)
  -g   or --genome-assembly  <string>     Genome assembly for the species of interest (Default: mm9)
- -rco or --ref-chr-only                  Chromosome patches ("_fix") and unassigned genomic chunks ("_random" and "chrUn")
+ -rco or --ref-chr-only                  Chromosome patches ("_fix" and "_alt") and unassigned genomic chunks ("_random" and "chrUn")
                                          will be ignored
  -la  or --list-annotations              Lists available gene annotation UCSC tables
  -a   or --annotation       <string>     Name of the UCSC table containing the gene annotation (Default: refFlat)

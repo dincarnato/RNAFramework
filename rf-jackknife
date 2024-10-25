@@ -45,9 +45,9 @@ my ($output, $overwrite, $reference, $refio,
     $threads, $slope, $intercept, $sstep,
     $istep, $rfparams, $relaxed, $mFMI,
     $kp, $kl, $m, $am, $help, $tmpdir,
-    $ignoreseq, $onlyCommon, @slope, @intercept, 
-    @samples, %files, %reference, %table, 
-    %results);
+    $ignoreseq, $onlyCommon, $installed, @slope, 
+    @intercept, @samples, %files, %reference, 
+    %table, %results);
 %results = ( used          => 0,
              ioerr         => 0,
              diffseq       => 0,
@@ -94,6 +94,7 @@ $intercept ||= "-3:0";
 $istep ||= 0.2;
 $sstep ||= 0.2;
 
+$installed = eval { require RNA; 1; };
 $output =~ s/\/?$/\//;
 $tmpdir = $output . "/tmp/";
 @slope = sort {$a <=> $b} split(/[,;:]/, $slope);
@@ -102,6 +103,9 @@ $tmpdir = $output . "/tmp/";
 ##
 # Input validation
 ##
+
+die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
+    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" if (!$installed);
 
 die "\n  [!] Error: No reference structures file provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $reference);
