@@ -360,7 +360,7 @@ if (keys %files) {
     print "\n";
 
 }
-else { die "\n\n [!] Error: No reference structure passed checks. Please ensure reference ID matches XML IDs\n"; }
+else { die "\n\n [!] Error: No reference structure passed checks. Please ensure reference ID matches XML IDs\n\n"; }
 
 $results{missingstruct} = 1 unless (sum(values %results));
 

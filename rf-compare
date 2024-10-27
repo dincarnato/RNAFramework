@@ -40,7 +40,8 @@ $|++;
 
 my ($input, $reference, $help, $relaxed, 
     $kp, $kl, $img, $threads, $output, 
-    $overwrite, $ignoreseq, $error, @pool);
+    $overwrite, $ignoreseq, $error, $nRefs,
+    @pool);
 my @results : shared;
 my %results : shared;
 my %reference : shared;
@@ -160,6 +161,7 @@ die "\n\n  [!] Error: No structure file imported\n\n" if (!keys %reference);
 
 print "\n[+] Comparing transcript structures [last: none]";
 
+$nRefs = scalar(keys %reference);
 @pool = map{ threads->create(\&compare) } 1 .. $threads;
 $_->join() for (@pool);
 
@@ -241,7 +243,7 @@ sub compare {
             $format =~ s/^\.//;
             $file = $input;
             
-            #next if ($fileid ne $refid);
+            next if ($fileId ne $refId && $nRefs > 1);
             
         }
 

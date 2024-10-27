@@ -887,7 +887,7 @@ sub fold {
         }
         else { push(@foldwins, [0, $length - 1]); }
 
-        for my $i (@reactivity) {
+        for my $i (0 .. $#reactivity) {
 
             # Predict pseudoknot in window
             foreach my $win (@foldwins) {
