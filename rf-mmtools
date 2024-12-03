@@ -81,7 +81,7 @@ for (0 .. ($command ne "merge" ? 0 : $#mm)) {
     
     die "\n  [!] Error: Provided MM file \"" . $mm[$_] . "\" does not exist\n\n" if (!-e $mm[$_]); 
 
-    next if ($command eq "index");
+    next if ($command eq "index" || ($command eq "view" && @mm == 1));
 
     die "\n  [!] Error: Missing MMI index for MM file \"" . $mm[$_] . "\"." .
         "\n             Run 'rf-mmtools index " . $mm[$_] . "' and try again\n\n" if (!-e $mm[$_] . ".mmi");
@@ -223,7 +223,7 @@ elsif ($command eq "extract") {
 
     die "\n  [!] Error: Output MM file already exists." .
         "\n             Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output && !$overwrite);
-    die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepBases !~ m/^all$/i && !isiupac($keepBases));
+    die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepBases !~ /^all$/i && !isiupac($keepBases));
     die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 1\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
     die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || !ispositive($minReadLen));
     die "\n  [!] Error: Random subsample factor must be a positive INT >= 1\n\n" if (!isint($randSubsample) || !ispositive($randSubsample));
@@ -326,7 +326,7 @@ elsif ($command eq "extract") {
         while (my @read = $mmIn->readStream($id)) {
 
             my ($readStart, $readEnd, @muts);
-            @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]};
+            @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]}; 
             @muts = grep { inrange($_, [$start, $end - 1]) } @muts;
 
             next if (@muts < $minMutPerRead);
@@ -342,7 +342,7 @@ elsif ($command eq "extract") {
            
             next if ($randSubsample > 1 && int(rand($randSubsample)));
 
-            $mmOut->append_read($read[0], $read[1], scalar(@{$read[2]}), $read[2]);
+            $mmOut->append_read($readStart, $readEnd, scalar(@muts), \@muts);
 
         }        
 
@@ -522,7 +522,8 @@ HELP
  -mrl or --minReadLen         <int>        Reads shorter than this length are discarded (>0, Default: 1)
  -rs  or --randSubsample      <int>        Randomly subsamples this fraction of reads (Default: keep all reads)
                                            Note: for example, if -rs 2, 1/2 of the reads will be subsampled
- -a   or --annotation         <string>     Path to a list of regions (in BED format) to extract from the MM file
+ -a   or --annotation         <string>     Path to a file containing a list of regions (in BED format) to extract from 
+                                           the MM file
                                            Note: only the portion of the read falling within the boundaries of the provided
                                                  BED intervals will be retained and subjected to the other filtering steps
  -wl  or --whitelist          <string>     Path to a file containing a list (one per line) of transcripts to be extracted 
