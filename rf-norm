@@ -31,7 +31,10 @@ use Core::Statistics;
 use Core::Utils;
 use Data::IO;
 use Data::XML;
+use Graphics::Chart::Step;
+use Graphics::Image;
 use RF::Config;
+use RF::Utils;
 use RF::Data::IO::RC;
 use Term::Constants qw(:screen);
 use Term::Progress;
@@ -45,11 +48,12 @@ my ($help, $output, $overwrite, $configfile,
     $scoremethod, $normmethod, $normwin, $winoffset,
     $reactive, $independent, $pseudocount, $maxscore,
     $meancov, $mediancov, $untreated, $treated,
-    $index, $config, $error, $threads,
-    $rc, $hasctrl, $decimals, $nan,
-    $remap, $raw, $suffix, $maxumut,
+    $index, $config, $error, $threads, $R,
+    $rc, $hasctrl, $decimals, $nan, $image,
+    $remap, $raw, $suffix, $maxumut, $tmpDir,
     $denatured, $dynwin, $maxmutrate, $normfactor,
-    $ignoreLower, @pool, @normfactor);
+    $ignoreLower, @pool, @normfactor, @legendSort,
+    %legendColors);
 
 my $progressBar : shared;
 my @ids : shared;
@@ -92,7 +96,9 @@ do {
                 "mu|max-untreated-mut=s"         => \$maxumut,
                 "mm|max-mutation-rate=s"         => \$maxmutrate,
                 "nf|norm-factor=s"               => \$normfactor,
-                "il|ignore-lower-than-untreated" => \$ignoreLower ) or help(1);
+                "il|ignore-lower-than-untreated" => \$ignoreLower,
+                "g|img"                          => \$image,
+                "R|R-path=s"                     => \$R ) or help(1);
 
 };
 
@@ -108,6 +114,7 @@ $maxmutrate ||= 1;
 $normwin ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
 $winoffset ||= $scoremethod =~ m/^Ding|Siegfried|Zubradt|[134]$/i ? 1e9 : 50;
 $suffix = $raw ? "_raw/" : "_norm/";
+$R = checkRinstall($R) if ($image);
 
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
 die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 || $decimals > 10);
@@ -193,6 +200,9 @@ if (!defined $output) {
 }
 else { $output =~ s/\/?$/\//; }
 
+$SIG{__DIE__} = \&cleanup;
+$tmpDir = "${output}tmp/";
+
 print "\n[+] Making output directory...";
 
 if (-e $output) {
@@ -209,8 +219,10 @@ if (-e $output) {
 
 }
 
-mkpath($output, { mode  => 0755,
+mkpath($tmpDir, { mode  => 0755,
                   error => \$error });
+mkpath("${output}plots/", { mode  => 0755,
+                            error => \$error }) if ($image);
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -231,6 +243,27 @@ if (!$index) {
 $rc = RF::Data::IO::RC->new( file       => $treated,
                              index      => $index ? $index : "$treated.rci",
                              buildindex => $index || -e "$treated.rci" ? 0 : 1 );
+
+if ($image) {
+
+    %legendColors = ("Treated" => "#4daf4a");
+    @legendSort = ("Treated");
+
+    if ($config->scoremethod() == 3 && defined $denatured) {
+
+        $legendColors{"Denatured"} = "#e41a1c";
+        push(@legendSort, "Denatured");
+    
+    }
+
+    if ($hasctrl) {
+
+        $legendColors{"Untreated"} = "#377eb8";
+        push(@legendSort, "Untreated");
+
+    }
+
+}
 
 print "\n[+] Loading transcript IDs... ";
 
@@ -258,13 +291,14 @@ print "\n                             " . $results{diffuseq} . " mismatch betwee
 print "\n                             " . $results{diffdseq} . " mismatch between treated and denatured sample sequence" .
       "\n                             " . $results{nodid} . " absent in denatured sample reference" if (defined $denatured &&
                                                                                                         $config->scoremethod() == 3);
-
 print "\n\n[+] All done.\n\n";
+
+cleanup();
 
 sub norm {
 
     my ($urc, $trc, $drc, $reactivity,
-        $attributes, $xmlio, $xml);
+        $attributes, $xmlio, $xml, $plot);
 
     $urc = RF::Data::IO::RC->new( file  => $untreated,
                                   index => $index || "$untreated.rci" ) if ($hasctrl);
@@ -274,6 +308,10 @@ sub norm {
 
     $trc = RF::Data::IO::RC->new( file  => $treated,
                                   index => $index || "$treated.rci" );
+    $plot = Graphics::Image->new( width  => 10,
+                                  height => 4,
+                                  R      => $R,
+                                  tmpdir => $tmpDir ) if ($image);
 
     while (1) {
 
@@ -289,7 +327,7 @@ sub norm {
 
         my ($tentry, $sequence, $seqmask, $uReads, $tReads,
             @seqmask, @tcounts, @ucounts, @dcounts, @tcov,
-            @ucov, @dcov, @last, @norm);
+            @ucov, @dcov, @last, @raw, @norm);
         $tentry = $trc->read($id);
 
         if ($tentry->meancoverage() < $config->meancoverage() ||
@@ -412,28 +450,22 @@ sub norm {
 
                 }
 
-                if (defined $denatured) { $tcounts[$_] = $dcounts[$_] ? max(0, ($tcounts[$_] - $ucounts[$_]) / $dcounts[$_]) : 0 for (0 .. $#tcounts); }
-                else { $tcounts[$_] = max(0, ($tcounts[$_] - $ucounts[$_])) for (0 .. $#tcounts); }
+                if (defined $denatured) { @raw = map { $dcounts[$_] ? max(0, ($tcounts[$_] - $ucounts[$_]) / $dcounts[$_]) : 0 } 0 .. $#tcounts; }
+                else { @raw = map { max(0, ($tcounts[$_] - $ucounts[$_])) } 0 .. $#tcounts; }
 
             }
             else {  # Ding
 
-                for (0 .. $#tcounts) {
+                my ($umean, $tmean, @uLog, @tLog);
+                @uLog = map { log($_ + $config->pseudocount()) } @ucounts;
+                @tLog = map { log($_ + $config->pseudocount()) } @tcounts;
+                $uReads -= sum(@ucounts);
+                $tReads -= sum(@tcounts);
 
-                    $uReads -= $ucounts[$_];
-                    $tReads -= $tcounts[$_];
+                for (0 .. $#tcounts) { $seqmask[$_] = "X" if ($ucov[$_] < $nan || $tcov[$_] < $nan); }
 
-                    $ucounts[$_] = log($ucounts[$_] + $config->pseudocount());
-                    $tcounts[$_] = log($tcounts[$_] + $config->pseudocount());
-
-                    $seqmask[$_] = "X" if ($ucov[$_] < $nan ||
-                                           $tcov[$_] < $nan);
-
-                }
-
-                my ($umean, $tmean);
-                $umean = mean(@ucounts, log(max(0, $uReads) + $config->pseudocount()));
-                $tmean = mean(@tcounts, log(max(0, $tReads) + $config->pseudocount()));
+                $umean = mean(@uLog, log(max(0, $uReads) + $config->pseudocount()));
+                $tmean = mean(@tLog, log(max(0, $tReads) + $config->pseudocount()));
 
                 if (!$umean || !$tmean) {
 
@@ -444,16 +476,11 @@ sub norm {
 
                 }
 
-                for (0 .. $#tcounts) {
+                @uLog = map { $_ / $umean } @uLog;
+                @tLog = map { $_ / $tmean } @tLog;
+                @raw = map { min(max(0, $tLog[$_] - $uLog[$_]), $config->maxscore()) } 0 .. $#tcounts;
 
-                    my ($tcount, $ucount);
-                    $tcount = $tcounts[$_] / $tmean;
-                    $ucount = $ucounts[$_] / $umean;
-                    $tcounts[$_] = min(max(0, $tcount - $ucount), $config->maxscore());
-
-                    $seqmask[$_] = "X" if ($ignoreLower && $tcount < $ucount);
-
-                }
+                for (0 .. $#tcounts) { $seqmask[$_] = "X" if ($ignoreLower && $tLog[$_] < $uLog[$_]); }
 
             }
 
@@ -462,11 +489,10 @@ sub norm {
 
             if ($config->scoremethod() == 4) { # Zubradt method
 
-                for (0 .. $#tcounts) {
+                for (0 .. $#tcounts) { 
 
-                    if ($tcov[$_] < $nan ||
-                        $tcounts[$_] / $tcov[$_] > $maxmutrate) { $seqmask[$_] = "X"; }
-                    else { $tcounts[$_] = $tcounts[$_] / $tcov[$_]; }
+                    if ($tcov[$_] < $nan || $tcounts[$_] / $tcov[$_] > $maxmutrate) { $seqmask[$_] = "X"; }
+                    else { $tcounts[$_] /= $tcov[$_]; }
 
                 }
 
@@ -477,14 +503,45 @@ sub norm {
 
             }
 
+            @raw = @tcounts;
+
         }
 
         $seqmask = join("", @seqmask);
 
+        if ($image) {
+
+            $plot->file("${output}plots/$id.pdf");
+            
+            my ($step, @maskedPos);
+            @maskedPos = grep { $seqmask[$_] eq "X" } 0 .. $#seqmask; 
+            @tcounts[@maskedPos] = (0) x @maskedPos;
+            @ucounts[@maskedPos] = (0) x @maskedPos if (@ucounts);
+            @dcounts[@maskedPos] = (0) x @maskedPos if (@dcounts); 
+            $step = Graphics::Chart::Step->new( data            => [ @dcounts, @ucounts, @tcounts ],
+                                                dataLabelType   => { "pos" => "numeric" },
+                                                dataLabels      => { "sample" => [ ("Denatured") x @dcounts, ("Untreated") x @ucounts, ("Treated") x @tcounts ],
+                                                                     "pos"    => [ (1 .. $tentry->length()) x ((@tcounts + @ucounts + @dcounts) / $tentry->length()) ] },
+                                                fill            => "sample",
+                                                x               => "pos",
+                                                legendColors    => \%legendColors,
+                                                legendSort      => \@legendSort,
+                                                dataLabelSort   => { "sample" => \@legendSort },
+                                                xTitle          => "Position (nt)",
+                                                yTitle          => $config->scoremethod() =~ /^[34]$/ ? "Mutation rate" : "RT-stops",
+                                                axisTextSize    => 12,
+                                                axisTitleSize   => 14,
+                                                legendTextSize  => 12,
+                                                lineThickness   => 0.4 );
+            
+            $plot->plot([$step]);
+
+        }
+
         if ($raw) { # Skips normalization
 
             my $bases = $config->reactivebases();
-            @norm = @tcounts;
+            @norm = @raw;
 
             undef($norm[$-[0]]) while($seqmask =~ m/[^$bases]/g);
 
@@ -509,7 +566,7 @@ sub norm {
                     $winseq = $1;
                     $i = index($sequence, $winseq, $i);
                     $winmask = substr($seqmask, $i, length($winseq));
-                    @wincounts = @tcounts[$i .. $i + length($winseq) - 1];
+                    @wincounts = @raw[$i .. $i + length($winseq) - 1];
 
                     foreach my $base ($config->normindependent() ? split(//, $bases) : $bases) {
 
@@ -553,7 +610,7 @@ sub norm {
 
                     }
 
-                    @wincounts = @tcounts[$i .. $i + length($winseq) - 1];
+                    @wincounts = @raw[$i .. $i + length($winseq) - 1];
 
                     foreach my $base ($config->normindependent() ? split(//, $bases) : $bases) {
 
@@ -576,14 +633,14 @@ sub norm {
             }
             else {
 
-                $winlen = $config->normwindow() > @tcounts ? @tcounts : $config->normwindow();
-                $winoffset = $winlen == @tcounts ? $winlen : $config->windowoffset();
+                $winlen = $config->normwindow() > @raw ? @raw : $config->normwindow();
+                $winoffset = $winlen == @raw ? $winlen : $config->windowoffset();
 
-                for(my $i = 0; $i + $winlen - 1 <= $#tcounts; $i += $winoffset) {
+                for(my $i = 0; $i + $winlen - 1 <= $#raw; $i += $winoffset) {
 
                     my ($winmask, @wincounts, @winnorm);
                     $winmask = substr($seqmask, $i, $winlen);
-                    @wincounts = @tcounts[$i .. $i + $winlen - 1];
+                    @wincounts = @raw[$i .. $i + $winlen - 1];
 
                     foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
 
@@ -603,12 +660,12 @@ sub norm {
 
                 }
 
-                if (@norm < @tcounts) { # Missing the last window
+                if (@norm < @raw) { # Missing the last window
 
                     my ($winmask, $i, @wincounts, @winnorm);
-                    $i = @tcounts - $winlen;
+                    $i = @raw - $winlen;
                     $winmask = substr($seqmask, $i);
-                    @wincounts = @tcounts[$i .. $#tcounts];
+                    @wincounts = @raw[$i .. $#raw];
 
                     foreach my $base ($config->normindependent() ? split(//, $config->reactivebases()) : $config->reactivebases()) {
 
@@ -707,6 +764,14 @@ sub norm {
     }
 
     threads->exit();
+
+}
+
+sub cleanup {
+
+    unlink(glob($tmpDir . "*"));
+
+    rmtree($tmpDir);
 
 }
 
@@ -891,6 +956,9 @@ sub help {
  -D  or --decimals            <int>                 Number of decimals for reporting reactivities (1-10, Default: 3)
  -n  or --nan                 <int>                 Transcript positions with read coverage below this threshold will be reported as NaN in
                                                     the reactivity profile (>0, Default: 10)
+ -g  or --img                                       Enables the generation of plots of raw reactivity data (RT-stops or mutation rates) 
+                                                    for each transcript across all samples (requires R)
+ -R  or --R-path              <string>              Path to R executable (Default: assumes R is in PATH)
 
  Scoring method #1 options (Ding et al., 2014) options
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)

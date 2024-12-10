@@ -20,10 +20,10 @@ use Core::Utils;
 use Data::IO;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
-use Graphics::Container;
-use Graphics::Object::Path;
-use Graphics::Object::RNAarcs;
-use Graphics::Object::Ruler;
+use Graphics::Chart::Area;
+use Graphics::Chart::Arcs;
+use Graphics::Image;
+use RF::Utils;
 use RNA::Utils;
 use Term::Constants qw(:screen);
 use Term::Table;
@@ -35,11 +35,11 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
     $makeClustersSam, $reference, $minPairedFrac, $makeConstraint,
     $minHalfLen, $minSampleSize, $maxReads, $requireBpSupport,
     $refIO, $help, $samtools, $table, $evalOnly,
-    $threads, $tmpDir, $logDir, $error,
+    $threads, $tmpDir, $logDir, $error, $R,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
     $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
     $dumpChimaeras, $dumpChimaerasOnly, @colorScale, @input, 
-    %samples, %transcripts);
+    @colorLegend, %samples, %transcripts);
 
 my @transcripts : shared;
 my %sharedData : shared;
@@ -77,7 +77,8 @@ do {
                 "mcf|min-chimera-frac=s"    => \$minChimeraFrac,
                 "mi|max-iterations=i"       => \$maxIter,
                 "dc|dump-chimaeras"         => \$dumpChimaeras,
-                "do|dump-chimaeras-only"    => \$dumpChimaerasOnly ) or help(1);
+                "do|dump-chimaeras-only"    => \$dumpChimaerasOnly,
+                "R|R-path=s"                => \$R ) or help(1);
 
     @input = @ARGV;
 
@@ -100,6 +101,7 @@ $constraintThresh ||= 0.5;
 $minChimeraFrac ||= 0.5;
 $samtools ||= which("samtools");
 $output ||= "rf_duplex/";
+$R ||= checkRinstall($R) if ($makeImage);
 @colorScale = $colorScale ? uniq(sort {$a <=> $b} split(/[:,;]/, $colorScale)) : (0.05, 0.1, 0.4, 0.7);
 $output =~ s/\/?$/\//;
 $evalStructures =~ s/\/?$/\// if (defined $evalStructures);
@@ -133,7 +135,19 @@ die "\n  [!] Error: Parameters -do and -eo are mutually exclusive\n\n" if ($dump
 die "\n  [!] Error: Parameter -eo requires -es\n\n" if ($evalOnly && !$evalStructures);
 die "\n  [!] Error: Parameter -do requires -dc\n\n" if ($dumpChimaerasOnly && !$dumpChimaeras);
 
-for (@colorScale) { die "\n  [!] Error: Color scale's cut-point values must be comprised between 0 and 1\n\n" if (!isnumeric($_) || !inrange($_, [0, 1])); }
+if ($makeImage) {
+
+    for (1 .. $#colorScale) { 
+        
+        die "\n  [!] Error: Color scale's cut-point values must be comprised between 0 and 1\n\n" if (!isnumeric($colorScale[$_]) || !inrange($colorScale[$_], [0, 1])); 
+        
+        push(@colorLegend, sprintf("%.1f", $colorScale[$_-1] * 100) . "-" . sprintf("%.1f", $colorScale[$_] * 100) . "\%");
+
+    }
+
+    push(@colorLegend, sprintf("%.1f", $colorScale[-1] * 100) . "-100.0\%");
+
+}
 
 if (!defined $samtools) { die "\n  [!] Error: samtools is not in PATH\n\n"; }
 elsif (!-e $samtools) { die "\n  [!] Error: samtools doesn't exist\n\n"; }
@@ -261,8 +275,8 @@ foreach my $sample (sort keys %samples) {
                                               error => \$error }) if (!$evalOnly && !$dumpChimaerasOnly);
     mkpath($output . $sample . "/clustered/", { mode  => 0755,
                                                 error => \$error }) if ($makeClustersSam);
-    mkpath($output . $sample . "/images/", { mode  => 0755,
-                                             error => \$error }) if ($makeImage);
+    mkpath($output . $sample . "/plots/", { mode  => 0755,
+                                            error => \$error }) if ($makeImage);
     mkpath($output . $sample . "/constraints/", { mode  => 0755,
                                                   error => \$error }) if ($makeConstraint);
     mkpath($output . $sample . "/bpcounts/", { mode  => 0755,
@@ -384,7 +398,13 @@ sub processTranscript {
     my $sample = shift;
     my $bamFile = shift;
     my $chimericFile = shift;
-    my %chimericIndex = %{$_[0]};
+    
+    my ($plot, %chimericIndex);
+    %chimericIndex = %{$_[0]};
+
+    $plot = Graphics::Image->new( width  => 18,
+                                  R      => $R,
+                                  tmpdir => $tmpDir ) if ($makeImage);
 
     while (1) {
 
@@ -397,7 +417,7 @@ sub processTranscript {
 
               mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if (!$evalOnly && !$dumpChimaerasOnly);
               mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
-              mkpath($output . $sample . "/images/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
+              mkpath($output . $sample . "/plots/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
               mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
               mkpath($output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($evalStructures);
               mkpath($output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($dumpChimaeras);
@@ -553,7 +573,7 @@ sub processTranscript {
 
             dotPlot($sample, $id, \%baseProbs);
             $structure = makeConstraint($sample, $id, \%baseProbs) if ($makeConstraint);
-            plotImage($sample, $id, $structure, \%baseProbs) if ($makeImage);
+            plotImage($plot, $output . $sample . "/plots/" . uc(substr($id, 0, 1)), $id, $structure, \%baseProbs) if ($makeImage);
 
         }
 
@@ -1025,80 +1045,97 @@ sub dotPlot {
 
 sub plotImage {
 
-    my $sample = shift;
+    my $plot = shift;
+    my $dir = shift;
     my $id = shift;
     my $structure = shift;
     my %baseProbs = %{$_[0]};
 
     return if (!keys %baseProbs);
 
-    my ($path, $svgIO, $image, $arcPlot,
-        $structPlot, $ruler, $shannon, $minProb,
-        $midProb, $maxProb, @pairs, @shannon,
-        @colors, @allProbs, @i);
-    $path = $output . $sample . "/images/" . uc(substr($id, 0, 1)) . "/" . $id . ".svg";
-    $image = Graphics::Container->new( height  => abs(maprange(0, 1000, $structure !~ m/^\.+$/ ? -750 : -500, -250, min($transcripts{$id}, 1000))), # Min: 500 / Max: 1000px
-                                       width   => 1000,
-                                       spacing => 0.02 );
-    $svgIO = Data::IO->new( file    => $path,
-                            mode    => "w",
-                            binmode => ":encoding(utf-8)" );
-    @shannon = (0) x $transcripts{$id};
-    @allProbs = map { my $i = $_; map { $baseProbs{$i}->{$_} } sort {$a <=> $b} keys %{$baseProbs{$i}} } sort {$a <=> $b} keys %baseProbs;
-    @i = sort { $allProbs[$a] <=> $allProbs[$b] } 0 .. $#allProbs;
-    $minProb = min(@allProbs);
-    $maxProb = max(@allProbs);
-    $midProb = mean($minProb, $maxProb);
+    my ($probsPlot, $maxProbBp, @pairs, @plots, 
+        @heights);
+    $plot->file("$dir/$id.pdf");
 
-    foreach my $base1 (sort {$a <=> $b} keys %baseProbs) {
+    foreach my $base1 (keys %baseProbs) {
 
-        foreach my $base2 (sort {$a <=> $b} keys %{$baseProbs{$base1}}) {
+        foreach my $base2 (keys %{$baseProbs{$base1}}) {
 
             my ($prob, $shannon, @rgb);
             $prob = $baseProbs{$base1}->{$base2};
 
-            $shannon = -($prob * logarithm($prob, 10));
-            $shannon[$base1] += $shannon;
-            $shannon[$base2] += $shannon;
+            next if ($prob < $colorScale[0]);
 
-            push(@pairs, [$base1, $base2]);
-            push(@colors, ($prob < $colorScale[0] ? "rgb(255,255,255" : ($prob < $colorScale[1] ? "rgb(150,150,150)" : ($prob < $colorScale[2] ? "rgb(255,204,0)" : ($prob < $colorScale[3] ? "rgb(71,142,204)" : "rgb(81,183,71)")))));
+            push(@pairs, [$base1, $base2, $prob]);
 
         }
 
     }
 
-    @pairs = @pairs[@i];
-    @colors = @colors[@i];
+    @pairs = sort { $a->[2] <=> $b->[2] } @pairs;
+    $maxProbBp = max(map { abs(diff(@$_)) } @pairs);
+    $probsPlot = Graphics::Chart::Arcs->new( data            => [ map { [ @$_[0, 1] ] } @pairs ],
+                                             dataLabels      => { "prob" => [ map { $_->[2] < $colorScale[1] ? $colorLegend[0] : ($_->[2] < $colorScale[2] ? $colorLegend[1] : ($_->[2] < $colorScale[3] ? $colorLegend[2] : $colorLegend[3])) } @pairs ] },
+                                             flip            => "up",
+                                             fill            => "prob",
+                                             legendKeyWidth  => 14,
+                                             legendKeyHeight => 4,
+                                             legendColors    => { $colorLegend[0] => "#979797",
+                                                                  $colorLegend[1] => "#ffcc07",
+                                                                  $colorLegend[2] => "#478ecc",
+                                                                  $colorLegend[3] => "#58b14a" },
+                                             legendSort      => \@colorLegend,
+                                             xLimit          => [0, $transcripts{$id} + 1],
+                                             lineThickness   => 0.2,
+                                             legendTitle     => "Probability",
+                                             legend          => 1,
+                                             background      => 0,
+                                             grid            => 0,
+                                             xTicks          => 1,
+                                             yTicks          => 0,
+                                             xLabels         => 1,
+                                             yLabels         => 0,
+                                             legendTextSize  => 12,
+                                             legendTitleSize => 14,
+                                             axisTitleSize   => 14,
+                                             labelTextSize   => 12,
+                                             xTitle          => "Position (nt)" );
 
-    $arcPlot = Graphics::Object::RNAarcs->new( height    => 5,
-                                               length    => $transcripts{$id},
-                                               flip      => $structure !~ m/^\.+$/ ? "up" : "down",
-                                               basepairs => \@pairs,
-                                               stroke    => \@colors );
-    $structPlot = Graphics::Object::RNAarcs->new( height    => 5,
-                                                  length    => $transcripts{$id},
-                                                  flip      => "down",
-                                                  basepairs => [ listpairs($structure) ],
-                                                  stroke    => "black" ) if (defined $structure && $structure !~ m/^\.+$/);
-    $shannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -20, -10, min($transcripts{$id}, 1000))),
-                                            height   => 2,
-                                            values   => \@shannon,
-                                            fill     => "rgb(145, 106, 40)",
-                                            stroke   => "",
-                                            yname    => "Entropy" ) if (sum(@shannon));
-    $ruler = Graphics::Object::Ruler->new( fontsize => abs(maprange(0, 1000, -20, -10, min($transcripts{$id}, 1000))),
-                                           height   => 2,
-                                           range    => [0, $transcripts{$id}],
-                                           ticksby  => max(1, round($transcripts{$id} / 10)),
-                                           name     => "Position (nt)",
-                                           toend    => 1 );
+    push(@plots, $probsPlot);
+    push(@heights, $maxProbBp / $transcripts{$id});
 
-    $image->addobject($shannon) if (defined $shannon);
-    $image->addobject($arcPlot);
-    $image->addobject($structPlot) if (defined $structPlot);
-    $image->addobject($ruler);
-    $svgIO->write($image->xml());
+    if (defined $structure && $structure !~ /^\.+$/) {
+
+        my ($structPlot, $maxBp, @structPairs);
+        @structPairs = listpairs($structure);
+        $maxBp = max(map { abs(diff(@$_)) } @structPairs);
+        $structPlot = Graphics::Chart::Arcs->new( data            => \@structPairs,
+                                                  dataLabels      => { "fill" => [ ("black") x @structPairs ] },
+                                                  flip            => "down",
+                                                  fill            => "fill",
+                                                  legendColors    => { "black" => "#000000" },
+                                                  xLimit          => [0, $transcripts{$id} + 1],
+                                                  lineThickness   => 0.2,
+                                                  legend          => 0,
+                                                  background      => 0,
+                                                  grid            => 0,
+                                                  xTicks          => 0,
+                                                  yTicks          => 0,
+                                                  xLabels         => 0,
+                                                  yLabels         => 0,
+                                                  legendTextSize  => 12,
+                                                  legendTitleSize => 14,
+                                                  axisTitleSize   => 14,
+                                                  labelTextSize   => 12,
+                                                  xTitle          => "Constraint" );
+
+        push(@plots, $structPlot);
+        push(@heights, $maxBp / $transcripts{$id});
+
+    }
+
+    $plot->height(max(2, sum(map { $_ * 8 } @heights)));
+    $plot->plot([ map { [$_] } @plots ], { heights => \@heights});
 
 }
 
@@ -1535,10 +1572,11 @@ sub help {
 
  |
  +- Plotting options
- -g  or --img                                   Enables the generation of graphical reports reporting the inferred base-pairing probabilities,
-                                                and the Shannon Entropy
+ -g  or --img                                   Enables the generation of graphical reports reporting the inferred base-pairing probabilities 
+                                                and, if -c is enabled, the inferred structure/constraint (requires R)
  -cs or --color-scale            <string>       Allows specifying 4 cut-points for the color scale used to report base-pairing probabilities
-                                                (Default: 0.05,0.1,0.4,0.7 for white|grey|yellow|blue|green)
+                                                (Default: 0.05,0.1,0.4,0.7 for 0.05-0.1:grey, 0.1-0.4:yellow, 0.4-0.7:blue, 0.7-1:green)
+ -R  or --R-path                 <string>       Path to R executable (Default: assumes R is in PATH)
 
  |
  +- Clustering options

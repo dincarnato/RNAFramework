@@ -18,6 +18,7 @@
 
 use strict;
 use File::Basename;
+use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
@@ -26,8 +27,14 @@ use threads::shared;
 use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
+use Core::Utils;
 use Data::IO::Sequence;
+use Graphics::Chart::Barplot;
+use Graphics::Chart::Density;
+use Graphics::Chart::Linedot;
+use Graphics::Image;
 use RF::Data::IO::XML;
+use RF::Utils;
 use Term::Constants qw(:screen);
 use Term::Progress;
 
@@ -35,8 +42,8 @@ $|++;
 
 my ($help, $output, $overwrite, $reactCutoff, 
     $structs, $reacts, $termAsUnpaired, $ignoreTerminal,
-    $keepLonelyPairs, $keepPseudoknots, $threads, 
-    $failed, @pool, %structs);
+    $keepLonelyPairs, $keepPseudoknots, $threads, $error,
+    $failed, $image, $plot, $R, $tmpDir, @pool, %structs);
 
 my $progressBar : shared;
 my @overallCoeff : shared;
@@ -64,7 +71,9 @@ do {
                 "it|ignore-terminal"      => \$ignoreTerminal,
                 "kl|keep-lonelypairs"     => \$keepLonelyPairs,
                 "kp|keep-pseudoknots"     => \$keepPseudoknots,
-                "c|reactivity-cutoff=s"   => \$reactCutoff ) or help(1);
+                "c|reactivity-cutoff=s"   => \$reactCutoff,
+                "g|img"                   => \$image,
+                "R|R-path=s"              => \$R ) or help(1);
 
 };
 
@@ -72,7 +81,11 @@ help() if ($help);
 
 $threads ||= 1;
 $reactCutoff ||= 0.7;
-$output ||= "rf_eval.txt";
+$output ||= "rf_eval/";
+$R = checkRinstall($R) if ($image);
+
+$output =~ s/\/?$/\//;
+$tmpDir = "$output/tmp/";
 
 die "\n  [!] Error: Number of processors must be an INT >= 1\n\n" if (!isint($threads) || !ispositive($threads));
 die "\n  [!] Error: No structure file/directory specified\n\n" if (!defined $structs);
@@ -83,6 +96,31 @@ die "\n  [!] Error: Reactivity cutoff must > 0\n\n" if (!ispositive($reactCutoff
 die "\n  [!] Error: Parameters -tu and -it are mutually exclusive\n\n" if ($termAsUnpaired && $ignoreTerminal);
 die "\n  [!] Error: Output file already exists." .
     "\n             Please specify -ow (or --overwrite) to overwrite it.\n\n" if (-e $output && !$overwrite);
+
+$SIG{__DIE__} = \&cleanup;
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+mkpath($tmpDir, { mode  => 0755,
+                  error => \$error });
+mkpath("${output}plots/dsci", { mode  => 0755,
+                                error => \$error }) if ($image);
+
+die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
 print "\n[+] Importing structure file(s) [0 imported]";
 
@@ -178,6 +216,10 @@ for (keys %structs) { delete($structs{$_}) if (!exists $structs{$_}->{reactFile}
 if (@ids) { print "\n[+] " . scalar(@ids) . " structures with matched reactivity file\n\n"; }
 else { die "\n\n  [!] Error: No matching structure-XML pair\n\n"; }
 
+$plot = Graphics::Image->new( width  => 6,
+                              height => 5,
+                              R      => $R,
+                              tmpdir => $tmpDir ) if ($image);
 $progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
                                                  width   => 50,
                                                  colored => 1 ));
@@ -192,10 +234,11 @@ print ", failed $failed (XML parsing failed: " . $results{parseErr} . "; Differe
 
 if ($results{success}) {
 
-    my ($coeffUnpaired, $dsci, $auc);
-    $coeffUnpaired = $overallCoeff[0] / $overallCoeff[1];
-    $dsci = $overallDsci[0] / $overallDsci[1];
-    $auc = _auc(@overallAuc);
+    my ($coeffUnpaired, $dsci, $auc, @combinedRoc);
+    $coeffUnpaired = @overallCoeff ? $overallCoeff[0] / $overallCoeff[1] : "NaN";
+    $dsci = @overallDsci ? $overallDsci[0] / $overallDsci[1] : "NaN";
+    @combinedRoc = _combineRocData();
+    $auc = _auc(@combinedRoc);
 
     print "\n[i] Overall metrics:\n" .
             "\n  [*] Coefficient unpaired: " . sprintf("%.3f", $coeffUnpaired) .
@@ -204,17 +247,35 @@ if ($results{success}) {
 
     print "\n[+] Writing metrics to file...";
 
-    open(my $fh, ">", $output) or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
+    open(my $fh, ">", "$output/metrics.txt") or die "\n\n  [!] Error: Unable to write output file ($!)\n\n";
     select((select($fh), $|=1)[0]);
     print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
     print $fh join("\t", @$_) . "\n" for (sort { $a->[0] cmp $b->[0] } @metrics);
     print $fh join("\t", "Overall", $coeffUnpaired, $dsci, $auc) . "\n";
     close($fh);
 
+    if ($image) {
+
+        print "\n[+] Generating plots...";
+
+        _plotROC(@overallAuc, "Overall", @combinedRoc);
+        _plotDSCI("Overall", $overallDsci[2], $overallDsci[3]);
+        _plotMetricSummary(@metrics, ["Overall", $coeffUnpaired, $dsci, $auc]);
+
+    }
+
+    cleanup();
+
     print "\n[+] All done.\n\n";
 
 }
-else { die "\n\n  [!] Error: Evaluation failed for all structures\n\n"; }
+else { 
+
+    rmtree("$output/plots/") if ($image);
+        
+    die "\n\n  [!] Error: Evaluation failed for all structures\n\n"; 
+    
+}
 
 sub metrics {
 
@@ -253,8 +314,8 @@ sub metrics {
 
         my ($coeffUnpaired, $dsci, $auc);
         $coeffUnpaired = coeffUnpaired($structure, [ $xml->reactivity() ]);
-        $dsci = dsci($structure, [ $xml->reactivity() ]);
-        $auc = roc($structure, [ $xml->reactivity() ]);
+        $dsci = dsci($id, $structure, [ $xml->reactivity() ]);
+        $auc = roc($id, $structure, [ $xml->reactivity() ]);
 
         { lock(@metrics);
           push(@metrics, shared_clone([$id, $coeffUnpaired, $dsci, $auc])); 
@@ -289,7 +350,7 @@ sub coeffUnpaired {
 
 sub dsci {
 
-    my ($dotbracket, $reactivity) = @_;
+    my ($id, $dotbracket, $reactivity) = @_;
 
     my ($dsci, $paired, $unpaired, $total);
     ($unpaired, $paired) = getBaseIndexes($dotbracket);
@@ -312,7 +373,28 @@ sub dsci {
 
     { lock(@overallDsci);
       $overallDsci[0] += $dsci; 
-      $overallDsci[1] += $total; }
+      $overallDsci[1] += $total;
+      
+      if (@overallDsci != 4) {
+
+          $overallDsci[2] = shared_clone([]);
+          $overallDsci[3] = shared_clone([]);
+
+      } }
+
+    if ($image) {
+
+        my (@unpairReact, @pairReact);
+        @unpairReact = map { $reactivity->[$_] } @$unpaired;
+        @pairReact = map { $reactivity->[$_] } @$paired;
+
+        _plotDSCI($id, \@unpairReact, \@pairReact);
+
+        { lock(@overallDsci);
+          push(@{$overallDsci[2]}, @unpairReact);
+          push(@{$overallDsci[3]}, @pairReact); }
+
+    }
 
     return($dsci / $total);
 
@@ -320,7 +402,7 @@ sub dsci {
 
 sub roc {
 
-    my ($dotbracket, $reactivity) = @_;
+    my ($id, $dotbracket, $reactivity) = @_;
 
     my ($auc, $unpaired, $paired, @tp, @fp);
     $auc = 0;
@@ -330,7 +412,7 @@ sub roc {
 
     return("NaN") if (!@$unpaired || !@$paired);
 
-    for (my $i = 0; $i <= 1000; $i += 5) {
+    for (my $i = 0; $i <= 1000; $i += 1) {
 
         my ($cutoff, $tp, $fp);
         $cutoff = $i / 1000;
@@ -343,16 +425,7 @@ sub roc {
     }
 
     { lock(@overallAuc);
-
-      if (!@overallAuc) { @overallAuc = (shared_clone(\@tp), shared_clone(\@fp), scalar(@$unpaired), scalar(@$paired)); }
-      else {
-
-          @{$overallAuc[0]} = map { $overallAuc[0]->[$_] + $tp[$_] } 0 .. $#tp;
-          @{$overallAuc[1]} = map { $overallAuc[1]->[$_] + $fp[$_] } 0 .. $#fp;
-          $overallAuc[2] += @$unpaired;
-          $overallAuc[3] += @$paired;
-
-      } }
+      push(@overallAuc, $id, shared_clone(\@tp), shared_clone(\@fp), scalar(@$unpaired), scalar(@$paired)); }
 
     return(_auc(\@tp, \@fp, scalar(@$unpaired), scalar(@$paired)));
 
@@ -363,6 +436,12 @@ sub _auc {
     my ($tp, $fp, $nUnpaired, $nPaired) = @_;
 
     my ($auc);
+
+    # Ensure curve starts at 0,0 and ends at 1,1
+    unshift(@$tp, $nUnpaired);
+    unshift(@$fp, $nPaired);
+    push(@$tp, 0);
+    push(@$fp, 0);
 
     for (my $i = 0; $i < $#{$tp}; $i++) {
 
@@ -375,6 +454,116 @@ sub _auc {
     }
 
     return($auc);
+
+}
+
+sub _combineRocData {
+
+    my (@tp, @fp, $totUnpaired, $totPaired);
+
+    for (my $i = 1; $i < @overallAuc - 3; $i += 5) {
+
+        my ($tp, $fp, $unpaired, $paired) = @overallAuc[$i .. $i + 3];
+        @tp = @tp ? map { $tp[$_] + $tp->[$_] } 0 .. $#tp : @$tp;
+        @fp = @fp ? map { $fp[$_] + $fp->[$_] } 0 .. $#fp : @$fp;
+        $totUnpaired += $unpaired;
+        $totPaired += $paired;
+
+    }
+
+    return(\@tp, \@fp, $totUnpaired, $totPaired);
+
+}
+
+sub _plotROC {
+
+    my @data = @_;
+
+    my ($roc, @id, @tp, @fp);
+
+    $plot->file("${output}plots/roc.pdf");
+
+    for (my $i = 0; $i < @data; $i += 5) {
+
+        my ($id, $tp, $fp, $unpaired, $paired) = @data[$i .. $i + 4];
+        push(@id, ($id) x (scalar(@$tp) + 2));
+        push(@tp, 0, reverse(map { $_ / $unpaired } @$tp), 1);
+        push(@fp, 0, reverse(map { $_ / $paired } @$fp), 1);
+
+    }
+
+    $roc = Graphics::Chart::Linedot->new( x               => "fp",
+                                          legend          => 1,
+                                          data            => \@tp,
+                                          dataLabels      => { fp => \@fp,
+                                                               id => \@id },
+                                          dataLabelType   => { fp => "numeric"},
+                                          legendSort      => [ (grep { $_ ne "Overall" } sort(uniq(@id))), "Overall" ],
+                                          fill            => "id",
+                                          xLabelAngle     => 90,
+                                          plotDataPoints  => 0,
+                                          axisTitleSize   => 14,
+                                          labelTextSize   => 12,
+                                          legendTitleSize => 14,
+                                          legendTextSize  => 12,
+                                          colorPalette    => "Paired",
+                                          xTitle          => "False Positive Rate",
+                                          yTitle          => "True Positive Rate" );
+    $plot->plot([$roc]);
+
+}
+
+sub _plotDSCI {
+
+    my @data = @_;
+
+    for (my $i = 0; $i < @data; $i += 3) {
+
+        my ($id, $unpaired, $paired, $dsci);
+        ($id, $unpaired, $paired) = @data[$i .. $i + 2];
+        $plot->file("${output}plots/dsci/$id.pdf");
+        $dsci = Graphics::Chart::Density->new( lineThickness   => 0,
+                                               colorPalette    => "Set1",
+                                               legend          => 1,
+                                               data            => [ @$unpaired, @$paired ],
+                                               dataLabels      => { type => [ ("Unpaired") x scalar(@$unpaired), 
+                                                                              ("Paired") x scalar(@$paired) ] },
+                                               fill            => "type",
+                                               xLimit          => [0, 2],
+                                               xTitle          => "Reactivity",
+                                               yTitle          => "Density",
+                                               axisTitleSize   => 14,
+                                               labelTextSize   => 12,
+                                               legendTitleSize => 14,
+                                               legendTextSize  => 12 );
+        $plot->plot([$dsci]);
+
+    }
+
+
+}
+
+sub _plotMetricSummary {
+
+    my @metrics = @_;
+
+    $plot->file("${output}plots/summary.pdf");
+    my $summary = Graphics::Chart::Barplot->new( legend          => 1,
+                                                 x               => "id",
+                                                 data            => [ map { @$_[1..3] } @metrics ],
+                                                 dataLabels      => { value => [ (qw(coeffUnpaired DSCI AUROC)) x scalar(@metrics) ],
+                                                                      id    => [ map { ($_->[0]) x 3 } @metrics ] },
+                                                 dataLabelSort   => { id    => [ sort(map { $_->[0] } @metrics[0 .. $#metrics - 1]), "Overall" ],
+                                                                      value => [ qw(coeffUnpaired DSCI AUROC) ] },
+                                                 fill            => "value",
+                                                 colorPalette    => "Set1",
+                                                 yTitle          => "Metric value",
+                                                 axisTitleSize   => 14,
+                                                 labelTextSize   => 12,
+                                                 legendTitleSize => 14,
+                                                 legendTextSize  => 12 );
+
+    $plot->plot([$summary]);
 
 }
 
@@ -402,6 +591,14 @@ sub getBaseIndexes {
 
 }
 
+sub cleanup {
+
+    unlink(glob($tmpDir . "*"));
+
+    rmtree($tmpDir);
+
+}
+
 sub help {
 
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -423,7 +620,8 @@ sub help {
                                                Note: files containing multiple structures are accepted
  -r  or --reactivities           <string>      Path to a (folder of) XML reactivity file(s)
                                                Note: file names must match transcript IDs in structure files
- -o  or --output                 <string>      Output file with metrics per transcript (Default: rf_eval.txt)
+ -o  or --output                 <string>      Output folder (Default: rf_eval/)
+ -g  or --img                                  Generates plots for the various metrics (requires R)
  -ow or --overwrite                            Overwrites output file (if the specified file already exists)
  -tu or --terminal-as-unpaired                 Treats terminal base-pairs as if they were unpaired
  -it or --ignore-terminal                      Terminal base-pairs are excluded from calculations
@@ -431,6 +629,7 @@ sub help {
  -kp or --keep-pseudoknots                     Pseudoknotted base-pairs are retained
  -c  or --reactivity-cutoff      <float>       Cutoff for considering a base highly-reactive when computing the
                                                unpaired coefficient (>0, Default: 0.7)
+ -R  or --R-path                 <string>      Path to R executable (Default: assumes R is in PATH) 
 
 HELP
 

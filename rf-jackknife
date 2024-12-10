@@ -33,7 +33,10 @@ use Core::Mathematics qw(:all);
 use Core::Process::Queue;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
+use Graphics::Chart::Heatmap;
+use Graphics::Image;
 use RF::Data::IO::XML;
+use RF::Utils;
 use RNA::Utils;
 use Term::Constants qw(:screen);
 use Term::Table;
@@ -45,9 +48,9 @@ my ($output, $overwrite, $reference, $refio,
     $threads, $slope, $intercept, $sstep,
     $istep, $rfparams, $relaxed, $mFMI,
     $kp, $kl, $m, $am, $help, $tmpdir,
-    $ignoreseq, $onlyCommon, $installed, @slope, 
-    @intercept, @samples, %files, %reference, 
-    %table, %results);
+    $ignoreseq, $onlyCommon, $installed, $image,
+    $R, @slope, @intercept, @samples, %files, 
+    %reference, %table, %results);
 %results = ( used          => 0,
              ioerr         => 0,
              diffseq       => 0,
@@ -77,7 +80,9 @@ do {
                 "e|median"             => \$m,
                 "am|arithmetic-mean"   => \$am,
                 "i|ignore-sequence"    => \$ignoreseq,
-                "oc|only-common"       => \$onlyCommon ) or help(1);
+                "oc|only-common"       => \$onlyCommon,
+                "g|img"                => \$image,
+                "R|R-path=s"           => \$R ) or help(1);
 
     @samples = uniq(@ARGV);
 
@@ -93,6 +98,7 @@ $slope ||= "0:5";
 $intercept ||= "-3:0";
 $istep ||= 0.2;
 $sstep ||= 0.2;
+$R = checkRinstall($R) if ($image);
 
 $installed = eval { require RNA; 1; };
 $output =~ s/\/?$/\//;
@@ -134,10 +140,6 @@ elsif (!-x $rffold) { die "\n  [!] Error: rf-fold is not executable\n\n"; }
 
 $SIG{__DIE__} = \&cleanup;
 
-##
-# Output directories making
-##
-
 print "\n[+] Making output directory...";
 
 if (-e $output) {
@@ -170,6 +172,8 @@ $refio = Data::IO::Sequence->new( file        => $reference,
                                   lonelypairs => $kl );
 
 while(my $ref = $refio->read()) {
+
+    die "\n\n  [!] Error: Provided reference file is not a valid dot-bracket or CT file\n\n" if (!$ref->can("structure"));
 
     my (@files);
 
@@ -359,6 +363,40 @@ if (keys %files) {
     $table->print();
     print "\n";
 
+    if ($image) {
+
+        my ($plot, $heatmap, @slope, @intercept);
+        @slope = map { $_->[0] } @table;
+        @intercept = map { $_->[1] } @table;
+
+        $plot = Graphics::Image->new( file   => $output . ($mFMI ? "mFMI" : "FMI") . ".pdf",
+                                      width  => 10,
+                                      height => 9.2,
+                                      R      => $R,
+                                      tmpdir => $tmpdir );
+        $heatmap = Graphics::Chart::Heatmap->new( dataLabels    => { slope     => \@slope,
+                                                                     intercept => \@intercept },
+                                                  dataLabelSort => { slope     => [ uniq(sort { $a <=> $b } @slope) ],
+                                                                     intercept => [ reverse(uniq(sort { $a <=> $b } @intercept)) ] },
+                                                  data          => [ map { $_->[2] } @table ],
+                                                  background    => 0,
+                                                  grid          => 0,
+                                                  legendTitle   => $mFMI ? "mFMI" : "FMI",
+                                                  labelTextSize => 12,
+                                                  axisTextSize  => 14,
+                                                  axisTitleSize => 16,
+                                                  valueTextSize => 3,
+                                                  x             => "intercept",
+                                                  y             => "slope",
+                                                  colorPalette  => "RdYlBu",
+                                                  plotValues    => 1,
+                                                  yTitle        => "Slope (kcal/mol)",
+                                                  xTitle        => "Intercept (kcal/mol)",
+                                                  xLabelAngle   => 90 );
+        $plot->plot([$heatmap]);
+
+    }
+
 }
 else { die "\n\n [!] Error: No reference structure passed checks. Please ensure reference ID matches XML IDs\n\n"; }
 
@@ -445,6 +483,7 @@ sub help {
  -p  or --processors       <int>              Number of processors to use (Default: 1)
  -o  or --output-dir       <string>           Output directory (Default: rf_jackknife/)
  -ow or --overwrite                           Overwrites output directory (if the specified path already exists)
+ -g  or --img                                 Generates heatmap of grid search results (requires R)
  -sl or --slope            <float>,<float>    Range of slope values to test (Default: 0,5)
  -in or --intercept        <float>,<float>    Range of intercept values to test (Default: -3,0)
  -ss or --slope-step       <float>            Step for testing slope values (Default: 0.2)
@@ -461,6 +500,7 @@ sub help {
                                               Note: default is to aggregate them by geometric mean
  -rf or --rf-fold          <string>           Path to rf-fold executable (Default: assumes rf-fold is in PATH)
  -rp or --rf-fold-params   <string>           Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
+ -R  or --R-path           <string>           Path to R executable (Default: assumes R is in PATH)
 
 HELP
 

@@ -67,14 +67,14 @@ $|++;
 die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
-my ($help, $output, $overwrite, $rcin,
+my ($help, $output, $overwrite, $rcin, $needRC,
     $jsonin, $medianPreCov, $medianCov, $error,
-    $data, $minConf, $maxConf, $extend,
-    $surroundToRC, $ignoreTerm, $minOverlapReps,
+    $data, $minConf, $maxConf, $extend, $corrByMajority,
+    $corrAll, $surroundToRC, $ignoreTerm, $minOverlapReps,
     $rcindex, $spearman, $minCorrMatch, $acOnly,
     $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
     $skipZeroClusterWins, $capMutFreqs, $keepIgnored, @rcin, @jsonin,
-    @jsonData, @rcindex, @rcout, %allWins, %commonWins);
+    @jsonData, @rcindex, @rcout, %allWins, %commonWins, %files);
 
 do {
 
@@ -101,7 +101,9 @@ do {
                 "s|spearman"                 => \$spearman,
                 "sz|skip-zero-cluster-wins"  => \$skipZeroClusterWins,
                 "mor|min-overlap-reps=s"     => \$minOverlapReps,
-                "cf|cap-mut-freqs=s"         => \$capMutFreqs ) or help(1);
+                "cf|cap-mut-freqs=s"         => \$capMutFreqs,
+                "ca|corr-all"                => \$corrAll,
+                "cm|corr-by-majority"        => \$corrByMajority ) or help(1);
 
 };
 
@@ -126,12 +128,14 @@ $output =~ s/\/?$/\//;
 @jsonin = split(/,/, $jsonin);
 @rcindex = split(/,/, $rcindex);
 
+$needRC = $minConf < 2 || $surroundToRC ? 1 : 0;
+
 die "\n  [!] Error: No input JSON file provided\n\n" if (!@jsonin);
 for (@jsonin) { die "\n  [!] Error: Provided JSON file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
-die "\n  [!] Error: No input RC file provided\n\n" if (!@rcin);
-for (@rcin) { die "\n  [!] Error: Provided RC file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
-die "\n  [!] Error: Unexpected number of RCI index files\n\n" if (defined $rcindex && @rcindex != 1 && @rcindex != @rcin);
-die "\n  [!] Error: Different number of JSON and RC files provided\n\n" if (@jsonin != @rcin);
+die "\n  [!] Error: No input RC file provided\n\n" if ($needRC && !@rcin);
+for (@rcin) { die "\n  [!] Error: Provided RC file \"$_\" doesn't exist\n\n" if (!-e $_); }
+die "\n  [!] Error: Unexpected number of RCI index files\n\n" if ($needRC && defined $rcindex && @rcindex != 1 && @rcindex != @rcin);
+die "\n  [!] Error: Different number of JSON and RC files provided\n\n" if ($needRC && @jsonin != @rcin);
 die "\n  [!] Error: Median cumulative coverage must be a positive int\n\n" if (!ispositive($medianCov) || !isint($medianCov));
 die "\n  [!] Error: Median preCoverage must be a positive int\n\n" if (!ispositive($medianPreCov) || !isint($medianPreCov));
 die "\n  [!] Error: Bases to ignore must be comprised between 0 and 0.2\n\n" if (!isnumeric($ignoreTerm) || !inrange($ignoreTerm, [0, 0.2]));
@@ -140,6 +144,7 @@ die "\n  [!] Error: Minimum overlap between consecutive windows must be comprise
 die "\n  [!] Error: Minimum correlation must be comprised between 0 and 1\n\n" if (!isnumeric($minCorrMatch) || !inrange($minCorrMatch, [0, 1]) || !isnumeric($minCorrMerge) || !inrange($minCorrMerge, [0, 1]));
 die "\n  [!] Error: Minimum number of conformations is higher than maximum\n\n" if ($minConf > $maxConf);
 die "\n  [!] Error: Mutation frequency cap must be comprised between 0 and 1\n\n" if (!isnumeric($capMutFreqs) || !inrange($capMutFreqs, [0, 1]));
+die "\n  [!] Error: Parameter -cm requires -ca\n\n" if ($corrByMajority && !$corrAll);
 
 print "\n[+] Making output directory...";
 
@@ -162,11 +167,15 @@ mkpath($output, { mode  => 0755,
 
 die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
+if ($needRC) {
+
 print "\n[+] Opening RC file(s)...";
 
-# Replaces the RC file with an IO object pointing to that file
-$rcin[$_] = RF::Data::IO::RC->new( file  => $rcin[$_],
-                                   index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
+    # Replaces the RC file with an IO object pointing to that file
+    $rcin[$_] = RF::Data::IO::RC->new( file  => $rcin[$_],
+                                    index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
+
+}
 
 print "\n[+] Importing JSON file(s) [0 imported]";
 
@@ -185,7 +194,7 @@ for (0 .. $#jsonin) {
         $sequence = $transcript->{sequence};
         $nReads = $transcript->{nReads};
 
-        if (!$rcin[$_]->read($id)) {
+        if ($needRC && !$rcin[$_]->read($id)) {
 
             print CLRRET . "[!] Warning: transcript \"" . $id . "\" is missing in RC file, and it will be skipped...\n";
 
@@ -462,8 +471,23 @@ if (@jsonin > 1) {
 print "\n[+] Filtering windows...";
 
 # Create RC IO objects for output
-push(@rcout, RF::Data::IO::RC->new( file => $output . (fileparse($_, ".json"))[0] . ".rc",
-                                    mode => "w" )) for (@jsonin);
+for (@jsonin) {
+
+    my $id = (fileparse($_, ".json"))[0];
+
+    if (exists $files{$id}) { 
+        
+        $id .= "_" . $files{$id};
+        $files{$id}++;
+        
+    }
+    else { $files{$id} = 1; }
+
+    push(@rcout, RF::Data::IO::RC->new( file => "${output}$id.rc",
+                                        mode => "w" ));
+
+}
+
 open(my $sh, ">", $output . "stoichiometries.txt") or die "\n\n  [!] Error: Unable to write stoichiometry summary (" . $! . ")\n\n";
 select((select($sh), $|=1)[0]);
 
@@ -686,14 +710,15 @@ sub sortConformations {
 
     foreach my $set (calcCombinations(map { \@combinations } 0 .. $#{$refCounts})) {
 
-        # Uncomment this line to check all conformations against the cutoff, otherwise, only the average is checked
-        #next if (sum(map { $set->[$_]->[0] >= $corrCutoff ? 1 : 0 } 0 .. $#{$refCounts}) < @{$refCounts});
         next if (uniq(map { $set->[$_]->[1] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
         next if (uniq(map { $set->[$_]->[2] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
 
+        # Uncomment this line to check all conformations against the cutoff, otherwise, only the average is checked
+        if ($corrAll) { next if (sum(map { $set->[$_]->[0] >= $corrCutoff ? 1 : 0 } 0 .. $#{$refCounts}) < ($corrByMajority ? $#{$refCounts} : @{$refCounts})); }
+
         my $avgCorr = mean(map { $set->[$_]->[0] } 0 .. $#{$refCounts});
 
-        next if ($avgCorr < $corrCutoff);
+        next if (!$corrAll && $avgCorr < $corrCutoff);
 
         if (!defined $bestCorr || $avgCorr > $bestCorr) {
 
@@ -846,6 +871,11 @@ sub help {
                                                   replicates, to be reported (0-1, Default: 0.7)
  -s   or --spearman                               Spearman will be used instead of Pearson for correlation analyses
  -cf  or --cap-mut-freqs          <float>         Mutation frequencies will be capped to this value for correlation calculation (>0-1, Default: 1 (no cap))
+ -ca  or --corr-all                               Each pairwise comparison between each conformation across every replicate needs to exceed the minimum
+                                                  correlation threshold (Default: only the average of all pairwise comparisons needs to exceed the threshold)
+ -cm  or --corr-by-majority                       If two matching windows form N conformations, and at least N-1 conformations exceed the minimum correlation
+                                                  threshold, the last conformation is also accepted even if the correlation does not exceed the threshold
+                                                  (requires -ca)
 
 HELP
 

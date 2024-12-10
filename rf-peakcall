@@ -31,11 +31,12 @@ use Core::Statistics;
 use Core::Utils;
 use Data::IO;
 use Data::Sequence::Utils;
-use Graphics::Container;
-use Graphics::Object::Path;
-use Graphics::Object::Ruler;
+use Graphics::Chart::Linedot;
+use Graphics::Image;
 use RF::Data::IO::RC;
+use RF::Utils;
 use Term::Constants qw(:screen);
+use Term::Progress;
 
 use constant SIZE5UTR => 75;
 use constant SIZECDS  => 650;
@@ -47,18 +48,19 @@ $|++;
 die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
-my ($help, $output, $overwrite, $win,
+my ($help, $output, $overwrite, $win, $tmpDir,
     $pvalue, $pseudocount, $meancov, $mediancov,
-    $control, $ip, $index, $enrich,
-    $threads, $iprc, $ctrlrc, $decimals,
+    $control, $ip, $index, $enrich, $ctrlIndex,
+    $ipIndex, $threads, $iprc, $ctrlrc, $decimals,
     $mergedist, $img, $error, $metaplot,
     $refine, $summit, $relaxed, $offset,
     $metaonlyenriched, $whitelist, $metacoding,
     $minorflen, $altstart, $anystart, $gencode,
-    $codsize, @index, @pool, @imeans);
+    $codsize, $orfFile, $R, @pool, @imeans, %orfs);
 
 my $ctrlnreads : shared;
 my $ipnreads : shared;
+my $progressBar : shared;
 my @qcaller : shared;
 my @qresults : shared;
 my @metaip : shared;
@@ -101,6 +103,7 @@ do {
                 "r|refine"              => \$refine,
                 "x|relaxed"             => \$relaxed,
                 "s|summit"              => \$summit,
+                "of|orf-file=s"         => \$orfFile,
                 "pc|pseudocount=s"      => \$pseudocount,
                 "md|merge-distance=i"   => \$mergedist,
                 "mcp|meta-coding-plot"  => \$metacoding,
@@ -127,19 +130,19 @@ $meancov //= 0;
 $mediancov //= 0;
 $gencode ||= 1;
 $minorflen ||= 50;
+$R = checkRinstall($R) if ($img || $metacoding || $metaplot);
 
 die "\n  [!] Error: No IP sample RC file provided\n\n" if (!defined $ip);
-die "\n  [!] Error: Provided IP sample RC file doesn't exist\n\n" if (!-e $ip);
-die "\n  [!] Error: Provided control sample RC file doesn't exist\n\n" if (defined $control &&
-                                                                           !-e $control);
+die "\n  [!] Error: Provided IP sample RC file does not exist\n\n" if (!-e $ip);
+die "\n  [!] Error: Provided RCI index does not exist\n\n" if (defined $index && !-e $index);
+die "\n  [!] Error: Provided ORF file does not exist\n\n" if (defined $orfFile && !-e $orfFile);
+die "\n  [!] Error: Provided control sample RC file does not exist\n\n" if (defined $control && !-e $control);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
-die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 ||
-                                                                                          $decimals > 10);
+die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10\n\n" if ($decimals < 1 || $decimals > 10);
 die "\n  [!] Error: Window's size must be an integer >= 10\n\n" if ($win < 10);
 die "\n  [!] Error: Offset cannot exceed window's size\n\n" if ($offset > $win);
 die "\n  [!] Error: P-value must be numeric\n\n" if (!isnumeric($pvalue));
-die "\n  [!] Error: P-value must be comprised between 0 and 1\n\n" if (!ispositive($pvalue) ||
-                                                                       $pvalue > 1);
+die "\n  [!] Error: P-value must be comprised between 0 and 1\n\n" if (!ispositive($pvalue) || $pvalue > 1);
 die "\n  [!] Error: Pseudocount value must be numeric\n\n" if (!isnumeric($pseudocount));
 die "\n  [!] Error: Pseudocount value must be > 0\n\n" if (!$pseudocount);
 die "\n  [!] Error: Enrichment value must be numeric\n\n" if (!isnumeric($enrich));
@@ -148,10 +151,8 @@ die "\n  [!] Error: Mean coverage value must be numeric\n\n" if (!isnumeric($mea
 die "\n  [!] Error: Mean coverage value must be >= 0\n\n" if (!ispositive($meancov));
 die "\n  [!] Error: Median coverage value must be numeric\n\n" if (!isnumeric($mediancov));
 die "\n  [!] Error: Median coverage value must be >= 0\n\n" if (!ispositive($mediancov));
-die "\n  [!] Error: Parameter -x requires peaks refinement (-r) to be active\n\n" if ($relaxed &&
-                                                                                      !$refine);
-die "\n  [!] Error: Parameter -eo requires meta-plot generation (-mp) to be active\n\n" if ($metaonlyenriched &&
-                                                                                            (!$metaplot && !$metacoding));
+die "\n  [!] Error: Parameter -x requires peaks refinement (-r) to be active\n\n" if ($relaxed && !$refine);
+die "\n  [!] Error: Parameter -eo requires meta-plot generation (-mp) to be active\n\n" if ($metaonlyenriched && (!$metaplot && !$metacoding));
 die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
 warn "\n  [!] Warning: No control sample RC file provided. Background will be estimated on IP sample only.\n" if (!defined $control);
@@ -166,6 +167,9 @@ if (!defined $output) {
 
 }
 else { $output =~ s/\/?$/\//; }
+
+$SIG{__DIE__} = \&cleanup;
+$tmpDir = "${output}tmp";
 
 print "\n[+] Making output directory...";
 
@@ -183,23 +187,23 @@ if (-e $output) {
 
 }
 
-mkpath($output, { mode  => 0755,
+mkpath($tmpDir, { mode  => 0755,
                   error => \$error });
 mkpath($output . "plots", { mode  => 0755,
                             error => \$error }) if ($metaplot || $metacoding);
 mkpath($output . "plots/transcripts", { mode  => 0755,
                                         error => \$error }) if ($img);
 
-@index = split(/,/, $index);
-
 # In case no index has been provided, we rebuild the index before generating the working threads
 # The new index will be generated in the same path of the rc file, with extension .rci
-print "\n[+] Regenerating RCI index files..." if (!@index);
+$ctrlIndex = defined $index ? $index : (defined $control && -e "$control.rci" ? "$control.rci" : undef);
+$ipIndex = defined $index ? $index : (-e "$ip.rci" ? "$ip.rci" : undef);
 $ctrlrc = RF::Data::IO::RC->new( file       => $control,
-                                     buildindex => @index ? 0 : 1 ) if ($control);
+                                 index      => $ctrlIndex,
+                                 buildindex => defined $ctrlIndex ? 1 : 0 ) if ($control);
 $iprc = RF::Data::IO::RC->new( file       => $ip,
-                               index      => @index ? $index[-1] : undef,
-                               buildindex => 1 );
+                               index      => $ipIndex,
+                               buildindex => defined $ipIndex ? 1 : 0 );
 
 print "\n[+] Loading transcript IDs... ";
 
@@ -209,7 +213,7 @@ if ($whitelist) {
 
     my %whitelist;
 
-    open(my $fh, "<", $whitelist) or die "\n\n  [!] Error: Unable to read from whitelist file\n\n";
+    open(my $fh, "<", $whitelist) or die "\n\n  [!] Error: Unable to read from whitelist file ($!)\n\n";
     while(<$fh>) {
 
         chomp();
@@ -225,10 +229,51 @@ if ($whitelist) {
 }
 
 print scalar(@qcaller) . " transcripts loaded.";
-print "\n[+] Calling peaks [Last: none]";
 
+if ($orfFile) {
+
+    print "\n[+] Importing ORF coordinates...";
+
+    open(my $fh, "<", $orfFile) or die "\n\n  [!] Error: Unable to read from ORF file ($!)\n\n";
+    while(<$fh>) {
+
+        chomp();
+
+        my @row = split /\t/;
+
+        next if (@row < 3);
+
+        if (my $length = $iprc->length($row[0])) {
+
+            if (isint(@row[1, 2]) && ispositive(@row[1, 2]) && $row[1] < $row[2]) {
+
+                next if ($row[2] > $length);
+
+                $orfs{$row[0]} = [$row[1], $row[2] - 1];
+
+            }
+            else { die "\n\n  [!] Error: Malformed ORF file\n\n"; }
+
+        }
+
+    }
+    close($fh);
+
+    print " " . scalar(keys %orfs) . " imported.";
+
+}
+
+$progressBar = shared_clone(Term::Progress->new( max     => scalar(@qcaller),
+                                                 width   => 50,
+                                                 colored => 1 ));
+
+print "\n[+] Calling peaks...\n\n";
+
+$progressBar->init();
 @pool = map{ threads->create(\&call) } 1 .. $threads;
 $_->join() for(@pool);
+
+print "\n";
 
 if ($results{peaks}) {
 
@@ -265,7 +310,7 @@ if ($metaplot &&
     @ccov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ctrlnreads : $ctrlrc->mappedreads()) * (10 ** 6) } @metactrl if ($control);
     @pcov = map { $_ / @qresults * 100 } @metapeaks if (@qresults);
 
-    plotcoverage($output . "plots/meta-gene.svg", \@icov, \@ccov, \@pcov);
+    plotcoverage($output . "plots/meta-gene.pdf", \@icov, \@ccov, \@pcov);
 
 }
 
@@ -278,9 +323,11 @@ if ($metacoding &&
     @ccov = map { ($_ / $results{cov}) / ($metaonlyenriched ? $ctrlnreads : $ctrlrc->mappedreads()) * (10 ** 6) } @metactrlcod if ($control);
     @pcov = map { $_ / $results{codpeaks} * 100 } @metapeakscod if ($results{codpeaks});
 
-    plotcoverage($output . "plots/meta-coding-gene.svg", \@icov, \@ccov, \@pcov);
+    plotcoverage($output . "plots/meta-coding-gene.pdf", \@icov, \@ccov, \@pcov);
 
 }
+
+cleanup();
 
 print "\n[+] Calling statistics:\n" .
       "\n  [*] Covered transcripts:   " . $results{cov} . " total" .
@@ -300,10 +347,10 @@ sub call {
         @pmeta, @pmetacod);
 
     $crc = RF::Data::IO::RC->new( file  => $control,
-                                  index => @index ? $index[0] : $control . ".rci" ) if (defined $control);
+                                  index => $ctrlIndex ) if (defined $control);
 
     $irc = RF::Data::IO::RC->new( file  => $ip,
-                                  index => @index ? $index[-1] : $ip . ".rci");
+                                  index => $ipIndex );
 
     while (1) {
 
@@ -318,12 +365,14 @@ sub call {
 
             $initial = uc(substr($id, 0, 1));
             mkpath($output . "plots/transcripts/" . $initial, { mode  => 0755,
-                                                                error => \$error }) if ($img &&
-                                                                                        !-e $output . "plots/transcripts/" . $initial);
+                                                                error => \$error }) if ($img && !-e $output . "plots/transcripts/" . $initial);
 
           } }
 
         last unless($id);
+
+        { lock($progressBar);
+          $progressBar->update(1); }
 
         my ($ientry, $sequence, $imedian, $cmedian,
             $last, $length, $ssummit, $esummit,
@@ -378,13 +427,18 @@ sub call {
 
         if ($metacoding) {
 
-            my ($orf);
-            ($orf, $orfStart) = longestorf($sequence, { gencode     => $gencode,
-                                                        altstart    => $altstart,
-                                                        ignorestart => $anystart,
-                                                        minlength   => $minorflen });
+            if ($orfFile) { if (exists $orfs{$id}) { ($orfStart, $orfEnd) = @{$orfs{$id}}; } }
+            else {
 
-            $orfEnd = $orfStart + length($orf) - 1 if (defined $orf);
+                my ($orf);
+                ($orf, $orfStart) = longestorf($sequence, { gencode     => $gencode,
+                                                            altstart    => $altstart,
+                                                            ignorestart => $anystart,
+                                                            minlength   => $minorflen });
+
+                $orfEnd = $orfStart + length($orf) - 1 if (defined $orf);
+
+            }
 
         }
 
@@ -460,7 +514,7 @@ sub call {
             @{$icov} = map { $_ / $irc->mappedreads() * (10 ** 6) } @icov;
             @{$ccov} = map { $_ / $crc->mappedreads() * (10 ** 6) } @ccov if ($control);
 
-            plotcoverage($output . "/plots/transcripts/" . $initial . "/" . $id . ".svg", $icov, $ccov);
+            plotcoverage($output . "/plots/transcripts/" . $initial . "/" . $id . ".pdf", $icov, $ccov);
 
         }
 
@@ -561,7 +615,7 @@ sub call {
         foreach my $peak (@peaks) {
 
             { lock(@qresults);
-              push(@qresults, shared_clone([$id, $peak->{coords}->[0], $peak->{coords}->[1], sprintf("%." . $decimals . "f", mean(@{$peak->{score}})), sprintf("%." . $decimals . "e", pcombine($peak->{pvalue}, "S")), summit($peak->{coords}->[0], $peak->{coords}->[1], \@icov)])); }
+              push(@qresults, shared_clone([$id, $peak->{coords}->[0], $peak->{coords}->[1] + 1, sprintf("%." . $decimals . "f", mean(@{$peak->{score}})), sprintf("%." . $decimals . "e", pcombine($peak->{pvalue}, "S")), summit($peak->{coords}->[0], $peak->{coords}->[1], \@icov)])); }
 
             if ($metaplot) {
 
@@ -707,6 +761,14 @@ sub call {
 
 }
 
+sub cleanup {
+
+    unlink(glob($tmpDir . "*"));
+
+    rmtree($tmpDir);
+
+}
+
 sub refinepeak {
 
     my %parameters = @_;
@@ -845,72 +907,144 @@ sub plotcoverage {
 
     my ($file, $ip, $ctrl, $peak) = @_;
 
-    my ($maxy, $image, $io, $icov,
-        $ccov, $pcov, $ruler, $metaprofile,
-        $metacodprofile);
+    my ($maxy, $metaprofile, $metacodprofile);
     $metaprofile = $file =~ m/meta-gene/ ? 1 : 0;
     $metacodprofile = $file =~ m/meta-coding/ ? 1 : 0;
     $maxy = $control ? max(@{$ip}, @{$ctrl}) : max(@{$ip});
+    $ctrl ||= [];
+    $peak ||= [];
 
     if ($maxy) {
 
-        $image = Graphics::Container->new( height  => $control ? ($metaprofile || $metacodprofile ? 650 : 450) : 250,
-                                           width   => 500,
-                                           spacing => 0.05 );
-        $io = Data::IO->new( file    => $file,
-                             mode    => "w",
-                             binmode => ":encoding(utf-8)" );
+        my ($hasPeaks, $plot, $profilePlot, @plots, %legendColors, %xBreaks);
+        $hasPeaks = ($metacodprofile || $metaprofile) && @$peak && sum(@$peak) ? 1 : 0;
+        %legendColors = ("IP" => "#376eae");
+        $legendColors{"Control"} = "#006400" if (@$ctrl);
 
-        if ($control) {
+        if ($metacodprofile) {
 
-            $ccov = Graphics::Object::Path->new( fontsize    => 15,
-                                                  height      => 1,
-                                                  yrange      => [0, $maxy],
-                                                  forceyrange => 1,
-                                                  values      => $ctrl,
-                                                  stroke      => "rgb(0, 100, 0)",
-                                                  yname       => "Control (RPM)" );
+            %xBreaks = ( "0"    => "TSS",
+                         "75"   => "Start",
+                         "725"  => "Stop",
+                         "1000" => "TES" );
+
+        }
+        elsif ($metaprofile) {
+
+            %xBreaks = ( "0"    => "0",
+                         "250"  => "25",
+                         "500"  => "50",
+                         "750"  => "75",
+                         "1000" => "100" );
 
         }
 
-        $icov = Graphics::Object::Path->new( fontsize    => 15,
-                                             height      => 1,
-                                             yrange      => [0, $maxy],
-                                             forceyrange => 1,
-                                             values      => $ip,
-                                             stroke      => "rgb(55, 110, 174)",
-                                             yname       => "IP (RPM)" );
+        $plot = Graphics::Image->new( file   => $file,
+                                      width  => 10,
+                                      height => $hasPeaks ? 8 : 4,
+                                      R      => $R,
+                                      tmpdir => $tmpDir );
 
-        $ruler = Graphics::Object::Ruler->new( fontsize => 15,
-                                               height   => 1,
-                                               labelMap => $metacodprofile ? { "0" => "TSS",
-                                                                               "7.5" => "Start",
-                                                                               "72.5" => "Stop",
-                                                                               "100"  => "TES" } : {},
-                                               range    => $metaprofile || $metacodprofile ? [0, 100] : [0, scalar(@{$ip})],
-                                               ticksby  => $metaprofile ? 10 : max(1, round(scalar(@{$ip}) / 10)),
-                                               name     => $metaprofile ? "Relative position (\%)" : ($metacodprofile ? undef : "Position (nt)"),
-                                               toend    => 1 );
+        $profilePlot = Graphics::Chart::Linedot->new( data           => [ @$ip, @$ctrl ],
+                                                      dataLabels     => { sample => [ ("IP") x scalar(@$ip), ("Control") x scalar(@$ctrl) ] },
+                                                      fill           => "sample",
+                                                      plotDataPoints => 0,
+                                                      legendColors   => \%legendColors,
+                                                      xTitle         => $metaprofile ? "Relative position (\%)" : ($metacodprofile ? undef : "Position (nt)"),
+                                                      yTitle         => "RPM",
+                                                      axisTitleSize  => 14,
+                                                      labelTextSize  => 12,
+                                                      legendKeyWidth => 14,
+                                                      legendTextSize => 12,
+                                                      xBreaks        => \%xBreaks );
 
-        $image->addobjects($ccov) if ($control);
-        $image->addobject($icov);
+        push(@plots, $profilePlot);
 
-        if (($metaprofile || $metacodprofile) &&
-            @{$peak}) {
+        if ($hasPeaks) {
 
-            $pcov = Graphics::Object::Path->new( fontsize    => 15,
-                                                 height      => 1,
-                                                 values      => $peak,
-                                                 stroke      => "rgb(0, 0, 0)",
-                                                 yname       => "\% of peaks" );
+            my $peakPlot = Graphics::Chart::Linedot->new( data           => $peak,
+                                                          dataLabels     => { sample => [ ("Peaks") x scalar(@$peak) ] },
+                                                          fill           => "sample",
+                                                          plotDataPoints => 0,
+                                                          legend         => 0,
+                                                          legendColors   => { "Peaks" => "#000000" },
+                                                          xTitle         => $metaprofile ? "Relative position (\%)" : undef,
+                                                          yTitle         => "% Peaks",
+                                                          axisTitleSize  => 14,
+                                                          legendKeyWidth => 14,
+                                                          legendTextSize => 12,
+                                                          labelTextSize  => 12,
+                                                          xBreaks        => \%xBreaks );
 
-            $image->addobject($pcov);
+            push(@plots, $peakPlot);
 
         }
 
-        $image->addobject($ruler);
+        $plot->plot([ map { [ $_ ] } @plots ]);
 
-        $io->write($image->xml());
+        # if ($control) {
+
+        #     my $ctrlPlot = Graphics::Chart::Linedot->new( x              => "fp",
+        #                                                   legend         => 1,
+        #                                                   data           => \@tp,
+        #                                                   dataLabels     => { fp => \@fp,
+        #                                                                       id => \@id },
+        #                                                   dataLabelType  => { fp => "numeric"},
+        #                                                   legendSort     => [ (grep { $_ ne "Overall" } sort(uniq(@id))), "Overall" ],
+        #                                                   fill           => "id",
+        #                                                   xLabelAngle    => 90,
+        #                                   plotDataPoints => 0,
+        #                                   colorPalette   => "Paired",
+        #                                   xTitle         => "False Positive Rate",
+        #                                   yTitle         => "True Positive Rate" );
+        #     $ccov = Graphics::Object::Path->new( fontsize    => 15,
+        #                                           height      => 1,
+        #                                           yrange      => [0, $maxy],
+        #                                           forceyrange => 1,
+        #                                           values      => $ctrl,
+        #                                           stroke      => "rgb(0, 100, 0)",
+        #                                           yname       => "Control (RPM)" );
+
+        # }
+
+        # $icov = Graphics::Object::Path->new( fontsize    => 15,
+        #                                      height      => 1,
+        #                                      yrange      => [0, $maxy],
+        #                                      forceyrange => 1,
+        #                                      values      => $ip,
+        #                                      stroke      => "rgb(55, 110, 174)",
+        #                                      yname       => "IP (RPM)" );
+
+        # $ruler = Graphics::Object::Ruler->new( fontsize => 15,
+        #                                        height   => 1,
+        #                                        labelMap => $metacodprofile ? { "0" => "TSS",
+        #                                                                        "7.5" => "Start",
+        #                                                                        "72.5" => "Stop",
+        #                                                                        "100"  => "TES" } : {},
+        #                                        range    => $metaprofile || $metacodprofile ? [0, 100] : [0, scalar(@{$ip})],
+        #                                        ticksby  => $metaprofile ? 10 : max(1, round(scalar(@{$ip}) / 10)),
+        #                                        name     => $metaprofile ? "Relative position (\%)" : ($metacodprofile ? undef : "Position (nt)"),
+        #                                        toend    => 1 );
+
+        # $image->addobjects($ccov) if ($control);
+        # $image->addobject($icov);
+
+        # if (($metaprofile || $metacodprofile) &&
+        #     @{$peak}) {
+
+        #     $pcov = Graphics::Object::Path->new( fontsize    => 15,
+        #                                          height      => 1,
+        #                                          values      => $peak,
+        #                                          stroke      => "rgb(0, 0, 0)",
+        #                                          yname       => "\% of peaks" );
+
+        #     $image->addobject($pcov);
+
+        # }
+
+        # $image->addobject($ruler);
+
+        # $io->write($image->xml());
 
     }
 
@@ -959,17 +1093,19 @@ sub help {
  -ec  or --median-coverage      <float>              Discards any transcript with median coverage below this threshold in the control sample (>=0, Default: 0)
  -D   or --decimals             <int>                Number of decimals for reporting enrichment/p-value (1-10, Default: 3)
 
- Plotting options
- -g   or --img                                       Enables the generation of coverage plots
- -mp  or --meta-plot                                 Enables the generation of meta-gene plots
+ Plotting options 
+ -g   or --img                                       Enables the generation of coverage plots (one per transcript; requires R)
+ -mp  or --meta-plot                                 Enables the generation of meta-gene plots (requires R)
  -mcp or --meta-coding-plot                          Enables the generation of a protein-coding-only meta-gene plot, by aligning the TSS, start codon,
-                                                     stop codon, and TES
-                                                     Note: the longest ORF will be automatically identified
- -mo  or --min-orf-length      <int>                 Minimum length (in aa) to select the longest ORF (requires -mcp, Default: 50)
+                                                     stop codon, and TES (requires R)
+ -of  or --orf-file             <string>             Path to a BED file containing the transcript-level coordinates of the CDSs
+                                                     Note: if no file is provided, the longest ORF will be automatically identified using the following parameters
+ -mo  or --min-orf-length       <int>                Minimum length (in aa) to select the longest ORF (requires -mcp, Default: 50)
  -als or --alt-start                                 The longest ORF is allowed to start with alternative start codons (requires -mcp)
  -ans or --any-start                                 The longest ORF is allowed to start with any codon (requires -mcp)
- -gc  or --genetic-code        <int>                 Genetic code table for the reference organism (requires -mcp, 1-33, Default: 1)
+ -gc  or --genetic-code         <int>                Genetic code table for the reference organism (requires -mcp, 1-33, Default: 1)
  -eo  or --plot-enriched-only                        Meta-gene plots will be calculated only on transcripts with a detected enrichment (requires -mp or -mcp)
+ -R   or --R-path               <string>             Path to R executable (Default: assumes R is in PATH)
 
 HELP
 

@@ -37,13 +37,13 @@ use Data::IO::Sequence;
 use Data::Sequence;
 use Data::Sequence::Structure;
 use Data::Sequence::Utils;
-use Graphics::Container;
-use Graphics::Object::Barplot;
-use Graphics::Object::Path;
-use Graphics::Object::RNAarcs;
-use Graphics::Object::Ruler;
+use Graphics::Chart::Arcs;
+use Graphics::Chart::Area;
+use Graphics::Chart::Barplot;
+use Graphics::Image;
 use RNA::Utils;
 use RF::Data::IO::XML;
+use RF::Utils;
 use Term::Constants qw(:screen);
 use Term::Progress;
 
@@ -51,11 +51,10 @@ use constant MINWINLENGTH => 50; # Minimum window length for windowed folding
 
 $|++;
 
-my ($output, $ct, $method,
+my ($output, $ct, $method, $installed, $maxdist, 
     $threads, $img, $t, $noshapevrfoldparams,
-    $cutoff, $nlp, $ngu, $rnastructure,
+    $cutoff, $nlp, $ngu, $rnastructure, $R,
     $viennarna, $data, $slope, $intercept,
-    $maxdist, $installed,
     $overwrite, $error, $help, $tmpdir,
     $ignore, $hc, $progressBar, $processManager,
     $windowed, $cwd, $partition, $probplot,
@@ -65,10 +64,9 @@ my ($output, $ct, $method,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $keeptmp, $constraintDir, 
     $pkpercentmfe, $nozuker, $zukersubopt, $pkslope,
-    $pkintercept, $plotMedianShape, $plotMedianShannon, 
-    $ignoreSeq, $onlyCommon, @skparams, @vrfoldparams, 
-    @rsfoldparams, @slope, @intercept, @samples, %xml, 
-    %lambda, %constraints, %results);
+    $pkintercept, $ignoreSeq, $onlyCommon, @skparams, 
+    @vrfoldparams, @rsfoldparams, @slope, @intercept, 
+    @samples, %xml, %lambda, %constraints, %results);
 
 %results = ( folded    => 0,
              parseErr  => 0,
@@ -146,8 +144,7 @@ do {
                 "nz|no-zuker"                => \$nozuker,
                 "zs|zuker-suboptimal=i"      => \$zukersubopt,
                 "ke|subopt-delta-energy=s"   => \$suboptDeltaEnergy,
-                "pmr|plot-median-react"      => \$plotMedianShape,
-                "pms|plot-median-shannon"    => \$plotMedianShannon ) or help(1);
+                "R|R-path=s"                 => \$R ) or help(1);
 
     @samples = uniq(@ARGV);
 
@@ -190,6 +187,7 @@ $shapeknots = $shapeknots || which("ShapeKnots-smp") || which("ShapeKnots");
 $partition = $partition || which("partition-smp") || which("partition");
 $probplot = $probplot || which("ProbabilityPlot");
 $data ||= $ENV{DATAPATH};
+$R = checkRinstall($R) if ($img);
 $installed = eval { require RNA; 1; };
 
 $output =~ s/\/?$/\//;
@@ -373,11 +371,11 @@ mkpath($tmpdir, { mode  => 0755,
 if (!$dotplotOnly) {
 
     mkpath($output . "structures", { mode  => 0755,
-                                    error => \$error });
-    mkpath($output . "images", { mode  => 0755,
+                                     error => \$error });
+    mkpath($output . "plots", { mode  => 0755,
                                 error => \$error }) if ($img);
     mkpath($output . "shannon", { mode  => 0755,
-                                error => \$error }) if ($sh);
+                                  error => \$error }) if ($sh);
 
 }
 
@@ -479,7 +477,7 @@ $processManager->enqueue( command  => \&fold,
 $progressBar = Term::Progress->new( max     => $processManager->queueSize(),
                                     colored => 1 );
 
-print "\n[+] Folding RNA structures\n\n";
+print "\n[+] Folding RNA structures. Please wait...\n\n";
                                 
 $progressBar->init();
 $processManager->parentOnExit(sub { 
@@ -520,7 +518,7 @@ print "\n                             " . $results{"pkErr"} . " pseudoknotted fo
 rmtree($tmpdir) if (!$keeptmp);
 
 if (!-s $output . "error.out") { unlink($output . "error.out"); }
-else { print "\n\n  [!] Warning: Execution completed with error(s)/warning(s). Please check the \"$output/error.out\" file"; }
+else { print "\n\n  [!] Warning: Execution completed with error(s)/warning(s). Please check the \"${output}error.out\" file"; }
 
 print "\n\n[+] All done.\n\n";
 
@@ -722,7 +720,7 @@ sub fold {
 
     if ($dp) {
 
-        open(my $wh, ">" . $output . "dotplot/" . $id . ".dp") or next;
+        open(my $wh, ">", $output . "dotplot/" . $id . ".dp") or next;
         select((select($wh), $|=1)[0]);
         print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
         print $wh join("\t", $_->[0] + 1, $_->[1] + 1, -logarithm($_->[2], 10)) . "\n" for (@dotplot);
@@ -852,8 +850,7 @@ sub fold {
 
         # Define windows to be analyzed
         # Windows are defined as: [start, end]
-        if ($windowed &&
-            $nwins > 1) {
+        if ($windowed && $nwins > 1) {
 
             for (50, 100) {
 
@@ -996,7 +993,7 @@ sub fold {
 
     if ($dp) {
 
-        open(my $wh, ">" . $output . "dotplot/" . $id . ".dp") or next;
+        open(my $wh, ">", $output . "dotplot/" . $id . ".dp") or next;
         select((select($wh), $|=1)[0]);
         print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
         print $wh join("\t", $_->[0] + 1, $_->[1] + 1, -logarithm($_->[2], 10)) . "\n" for (@dotplot);
@@ -1008,7 +1005,7 @@ sub fold {
 
         my $i = 0;
 
-        open(my $wh, ">" . $output . "shannon/" . $id . ".wig") or next;
+        open(my $wh, ">", $output . "shannon/" . $id . ".wig") or next;
         select((select($wh), $|=1)[0]);
 
         print $wh "track type=wiggle_0 name=\"" . $id . " Shannon entropy\"\n" .
@@ -1025,123 +1022,126 @@ sub fold {
 
     }
 
-    # Generate graphical summary of structure
     if ($img) {
 
-        my ($file, $image, $io, $reactivity,
-            $shannon, $mea, $pairprob, $ruler,
-            $ticksby, $minheight, $maxheight, $sum,
-            $medianShape, $medianShannon, $winSize);
+        my ($plot, $hasReact, $winSize, @plots, @heights);
+        $winSize = 20;
+        $plot = Graphics::Image->new( file   => "${output}plots/$id.pdf",
+                                      width  => 6 * 3,
+                                      height => ($windowed || $dp || $sh ? 7 : 5) * 3,
+                                      R      => $R,
+                                      tmpdir => $tmpdir );
+        $hasReact = scalar(grep { isnumeric($_) } @meanReact);
 
-        # Plot only base-pairing probabilities >= 5%
-        @dotplot = grep { $_->[2] >= 0.05 } sort { $a->[2] <=> $b->[2] } @dotplot;
-        $sum = sum(grep { isnumeric($_) } @meanReact);
-        $minheight = 250;
-        $maxheight = 500;
-        $winSize = 25;
+        if ($hasReact) {
 
-        if ($windowed || $dp || $sh) {
-
-            $minheight *= 2;
-            $maxheight *= 2;
-
-        }
-
-        $ticksby = max(1, round($length / 10));
-        $file = $output . "images/" . $id . ".svg";
-        $image = Graphics::Container->new( height  => abs(maprange(0, 1000, -$maxheight, -$minheight, min($length, 1000))), # Min: 500 / Max: 1000px
-                                            width   => 1000,
-                                            spacing => 0.02 );
-        $io = Data::IO->new( file    => $file,
-                                mode    => "w",
-                                binmode => ":encoding(utf-8)" );
-
-        if ($sum) {
-
-            my (@meanStdev);
+            my ($reactPlot, %dataLabels);
+            %dataLabels = ("Reactivity" => [ map { $_ <= 0.4 || isnan($_) ? "0-0.4" : ($_ < 0.7 ? "0.4-0.7" : "0.7+") } @meanReact ]);
             
             if (@reactivity > 1) {
                 
-                @meanStdev = map { my $i = $_; [ map { $_->[$i] } @reactivity ] } 0 .. $#{$reactivity[0]};
+                my @meanStdev = map { my $i = $_; [ map { $_->[$i] } @reactivity ] } 0 .. $#{$reactivity[0]};
                 @meanStdev = map { isnumeric(@$_) ? stdev(@$_) : "NaN" } @meanStdev;
+                $dataLabels{"sd"} = \@meanStdev;
 
             }
 
-            $reactivity = Graphics::Object::Barplot->new( fontsize  => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
-                                                          height    => 1,
-                                                          values    => \@meanReact,
-                                                          stdev     => @reactivity > 1 ? \@meanStdev : undef,
-                                                          plotstdev => "up",
-                                                          yname     => "Reactivity",
-                                                          barfill   => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @meanReact ],
-                                                          barstroke => [ map { $_ < 0.3 ? "black" : ($_ < 0.7 ? "rgb(255,204,0)" : "rgb(153,25,23)") } @meanReact ] );
+            $reactPlot = Graphics::Chart::Barplot->new( data            => \@meanReact,
+                                                        dataLabels      => \%dataLabels,
+                                                        fill            => "Reactivity",
+                                                        legendTitle     => "Reactivity",
+                                                        legendColors    => { "0-0.4"   => "#000000",
+                                                                             "0.4-0.7" => "#fdb934",
+                                                                             "0.7+"    => "#aa1a1f" },
+                                                        legendKeyWidth  => 14,
+                                                        legendKeyHeight => 14,
+                                                        legendTextSize  => 12,
+                                                        legendTitleSize => 14,
+                                                        axisTitleSize   => 14,
+                                                        labelTextSize   => 12,
+                                                        legendSort      => [ "0.7+", "0.4-0.7", "0-0.4" ],
+                                                        yTitle          => "Reactivity",
+                                                        yLimit          => [0, 2],
+                                                        xLimit          => [0, $length + 1],
+                                                        stdev           => @reactivity > 1 ? "sd" : undef );
 
-            if ($plotMedianShape) {
+            push(@plots, $reactPlot);
+            push(@heights, 1);
 
-                if (2 * $winSize + 1 < $length) {
+            if (2 * $winSize + 1 < $length) {
 
-                    my ($medianReact, @winReact);
-                    @winReact = ("NaN") x $length;
-                    $medianReact = median(grep { isnumeric($_) } @meanReact);
+                my ($medianReact, $medianReactPlot, @winReact);
+                @winReact = ("NaN") x $length;
+                $medianReact = median(grep { isnumeric($_) } @meanReact);
 
-                    for(my $i = $winSize; $i < @meanReact - $winSize; $i += 1) {
+                for(my $i = $winSize; $i < @meanReact - $winSize; $i += 1) {
 
-                        my (@win, @i);
-                        @win = @meanReact[$i - $winSize .. $i + $winSize];
-                        @i = grep { isnumeric($win[$_]) } 0 .. $#win;
+                    my (@win, @i);
+                    @win = @meanReact[$i - $winSize .. $i + $winSize];
+                    @i = grep { isnumeric($win[$_]) } 0 .. $#win;
 
-                        if (@i / @win >= 0.25) {
+                    if (@i / @win >= 0.25) {
 
-                            @win = @win[@i];
-                            $winReact[$i] = median(@win) - $medianReact;
-
-                        }
+                        @win = @win[@i];
+                        $winReact[$i] = median(@win) - $medianReact;
 
                     }
 
-                    $medianShape = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
-                                                                height   => 1,
-                                                                values   => \@winReact,
-                                                                yname    => "Median reactivity",
-                                                                fill     => "black" );
-
                 }
+
+                $medianReactPlot = Graphics::Chart::Area->new( data            => \@winReact,
+                                                               dataLabels      => { "fill" => [ ("black") x @winReact ] },
+                                                               fill            => "fill",
+                                                               legendColors    => { "black" => "#000000" },
+                                                               lineThickness   => 0,
+                                                               legend          => 0,
+                                                               legendTextSize  => 12,
+                                                               legendTitleSize => 14,
+                                                               axisTitleSize   => 14,
+                                                               labelTextSize   => 12,
+                                                               xLimit          => [0, $length + 1],
+                                                               yTitle          => "Reactivity\n(Window median - Transcript median)" );
+
+                push(@plots, $medianReactPlot);
+                push(@heights, 1);
 
             }
 
         }
 
-        $mea = Graphics::Object::RNAarcs->new( height    => 2,
-                                                length    => $length,
-                                                flip      => "down",
-                                                basepairs => \@keptpairs,
-                                                pkpairs   => \@pkpairs );
+        if (@keptpairs) {
 
-        $ruler = Graphics::Object::Ruler->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))),
-                                                height   => 1,
-                                                range    => [0, $length],
-                                                ticksby  => $ticksby,
-                                                name     => "Position (nt)",
-                                                toend    => 1 );
+            my ($maxBp, $structPlot);
+            $maxBp = max(map { abs(diff(@$_)) } (@keptpairs, @pkpairs));
+            $structPlot = Graphics::Chart::Arcs->new( data            => [ map { [ map { $_ + 1 } @$_ ] } (@keptpairs, @pkpairs) ],
+                                                      dataLabels      => { "fill" => [ ("black") x (@keptpairs + @pkpairs) ] },
+                                                      flip            => "down",
+                                                      fill            => "fill",
+                                                      legendColors    => { "black" => "#000000" },
+                                                      xLimit          => [0, $length + 1],
+                                                      lineThickness   => 0.2,
+                                                      legend          => 0,
+                                                      background      => 0,
+                                                      grid            => 0,
+                                                      xTicks          => 0,
+                                                      yTicks          => 0,
+                                                      xLabels         => 0,
+                                                      yLabels         => 0,
+                                                      legendTextSize  => 12,
+                                                      legendTitleSize => 14,
+                                                      axisTitleSize   => 14,
+                                                      labelTextSize   => 12 );
 
-        # Just plot shannon and pairing probs if we have generated this data
+            push(@plots, $structPlot);
+            push(@heights, $maxBp / $length * ($windowed || $dp || $sh ? 1.75 : 1.5));
+
+        }
+
         if ($windowed || $dp || $sh) {
 
-            $shannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))),
-                                                    height   => 1,
-                                                    values   => \@shannon,
-                                                    fill     => "rgb(145, 106, 40)",
-                                                    stroke   => "",
-                                                    yname    => "Shannon" );
-            $pairprob = Graphics::Object::RNAarcs->new( height    => 2,
-                                                        length    => $length,
-                                                        flip      => "down",
-                                                        basepairs => [ map { [$_->[0], $_->[1]] } @dotplot ],
-                                                        stroke    => [ map { $_->[2] < 0.1 ? "rgb(150,150,150)" : ($_->[2] < 0.4 ? "rgb(255,204,0)" : ($_->[2] < 0.7 ? "rgb(71,142,204)" : "rgb(81,183,71)")) } @dotplot ] );
+            if (2 * $winSize + 1 < $length) {
 
-            if ($plotMedianShannon && 2 * $winSize + 1 < $length) {
-
-                my ($medianShan, @winShannon);
+                my ($medianShan, $shanPlot, @winShannon);
                 @winShannon = ("NaN") x $length;
                 $medianShan = median(grep { isnumeric($_) } @shannon);
 
@@ -1160,26 +1160,65 @@ sub fold {
 
                 }
 
-                $medianShannon = Graphics::Object::Path->new( fontsize => abs(maprange(0, 1000, -30, -10, min($length, 1000))), # Min: 10pt / Max: 30pt
-                                                                height   => 1,
-                                                                values   => \@winShannon,
-                                                                yname    => "Shannon",
-                                                                fill     => "rgb(145, 106, 40)" );
+                $shanPlot = Graphics::Chart::Area->new( data            => \@winShannon,
+                                                        dataLabels      => { "fill" => [ ("brown") x @winShannon ] },
+                                                        fill            => "fill",
+                                                        legendColors    => { "brown" => "#916A28" },
+                                                        lineThickness   => 0.2,
+                                                        legend          => 0,
+                                                        xLimit          => [0, $length + 1],
+                                                        yTitle          => "Shannon entropy\n(Window median - Transcript median)",
+                                                        legendTextSize  => 12,
+                                                        legendTitleSize => 14,
+                                                        axisTitleSize   => 14,
+                                                        labelTextSize   => 12 );
+
+                push(@plots, $shanPlot);
+                push(@heights, 1);
 
             }
 
-            if ($sum) { $image->addobjects($reactivity, ($plotMedianShape && $medianShape ? $medianShape : 0), $mea, $shannon, ($plotMedianShannon && $medianShannon ? $medianShannon : 0), $pairprob, 0.05, $ruler); }
-            else { $image->addobjects($mea, $shannon, ($plotMedianShannon && $medianShannon ? $medianShannon : 0), $pairprob, 0.05, $ruler); }
+            @dotplot = grep { $_->[2] >= 0.05 } sort { $a->[2] <=> $b->[2] } @dotplot;
+
+            if (@dotplot) {
+
+                my ($maxBp, $probsPlot, @data);
+                @data = map { [ @$_[0, 1] ] } @dotplot;
+                $maxBp = max(map { abs(diff(@$_)) } @data);
+                $probsPlot = Graphics::Chart::Arcs->new( data            => [ map { [ @$_[0, 1] ] } @dotplot ],
+                                                         dataLabels      => { "prob" => [ map { $_->[2] < 0.1 ? "5-10%" : ($_->[2] < 0.4 ? "10-40%" : ($_->[2] < 0.7 ? "40-70%" : "70-100%")) } @dotplot ] },
+                                                         flip            => "down",
+                                                         fill            => "prob",
+                                                         legendKeyWidth  => 14,
+                                                         legendKeyHeight => 4,
+                                                         legendColors    => { "5-10%"   => "#979797",
+                                                                             "10-40%"  => "#ffcc07",
+                                                                             "40-70%"  => "#478ecc",
+                                                                             "70-100%" => "#58b14a" },
+                                                         legendSort      => [ "5-10%", "10-40%", "40-70%", "70-100%" ],
+                                                         xLimit          => [0, $length + 1],
+                                                         lineThickness   => 0.2,
+                                                         legendTitle     => "Probability",
+                                                         legend          => 1,
+                                                         background      => 0,
+                                                         grid            => 0,
+                                                         xTicks          => 0,
+                                                         yTicks          => 0,
+                                                         xLabels         => 0,
+                                                         yLabels         => 0,
+                                                         legendTextSize  => 12,
+                                                         legendTitleSize => 14,
+                                                         axisTitleSize   => 14,
+                                                         labelTextSize   => 12 );
+
+                push(@plots, $probsPlot);
+                push(@heights, $maxBp / $length * 1.75);
+
+            }
 
         }
-        else {
 
-            if ($sum) { $image->addobjects($reactivity, ($plotMedianShape && $medianShape ? $medianShape : 0), $mea, 0.05, $ruler); }
-            else { $image->addobjects($mea, 0.05, $ruler); }
-
-        }
-
-        $io->write($image->xml());
+        $plot->plot([ map { [$_] } @plots ], { heights => \@heights});
 
     }
 
@@ -1423,7 +1462,8 @@ sub pkdetect {
 
     if (my @mapPkPairs = map {@$_} @pkpairs) {
 
-        my $pairedinmfe += $mfepaired{$_} for (@mapPkPairs);
+        my $pairedinmfe = 0; 
+        $pairedinmfe += $mfepaired{$_} for (@mapPkPairs);
 
         return if ($pairedinmfe / scalar(@mapPkPairs) > 0.5);
 
@@ -1826,7 +1866,8 @@ sub help {
 
  -p   or --processors            <int>       Number of processors to use for the analysis (Default: 1)
  -oc  or --only-common                       In case of multiple experiments, only transcripts covered across all experiments will be folded
- -g   or --img                               Enables the generation of graphical reports
+ -g   or --img                               Enables the generation of graphical reports (requires R)
+ -R   or --R-path                <string>    Path to R executable (Default: assumes R is in PATH)
  -t   or --temperature           <float>     Temperature in Celsius degrees (Default: 37.0)
  -sl  or --slope                 <float>     Sets slope used with structural probing data restraints (Default: 1.8 [kcal/mol])
  -in  or --intercept             <float>     Sets intercept used with structural probing data restraints (Default: -0.6 [kcal/mol])
@@ -1851,9 +1892,6 @@ sub help {
  -wt  or --window-trim           <int>       Number of bases to trim from both ends of the partition windows to avoid end biases (Default: 100)
  -dp  or --dotplot                           Enables generation of dot-plots of base-pairing probabilities
  -sh  or --shannon-entropy                   Enables generation of a WIGGLE track file with per-base Shannon entropies
- -pmr or --plot-median-react                 Plots the difference between the transcript's median reactivity and the median reactivity in sliding windows
- -pms or --plot-median-shannon               Plots the difference between the transcript's median Shannon entropy and the median Shannon entropy 
-                                             in sliding windows
  -pk  or --pseudoknots                       Enables detection of pseudoknots (computationally intensive)
  -ksl or --pseudoknot-slope      <float>     Sets slope used for pseudoknots prediction (Default: same as -sl <slope>)
  -kin or --pseudoknot-intercept  <float>     Sets intercept used for pseudoknots prediction (Default: same as -in <intercept>)

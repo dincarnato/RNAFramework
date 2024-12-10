@@ -30,8 +30,9 @@ use Core::Utils;
 use Data::IO;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
-use Graphics::Container;
-use Graphics::Object::RNAarcs;
+use Graphics::Chart::Arcs;
+use Graphics::Image;
+use RF::Utils;
 use RNA::Utils;
 use Term::Table;
 use Term::Constants qw(:screen);
@@ -41,7 +42,7 @@ $|++;
 my ($input, $reference, $help, $relaxed, 
     $kp, $kl, $img, $threads, $output, 
     $overwrite, $ignoreseq, $error, $nRefs,
-    @pool);
+    $R, $tmpDir, @pool);
 my @results : shared;
 my %results : shared;
 my %reference : shared;
@@ -64,7 +65,8 @@ do {
                 "o|output-dir=s"       => \$output,
                 "ow|overwrite"         => \$overwrite,
                 "i|ignore-sequence"    => \$ignoreseq,
-                "p|processors=s"       => \$threads ) or help(1);
+                "p|processors=s"       => \$threads,
+                "R|R-path=s"           => \$R ) or help(1);
 
     $input = $ARGV[0];
                 
@@ -74,7 +76,10 @@ help() if ($help);
 
 $threads ||= 1;
 $output ||= "rf_compare/";
+$R = checkRinstall($R) if ($img);
+
 $output =~ s/\/?$/\//;
+$tmpDir = "${output}tmp/";
 $input =~ s/\/?$/\// if (-d $input);
 
 ##
@@ -86,6 +91,8 @@ die "\n  [!] Error: No output directory specified\n\n" if (!defined $output && $
 die "\n  [!] Error: Provided structure directory\/file does not exist\n\n" if (!-e $input);
 die "\n  [!] Error: No reference structure directory\/file provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Reference structure directory\/file does not exist\n\n" if (!-e $reference);
+
+$SIG{__DIE__} = \&cleanup;
 
 print "\n[+] Making output directory...";
 
@@ -103,10 +110,10 @@ if (-e $output) {
     
 }
 
-mkpath($output, { mode  => 0755,
+mkpath($tmpDir, { mode  => 0755,
                   error => \$error });
-mkpath($output . "images/", { mode  => 0755,
-                              error => \$error }) if ($img);
+mkpath($output . "plots/", { mode  => 0755,
+                             error => \$error }) if ($img);
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -187,6 +194,8 @@ if ($results{compared}) {
 }
 
 $results{missingstruct} = 1 unless (sum(values %results));
+
+cleanup();
 
 print "\n[+] Comparison statistics:\n" .
       "\n  [*] Compared transcripts: " . $results{compared} .
@@ -295,31 +304,67 @@ sub compare {
           print CLRRET . "[+] Comparing transcript structures [last: " . $refId . "]"; }
         
         if ($img) {
-        
-            my ($svgIO, $svg, $refArc, $queryArc,
-                $outFile, $refLen, $common, $missing);
-            $refLen = length($refSeq);
-            $outFile = $output . "images/" . $refId . ".svg";
-            $svgIO = Data::IO->new( file    => $outFile,
-                                    mode    => "w",
-                                    binmode => ":encoding(utf-8)" );
-            $svg = Graphics::Container->new( height  => abs(maprange(0, 1000, -500, -250, min($refLen, 1000))), # Min: 500 / Max: 1000px
-                                             width   => 1000,
-                                             spacing => 0 );
+
+            my ($plot, $length, $common, $missing, $correct, $wrong,
+                $refArcs, $queryArcs, $maxBpUp, $maxBpDown, @heights);
+            $length = length($refSeq);
             ($common, $missing) = commonpairs($refStruct, $queryStruct);
-            $refArc = Graphics::Object::RNAarcs->new( height    => 0.5,
-                                                      length    => $refLen,
-                                                      flip      => "up",
-                                                      stroke    => [ ("black") x @{$common}, ("rgb(102,51,153)") x @{$missing} ],
-                                                      basepairs => [ @{$common}, @{$missing} ] );
-            ($common, $missing) = commonpairs($queryStruct, $refStruct);
-            $queryArc = Graphics::Object::RNAarcs->new( height    => 0.5,
-                                                        length    => $refLen,
-                                                        flip      => "down",
-                                                        stroke    => [ ("rgb(12,128,57)") x @{$common}, ("rgb(187,27,27)") x @{$missing} ],
-                                                        basepairs => [ @{$common}, @{$missing} ] );
-            $svg->addobjects($refArc, $queryArc);
-            $svgIO->write($svg->xml());
+            $maxBpUp = max(map { abs(diff(@$_)) } (@$common, @$missing));
+            ($correct, $wrong) = commonpairs($queryStruct, $refStruct);
+            $maxBpDown = max(map { abs(diff(@$_)) } (@$correct, @$wrong));
+            @heights = map { $_ / $length * 2 } ($maxBpUp, $maxBpDown);
+
+            $plot = Graphics::Image->new( file   => "${output}plots/$refId.pdf",
+                                          width  => 4.5 * 3,
+                                          height => sum(@heights) * 3.3,
+                                          R      => $R,
+                                          tmpdir => $tmpDir );
+
+            $refArcs = Graphics::Chart::Arcs->new( data           => [ map { [ map { $_ + 1 } @$_ ] } @$common, @$missing ],
+                                                   dataLabels     => { "bp" => [ ("Predicted") x @$common, ("Missing") x @$missing ] },
+                                                   flip           => "up",
+                                                   fill           => "bp",
+                                                   legendKeyWidth  => 9,
+                                                   legendKeyHeight => 2,
+                                                   legendColors    => { "Predicted" => "#000000",
+                                                                        "Missing"   => "#663399" },
+                                                   legendSort      => [ qw(Predicted Missing) ],
+                                                   legendTextSize  => 8,
+                                                   xLimit          => [0, $length + 1],
+                                                   lineThickness   => 0.15,
+                                                   legend          => 1,
+                                                   background      => 0,
+                                                   grid            => 0,
+                                                   xTicks          => 0,
+                                                   yTicks          => 0,
+                                                   xLabels         => 0,
+                                                   yLabels         => 0,
+                                                   yTitle          => "Reference",
+                                                   axisTitleSize   => 10 );
+
+            $queryArcs = Graphics::Chart::Arcs->new( data           => [ map { [ map { $_ + 1 } @$_ ] } @$correct, @$wrong ],
+                                                     dataLabels     => { "bp" => [ ("Correct") x @$correct, ("Wrong") x @$wrong ] },
+                                                     flip           => "down",
+                                                     fill           => "bp",
+                                                     legendKeyWidth  => 9,
+                                                     legendKeyHeight => 2,
+                                                     legendColors    => { "Correct" => "#0c8039",
+                                                                          "Wrong"   => "#bb1b1b" },
+                                                     legendSort      => [ qw(Correct Wrong) ],
+                                                     legendTextSize  => 8,
+                                                     xLimit          => [0, $length + 1],
+                                                     lineThickness   => 0.15,
+                                                     legend          => 1,
+                                                     background      => 0,
+                                                     grid            => 0,
+                                                     xTicks          => 0,
+                                                     yTicks          => 0,
+                                                     xLabels         => 0,
+                                                     yLabels         => 0,
+                                                     yTitle          => "Query",
+                                                     axisTitleSize   => 10 );
+
+            $plot->plot([$refArcs, $queryArcs], { heights => \@heights });
             
         }
         
@@ -346,6 +391,14 @@ sub commonpairs {
     
 }
 
+sub cleanup {
+
+    unlink(glob($tmpDir . "*"));
+
+    rmtree($tmpDir);
+
+}
+
 sub help {
     
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -365,14 +418,15 @@ sub help {
  -p  or --processors        <int>       Number of processors to use (>=1, Default: 1)
  -r  or --reference         <string>    Path to (a folder) of structure file(s)
                                         Note: files containing multiple structures are accepted
- -g  or --img                           Enables generation of graphical comparison images
- -o  or --output-dir        <string>    Images output directory (Default: rf_compare/)
+ -g  or --img                           Enables generation of comparison secondary structure plots (requires R)
+ -o  or --output-dir        <string>    Output directory (Default: rf_compare/)
  -ow or --overwrite                     Overwrites output directory (if the specified path already exists)
  -x  or --relaxed                       Uses relaxed criteria (described in Deigan et al., 2009) to calculate similarity metrics
  -kp or --keep-pseudoknots              Keeps pseudoknotted basepairs in reference structure
  -kl or --keep-lonelypairs              Keeps lonely basepairs (helices of length 1 bp) in reference structure
  -i  or --ignore-sequence               Ignores sequence differences (e.g. SNVs) between the compared structures
- 
+ -R  or --R-path            <string>    Path to R executable (Default: assumes R is in PATH)
+
 HELP
     
 }

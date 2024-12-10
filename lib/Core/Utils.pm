@@ -16,7 +16,7 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.9.0";
+$VERSION = "2.9.1";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
@@ -70,10 +70,9 @@ sub _exception {
     my ($verbosity, $mode) = @_;
 
     $message = "Undefined error" . ($verbosity == 1 ? "." : ". Increase verbosity level to 1 to get the complete stack trace-dump.") if (!defined $message);
-    $message =~ s/(\n+?)/$1    /;
+    $message =~ s/\n([^\n])/\n    $1/g;
 
-    my ($i, $dump, $package, $subroutine,
-        @stack);
+    my ($i, $dump, $package, $subroutine, @stack);
     $i = 2;
 
     while (my @caller = caller($i)) {
@@ -88,8 +87,7 @@ sub _exception {
     ($package, $subroutine) = ($1, $2);
     $message = "\n[!] " . ($mode ? "Exception" : "Warning") . (defined $dump ? " [" . $package . "->" . $subroutine . "()]:\n" : ":\n") . "    " . $message;
 
-    if ($verbosity == 1 &&
-        @stack) {
+    if ($verbosity == 1 && @stack) {
 
         $message .= "\n\n    Stack dump (descending):\n";
 
@@ -104,6 +102,7 @@ sub _exception {
         }
 
     }
+    else { $message .= "\n"; }
 
     $message .= "\n    -> Caught";
 
