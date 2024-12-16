@@ -361,8 +361,6 @@ sub call {
 
           if ($id) {
 
-            print CLRRET . "[+] Calling peaks [Last: $id]";
-
             $initial = uc(substr($id, 0, 1));
             mkpath($output . "plots/transcripts/" . $initial, { mode  => 0755,
                                                                 error => \$error }) if ($img && !-e $output . "plots/transcripts/" . $initial);
@@ -946,7 +944,10 @@ sub plotcoverage {
                                       tmpdir => $tmpDir );
 
         $profilePlot = Graphics::Chart::Linedot->new( data           => [ @$ip, @$ctrl ],
-                                                      dataLabels     => { sample => [ ("IP") x scalar(@$ip), ("Control") x scalar(@$ctrl) ] },
+                                                      dataLabels     => { sample => [ ("IP") x scalar(@$ip), ("Control") x scalar(@$ctrl) ],
+                                                                          pos    => [ (1 .. scalar(@$ip)), (1 .. scalar(@$ctrl))] },
+                                                      dataLabelType  => { pos => "numeric" },
+                                                      x              => "pos",
                                                       fill           => "sample",
                                                       plotDataPoints => 0,
                                                       legendColors   => \%legendColors,
@@ -963,7 +964,10 @@ sub plotcoverage {
         if ($hasPeaks) {
 
             my $peakPlot = Graphics::Chart::Linedot->new( data           => $peak,
-                                                          dataLabels     => { sample => [ ("Peaks") x scalar(@$peak) ] },
+                                                          dataLabels     => { sample => [ ("Peaks") x scalar(@$peak) ],
+                                                                              pos    => [ (1 .. scalar(@$peak)) ] },
+                                                          dataLabelType  => { pos => "numeric" },
+                                                          x              => "pos",
                                                           fill           => "sample",
                                                           plotDataPoints => 0,
                                                           legend         => 0,

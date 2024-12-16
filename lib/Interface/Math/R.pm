@@ -164,7 +164,7 @@ sub run {
 
     $self->throw("R returned an error\n\n" . BOLD . $stdout . RESET) if ($stdout =~ /Error/);
 
-    #unlink($self->{_tmpCmdFile}) if (length($command) > MAX_COMMAND_LEN);
+    unlink($self->{_tmpCmdFile}) if (length($command) > MAX_COMMAND_LEN);
 
     return($stdout);
 

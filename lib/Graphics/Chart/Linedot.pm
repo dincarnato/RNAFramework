@@ -54,7 +54,7 @@ sub _generateRcode {
     $Rcode .= $self->_setDataTypes();
 
     $Rcode .= "plot_$id<-ggplot(df_$id, aes(x=" . 
-              (defined $self->{x} ? $self->{x} : "seq(from=1, to=nrow(df_$id))") . 
+              (defined $self->{x} ? $self->{x} : "rep(c(seq(from=1, to=nrow(df_$id))), " . $self->{_nFillValues} . ")") . 
               ", y=data, group=" . $self->{fill} . "))";
 
     $Rcode .= " + geom_errorbar(aes(ymin=data-as.numeric(" . $self->{stdev} . "), ymax=data+as.numeric(" . $self->{stdev} . ")" . 
