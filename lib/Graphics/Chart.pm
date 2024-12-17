@@ -193,7 +193,7 @@ sub _generateRcode {
 
     my $self = shift;
 
-    my ($Rcode);
+    my ($Rcode, @coordLims);
 
     if (keys %{$self->{legendColors}}) {
 
@@ -266,8 +266,10 @@ sub _generateRcode {
 
     }
 
-    $Rcode .= " + xlim(" . join(", ", @{$self->{xLimit}}) . ")" if (@{$self->{xLimit}});
-    $Rcode .= " + ylim(" . join(", ", @{$self->{yLimit}}) . ")" if (@{$self->{yLimit}});
+    push(@coordLims, "xlim=c(" . join(", ", @{$self->{xLimit}}) . ")") if (@{$self->{xLimit}});
+    push(@coordLims, "ylim=c(" . join(", ", @{$self->{yLimit}}) . ")") if (@{$self->{yLimit}});
+
+    $Rcode .= " + coord_cartesian(" . join(", ", @coordLims) . ")" if (@coordLims);
     $Rcode .= " + xlab('" . $self->{xTitle} . "')" if (defined $self->{xTitle});
     $Rcode .= " + ylab('" . $self->{yTitle} . "')" if (defined $self->{yTitle});
 
