@@ -349,7 +349,7 @@ if ($targetFile) {
             my @target = split(/:/, $line[$i]);
 
             if (isint($target[0]) && ispositive($target[0]) && 
-                isdotbracket($target[1]) && isdotbracket($target[1])) {
+                isdotbracket($target[1]) && isdbbalanced($target[1])) {
 
                 $targetStructs{$line[0]}->{$target[0]} = $target[1];
                 $imported++;
