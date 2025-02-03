@@ -1465,7 +1465,7 @@ sub pkdetect {
         my $pairedinmfe = 0; 
         $pairedinmfe += $mfepaired{$_} for (@mapPkPairs);
 
-        return if ($pairedinmfe / scalar(@mapPkPairs) > 0.5);
+        return({}, {}) if ($pairedinmfe / scalar(@mapPkPairs) > 0.5);
 
     }
 

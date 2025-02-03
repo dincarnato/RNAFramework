@@ -40,7 +40,7 @@ sub _validate {
 
     $self->start();
 
-    foreach my $library (qw(ggplot2 patchwork)) {
+    foreach my $library (qw(ggplot2 patchwork RColorBrewer)) {
 
         my $eval = do {
             

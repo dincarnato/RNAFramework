@@ -46,6 +46,7 @@ sub new {
                    legend          => 1,
                    background      => 1,
                    flipCoords      => 0,
+                   yScale          => "natural",
                    _nFillValues    => 0 }, \%parameters);
 
     $self->throw("Cannot create a generic Graphics::Chart object") if ($class eq "Graphics::Chart");
@@ -67,6 +68,7 @@ sub _validate {
     $self->throw("No data label defined for fill") if ($self->{legend} && !defined $self->{fill});
     $self->throw("Invalid colorScale value \"" . $self->{colorScale} . "\" (allowed: \"discrete\" and \"gradient\")") if ($self->{colorScale} !~ /^(?:discrete|gradient)$/);
     $self->throw("Invalid colorPalette value \"" . $self->{colorPalette} . "\"") if ($self->{colorPalette} !~ /^(?:$palettes)$/);
+    $self->throw("Invalid Y-axis scale \"" . $self->{yScale} . "\"") if ($self->{yScale} !~ /^(?:natural|log(?:2|10)?)$/);
 
     for (qw(x fill)) { $self->throw("Data label \"" . $self->{$_} . "\" does not exist") if (defined $self->{$_} && !exists $self->{dataLabels}->{$self->{$_}} && $self->{$_} ne "data"); }
 
@@ -225,7 +227,7 @@ sub _generateRcode {
             $Rcode .= ", guide = 'colourbar')";
 
         }
-        else { $Rcode = "scale_" . $self->{_paletteType} . "_brewer()"; }
+        else { $Rcode = "scale_" . $self->{_paletteType} . "_manual(values = colorRampPalette(brewer.pal(9, '" . $self->{colorPalette} . "'))(" . $self->{_nFillValues} . "))"; }
            
         $Rcode .= " + ";
 
@@ -287,6 +289,7 @@ sub _generateRcode {
     }
 
     $Rcode .= " + coord_flip()" if ($self->{flipCoords});
+    $Rcode .= " + scale_y_continuous(trans='" . $self->{yScale} . "')" if (substr($self->{yScale}, 0, 3) eq "log");
     $Rcode .= ";\n";
 
     return($Rcode);

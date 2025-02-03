@@ -242,15 +242,16 @@ sub _closeFh {
     my $self = shift;
 
     if (defined $self->{_pid}) {
-
+        
         close($self->{_stdin}) if (fileno($self->{_stdin}));
         close($self->{_stdout}) if (fileno($self->{_stdout}));
         close($self->{_stderr}) if (fileno($self->{_stderr}));
 
+        waitpid($self->{_pid}, 0);  # Ensure the child process is reaped
+
         undef($self->{_pid});
-
     }
-
+    
 }
 
 sub DESTROY {
