@@ -40,8 +40,8 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $collapse, $maxmutdist, $evalsurround, $leftalign,
     $discardshorter, $leftdel, $rightdel, $rmconsecutive,
     $primaryonly, $onlyMut, $blockSize, $libraryStrandAll,
-    @bam_trim5, @qcounter, %transcripts, %spacer,
-    %files, %realid, %onlyMut, %blockData, %allStats, 
+    $noCovLowQual, @bam_trim5, @qcounter, %transcripts, 
+    %spacer, %files, %realid, %onlyMut, %blockData, %allStats, 
     %allFreqs);
 
 do {
@@ -83,6 +83,7 @@ do {
                 "om|only-mut=s"              => \$onlyMut,
                 "ndd|no-discard-duplicates"  => \$nodiscarddup,
                 "bs|block-size=s"            => \$blockSize,
+                "ncl|no-cov-low-qual"        => \$noCovLowQual,
                 "P|per-file-progress"        => \$multiBar ) or help(1);
 
 };
@@ -430,6 +431,37 @@ if (my @unsorted = grep { !$_->{sorted} } @qcounter) {
 }
 
 ##
+# Converting SAM>BAM files (if needed)
+##
+
+if (my @sam = grep { $_->{type} eq "SAM" } @qcounter) { 
+
+    print "\n[+] Converting " . scalar(@sam) . " sorted SAM file(s) to BAM format...\n";
+
+    $processmanager->onstart(sub { print "\n  [-] Converting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+
+    foreach my $sample (@sam) {
+
+        my $path = $tmpdir . $sample->{file} . ".bam";
+
+        $processmanager->enqueue( command => "$samtools view -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\"",
+                                  id      => $sample->{file} );
+
+        $sample->{path} = $path;
+        $sample->{type} = "BAM";
+
+    }
+
+    $processmanager->start();
+    $processmanager->waitall();
+
+    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to convert sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
+
+    print "\n";
+
+}
+
+##
 # Indexing BAM files (if needed)
 ##
 
@@ -665,7 +697,7 @@ sub count {
             @row = split(/\t/, $row);
 
             next if ($row[5] eq "*"); # to avoid malformed lines missing a CIGAR string
-
+            
             if ($sample->{library} eq "unstranded") { $realStrand = "+"; }
             else {
 
@@ -765,8 +797,8 @@ sub count {
                     # Parse the MD flag only when edit distance != 0
                     if ($row !~ m/NM:i:0/) {
 
-                        my ($muts, $missingMD, @uniqmutations);
-                        ($muts, $missingMD) = parsemd(\@row, clonearrayref($gaps), $realStrand);
+                        my ($muts, $missingMD, $lowQual, @uniqmutations);
+                        ($muts, $lowQual, $missingMD) = parsemd(\@row, clonearrayref($gaps), $realStrand);
 
                         if ($missingMD) {
 
@@ -781,7 +813,7 @@ sub count {
 
                         # Collapsing is done towards the 3' end of the RNA, but if the library is unstranded, we do not know where the 3' end is
                         @$muts = collapsemutations($muts, $realStrand) if ($collapse);
-
+                        
                         @$muts = map { $_ - $blockData{"start"} } @$muts;
 
                         if (@$muts) {
@@ -797,6 +829,8 @@ sub count {
                             }
 
                         }
+
+                        if ($noCovLowQual) { map { $coverage{$realStrand}->[$_ - $blockData{"start"}]-- } @$lowQual; }
 
                     }
 
@@ -968,7 +1002,7 @@ sub parsemd { # SAM MD flag parser
     my ($row, $gaps, $strand) = @_;
 
     my ($md, $llen, $realStart, $lastGapEnd,
-        @pos, @quals, %posMap);
+        @pos, @quals, @lowQual, %posMap);
     $realStart = $row->[3] - 1;
     $llen = $realStart;
     $lastGapEnd = $realStart;
@@ -989,11 +1023,11 @@ sub parsemd { # SAM MD flag parser
         $len = $1;
         $md =~ s/^$len//;
 
-        if (@$gaps && $llen + $len > $lastGapEnd + $gaps->[0]->[0]) {
-            
-            my $gap = shift(@$gaps);
+        while (@$gaps && $llen + $len > $lastGapEnd + $gaps->[0]->[0]) {
+
+            my $gap = shift(@$gaps); 
             $llen += $gap->[1];
-            $lastGapEnd += $gap->[0] + $gap->[1]; 
+            $lastGapEnd += $gap->[0] + $gap->[1] + 1; 
 
         }
 
@@ -1079,12 +1113,13 @@ sub parsemd { # SAM MD flag parser
 
                     # Include the mutation if both the mutated base and the bases immediately surroundinding
                     # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
-                    push(@pos, $len + $llen) if (unpack("C*", $quals[$posMap{$llen + $len}]) - 33 >= $minqual &&
-                                                 (($evalsurround &&
-                                                   ((exists $posMap{$llen + $len - 1} && unpack("C*", $quals[$posMap{$llen + $len - 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len - 1}) &&
-                                                   ((exists $posMap{$llen + $len + 1} && unpack("C*", $quals[$posMap{$llen + $len + 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len + 1})) ||
-                                                  !$evalsurround) &&
-                                                  (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut));
+                    if (unpack("C*", $quals[$posMap{$llen + $len}]) - 33 >= $minqual &&
+                        (($evalsurround &&
+                        ((exists $posMap{$llen + $len - 1} && unpack("C*", $quals[$posMap{$llen + $len - 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len - 1}) &&
+                        ((exists $posMap{$llen + $len + 1} && unpack("C*", $quals[$posMap{$llen + $len + 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len + 1})) ||
+                        !$evalsurround) &&
+                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) { push(@pos, $len + $llen); }
+                    else { push(@lowQual, $len + $llen); }
 
                     $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
 
@@ -1101,7 +1136,7 @@ sub parsemd { # SAM MD flag parser
 
     }
 
-    return(\@pos, 0);
+    return(\@pos, \@lowQual, 0);
 
 }
 
@@ -1323,6 +1358,8 @@ sub help {
                                                         and deletion count
     -ds or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
     -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
+    -ncl or --no-cov-low-qual                     If a mutated base (or one of the surrounding bases, if -es is specified) does not exceed the -mq minimum
+                                                  quality threshold, that base will be considered as non covered
     -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
                                                   Note: the quality score threshold set by -q (or --min-quality) also applies to these bases
     -nd or --no-deletions                         Ignores deletions
@@ -1344,3 +1381,4 @@ sub help {
 HELP
 
 }
+
