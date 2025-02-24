@@ -77,6 +77,8 @@ sub _read {
 
     $prompt ||= '> $';
 
+    return if (!defined $self->{_stdout});
+
     my ($select, $stdout, $stdin);
     $select = IO::Select->new();
     $select->add($self->{_stdout});
@@ -90,7 +92,7 @@ sub _read {
             next if (fileno($fh) != fileno($self->{_stdout}));
 
     		while (defined (my $len = sysread($fh, $stdout, 4096, length($stdout)))) {
-
+              
     			if (!$len || $stdout =~ m/$prompt/) {
 
     				$select->remove($fh);
@@ -247,7 +249,7 @@ sub _closeFh {
         close($self->{_stdout}) if (fileno($self->{_stdout}));
         close($self->{_stderr}) if (fileno($self->{_stderr}));
 
-        waitpid($self->{_pid}, 0);  # Ensure the child process is reaped
+        #waitpid($self->{_pid}, 0);  # Ensure the child process is reaped
 
         undef($self->{_pid});
     }

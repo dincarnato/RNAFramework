@@ -149,7 +149,8 @@ sub alifold {
                                             energy            => $energy,
                                             ensembleDiversity => $ensDiversity,
                                             sci               => $sci,
-                                            noncanonical      => 1 );
+                                            noncanonical      => 1,
+                                            lonelypairs       => $parameters->{noLonelyPairs} ? 0 : 1 );
 
     return($fold);
 

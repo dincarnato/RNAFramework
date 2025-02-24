@@ -158,7 +158,7 @@ sub plot {
     $Rcode .= " + plot_layout(" . join(", ", @plotLayout) . ")" if (@plotLayout);
     $self->run("image<-$Rcode");
     $stdout = $self->run("ggsave('" . $self->{file} . "', plot=image, dpi=" . $self->{dpi} . ", units='" . $self->{units} . "'" .
-                         ", width=" . $self->{width} . ", height=" . $self->{height} . ", device='" . $self->{format} . "')");
+                         ", width=" . $self->{width} . ", height=" . $self->{height} . ", device='" . $self->{format} . "', useDingbats=FALSE)");
 
     return($stdout !~ /Error/ && $stdout =~ /Saving \d+ x \d+ .+? image/ ? 1 : undef);
 
