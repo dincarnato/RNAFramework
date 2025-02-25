@@ -1,8 +1,9 @@
 package Core::Process;
 
 use strict;
+use Carp;
 use Core::Utils;
-use Storable qw(store retrieve);
+use Storable qw(lock_store lock_retrieve);
 use POSIX;
 use Time::HiRes qw(time);
 
@@ -109,7 +110,7 @@ sub start {
             else { $exitcode = [ system($command, @parameters) ]; }
 
             $self->{_tmpDataFile} .= "." . $$ . ".tmp";
-            store($exitcode, $self->{_tmpDataFile});
+            lock_store($exitcode, $self->{_tmpDataFile});
 
             $self->{onexit}->($self->{id}, $$, $exitcode) if (defined $self->{onexit});
 
@@ -134,6 +135,8 @@ sub id { return($_[0]->{id}); }
 
 sub pid { return($_[0]->{_pid}); }
 
+sub _tmpId { return($_[0]->{_tmpId}); }
+
 sub _retrieveReturnData {
 
     my $self = shift;
@@ -141,8 +144,7 @@ sub _retrieveReturnData {
     if (-e $self->{_tmpDataFile}) {
 
         local $Storable::Eval = 1;
-        $self->{_exitcode} = retrieve($self->{_tmpDataFile});
-
+        $self->{_exitcode} = lock_retrieve($self->{_tmpDataFile});
         unlink($self->{_tmpDataFile});
 
     }
@@ -202,3 +204,4 @@ sub kill {
 }
 
 1;
+

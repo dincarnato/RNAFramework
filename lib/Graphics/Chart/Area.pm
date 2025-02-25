@@ -50,7 +50,7 @@ sub _generateRcode {
 
     # In case of overlapping areas, this ensures that they are plotted in such a way that the one with the highest median value
     # will be plotted first (back) and the one with the lowest will be plotted last (top)
-    if ($self->{groupMethod} eq "dodge") {
+    if ($self->{groupMethod} eq "dodge" && grep { isnumeric($_) } @{$self->{data}}) {
 
         $Rcode .= "group_median_$id<-aggregate(data ~ " . $self->{fill} . ", data=df_$id, FUN=median);\n" .
                   "group_median_$id<-group_median_$id\[order(-group_median_$id\$data), ];\n" .

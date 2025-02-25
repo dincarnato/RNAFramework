@@ -43,7 +43,7 @@ $|++;
 my ($help, $output, $overwrite, $reactCutoff, 
     $structs, $reacts, $termAsUnpaired, $ignoreTerminal,
     $keepLonelyPairs, $keepPseudoknots, $threads, $error,
-    $failed, $image, $plot, $R, $tmpDir, @pool, %structs);
+    $failed, $image, $R, $tmpDir, @pool, %structs);
 
 my $progressBar : shared;
 my @overallCoeff : shared;
@@ -139,7 +139,7 @@ if (-d $structs) { # Directory of structure files
             die "\n\n  [!] Error: Duplicate structure ID \"" . $entry->id() . "\"\n\n" if (exists $structs{$entry->id()});
 
             $structs{$entry->id()}->{structure} = $entry->structure() if ($entry->can("structure")); 
-            print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]";
+            print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]" if (scalar(keys %structs) % 50);
 
         }
 
@@ -155,17 +155,19 @@ else { # Single structure file
 
     my $io = Data::IO::Sequence->new( file        => $structs,
                                       lonelypairs => $keepLonelyPairs,
-                                      pseudoknots => $keepPseudoknots );
+                                      pseudoknots => $keepPseudoknots ); 
     while(my $entry = $io->read()) { 
 
         die "\n\n  [!] Error: Duplicate structure ID \"" . $entry->id() . "\"\n\n" if (exists $structs{$entry->id()});
 
         $structs{$entry->id()}->{structure} = $entry->structure() if ($entry->can("structure")); 
-        print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]";
+        print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]" if (scalar(keys %structs) % 50);
 
     }
     
 }
+
+print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %structs) . " imported]";
 
 die "\n\n  [!] Error: No structure file imported\n\n" if (!keys %structs);
 
@@ -216,10 +218,6 @@ for (keys %structs) { delete($structs{$_}) if (!exists $structs{$_}->{reactFile}
 if (@ids) { print "\n[+] " . scalar(@ids) . " structures with matched reactivity file\n\n"; }
 else { die "\n\n  [!] Error: No matching structure-XML pair\n\n"; }
 
-$plot = Graphics::Image->new( width  => 6,
-                              height => 5,
-                              R      => $R,
-                              tmpdir => $tmpDir ) if ($image);
 $progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
                                                  width   => 50,
                                                  colored => 1 ));
@@ -256,7 +254,7 @@ if ($results{success}) {
 
     if ($image) {
 
-        print "\n[+] Generating plots...";
+        print "\n[+] Generating plots of overall metrics...";
 
         _plotROC(@overallAuc, "Overall", @combinedRoc);
         _plotDSCI("Overall", $overallDsci[2], $overallDsci[3]);
@@ -479,9 +477,13 @@ sub _plotROC {
 
     my @data = @_;
 
-    my ($roc, @id, @tp, @fp);
+    my ($plot, $roc, @id, @tp, @fp);
 
-    $plot->file("${output}plots/roc.pdf");
+    $plot = Graphics::Image->new( file   => "${output}plots/roc.pdf",
+                                  width  => 6,
+                                  height => 5,
+                                  R      => $R,
+                                  tmpdir => $tmpDir );
 
     for (my $i = 0; $i < @data; $i += 5) {
 
@@ -519,9 +521,13 @@ sub _plotDSCI {
 
     for (my $i = 0; $i < @data; $i += 3) {
 
-        my ($id, $unpaired, $paired, $dsci);
+        my ($id, $unpaired, $paired, $dsci, $plot);
         ($id, $unpaired, $paired) = @data[$i .. $i + 2];
-        $plot->file("${output}plots/dsci/$id.pdf");
+        $plot = Graphics::Image->new( file   => "${output}plots/dsci/$id.pdf",
+                                      width  => 6,
+                                      height => 5,
+                                      R      => $R,
+                                      tmpdir => $tmpDir );
         $dsci = Graphics::Chart::Density->new( lineThickness   => 0,
                                                colorPalette    => "Set1",
                                                legend          => 1,
@@ -547,21 +553,27 @@ sub _plotMetricSummary {
 
     my @metrics = @_;
 
-    $plot->file("${output}plots/summary.pdf");
-    my $summary = Graphics::Chart::Barplot->new( legend          => 1,
-                                                 x               => "id",
-                                                 data            => [ map { @$_[1..3] } @metrics ],
-                                                 dataLabels      => { value => [ (qw(coeffUnpaired DSCI AUROC)) x scalar(@metrics) ],
-                                                                      id    => [ map { ($_->[0]) x 3 } @metrics ] },
-                                                 dataLabelSort   => { id    => [ sort(map { $_->[0] } @metrics[0 .. $#metrics - 1]), "Overall" ],
-                                                                      value => [ qw(coeffUnpaired DSCI AUROC) ] },
-                                                 fill            => "value",
-                                                 colorPalette    => "Set1",
-                                                 yTitle          => "Metric value",
-                                                 axisTitleSize   => 14,
-                                                 labelTextSize   => 12,
-                                                 legendTitleSize => 14,
-                                                 legendTextSize  => 12 );
+    my ($plot, $summary);
+    $plot = Graphics::Image->new( file   => "${output}plots/summary.pdf",
+                                  width  => 6,
+                                  height => 5,
+                                  R      => $R,
+                                  tmpdir => $tmpDir );
+    $summary = Graphics::Chart::Barplot->new( legend          => 1,
+                                              x               => "id",
+                                              data            => [ map { @$_[1..3] } @metrics ],
+                                              dataLabels      => { value => [ (qw(coeffUnpaired DSCI AUROC)) x scalar(@metrics) ],
+                                                                   id    => [ map { ($_->[0]) x 3 } @metrics ] },
+                                              dataLabelSort   => { id    => [ sort(map { $_->[0] } @metrics[0 .. $#metrics - 1]), "Overall" ],
+                                                                   value => [ qw(coeffUnpaired DSCI AUROC) ] },
+                                              fill            => "value",
+                                              colorPalette    => "Set1",
+                                              yTitle          => "Metric value",
+                                              axisTitleSize   => 14,
+                                              labelTextSize   => 12,
+                                              xLabelAngle     => 90,
+                                              legendTitleSize => 14,
+                                              legendTextSize  => 12 );
 
     $plot->plot([$summary]);
 

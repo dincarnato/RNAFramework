@@ -14,7 +14,8 @@ sub checkRinstall {
 
     my $R = shift || $ENV{"RF_RPATH"} || which("R");
 
-    Graphics::Image->new(R => $R);
+    Graphics::Image->new( R             => $R,
+                          checkPackages => 1 );
 
     return($R);
 

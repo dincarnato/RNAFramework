@@ -1,3 +1,20 @@
+## [2.9.2] - 2025-02-25
+### Added
+- Added the -dp (or --discardPositions) parameter to rf-mmtools to enable filtering out certain transcript positions before performing analysis with DRACO
+
+### Changed
+- Fixed a bug in Interface::Math::R causing the accumulation of zombies, or, in some cases, the process to get stuck
+- Fixed reaping in Core::Process::Queue so that now also the final processes are reaped as soon as they finish
+- Fixed a bug in Garaphics::Chart::Area causing R to return an error with area plots containing mostly NaN values
+- Fixed a bug in Graphics::Chart causing values exceeding the visualization range not to be displayed
+- Fixed a bug in rf-mmtools causing the -mpr (or --minMutPerRead) parameter causing a value of 0 to be ignored
+- Fixed a bug in rf-fold occurring in remote occasions
+- Fixed a bug in rf-mutate causing the program to continue with unbalanced structures as input, instead of throwing an exception
+- Fixed a bug in rf-count-genome triggered in very edge cases with reads spanning multiple splice junctions (thanks to Lambert Moyon for reporting)
+- 
+
+### API changes
+- Core::Process now uses Storable's lock_store and lock_retrieve to prevent multiple processes from writing to the same file
 
 ## [2.9.1] - 2024-12-10
 ### Added

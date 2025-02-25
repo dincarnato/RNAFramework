@@ -37,7 +37,7 @@ $|++;
 my ($output, $overwrite, $command, $help,
     $tab, $keepBases, $minMutPerRead,
     $minReadLen, $randSubsample, $bedAnno, $whitelist, 
-    @mm, %commands);
+    $discardPos, @mm, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge extract stats torc);
 
@@ -45,15 +45,16 @@ do {
 
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"              => \$help,
-                "o|output=s"          => \$output,
-                "ow|overwrite"        => \$overwrite,
-                "kb|keepBases=s"      => \$keepBases,
-                "mpr|minMutPerRead=s" => \$minMutPerRead,
-                "mrl|minReadLen=s"    => \$minReadLen,
-                "rs|randSubsample=s"  => \$randSubsample,
-                "a|annotation=s"      => \$bedAnno,
-                "wl|whitelist=s"      => \$whitelist ) or help(1);
+    GetOptions( "h|help"                => \$help,
+                "o|output=s"            => \$output,
+                "ow|overwrite"          => \$overwrite,
+                "kb|keepBases=s"        => \$keepBases,
+                "mpr|minMutPerRead=s"   => \$minMutPerRead,
+                "mrl|minReadLen=s"      => \$minReadLen,
+                "rs|randSubsample=s"    => \$randSubsample,
+                "a|annotation=s"        => \$bedAnno,
+                "wl|whitelist=s"        => \$whitelist,
+                "dp|discardPositions=s" => \$discardPos ) or help(1);
 
     $command = shift(@ARGV);
     @mm = uniq(@ARGV);
@@ -65,7 +66,7 @@ help() if ($help);
 # Default
 $command = lc($command);
 $randSubsample ||= 1;
-$minMutPerRead ||= 1;
+$minMutPerRead //= 1;
 $keepBases ||= "ACGT";
 $minReadLen ||= 0;
 
@@ -230,7 +231,7 @@ elsif ($command eq "extract") {
 
     $keepBases = $keepBases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepBases))))))));
 
-    my ($mmIn, $mmOut, %whitelist, %bedAnno);
+    my ($mmIn, $mmOut, %whitelist, %discardPos, %bedAnno);
 
     if (defined $whitelist) {
 
@@ -245,7 +246,43 @@ elsif ($command eq "extract") {
         }
         close($wh);
 
-        die "\n  [!] Error: Empty whitelist file\n\n" if (!keys %whitelist);
+        warn "\n  [!] Warning: Empty whitelist file\n" if (!keys %whitelist);
+
+    }
+
+    if (defined $discardPos) {
+
+        die "\n  [!] Error: Blacklisted positions' file does not exist\n\n" if (!-e $discardPos);
+
+        open(my $wh, "<", $discardPos) or die "\n  [!] Error: Unable to read from blacklisted positions' file ($!)\n\n";
+        while(<$wh>) {
+
+            chomp();
+
+            my @row = split /[;,]/;
+
+            die "\n  [!] Error: Malformed line in blacklisted positions' file (\"$_\")\n\n" if (@row < 2);
+            
+            for my $pos (@row[1 .. $#row]) {
+
+                if ($pos =~ /^(\d+)-(\d+)$/) {
+
+                    my ($start, $end) = ($1, $2);
+
+                    die "\n  [!] Error: Malformed range \"$pos\" for transcript \"" . $row[0] . "\" in blacklisted positions' file\n\n" if ($start > $end);
+
+                    $discardPos{$row[0]}->{$_} = 1 for ($start .. $end);
+
+                }
+                elsif (ispositive($pos)) { $discardPos{$row[0]}->{$pos} = 1; }
+                else { die "\n  [!] Error: Malformed range \"$pos\" for transcript \"" . $row[0] . "\" in blacklisted positions' file\n\n"; }
+
+            }
+
+        }
+        close($wh);
+
+        warn "\n  [!] Warning: Empty blacklisted positions' file\n" if (!keys %discardPos);
 
     }
 
@@ -326,7 +363,8 @@ elsif ($command eq "extract") {
         while (my @read = $mmIn->readStream($id)) {
 
             my ($readStart, $readEnd, @muts);
-            @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]}; 
+            @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]};
+            @muts = grep { !exists $discardPos{$id}->{$_} } @muts;
             @muts = grep { inrange($_, [$start, $end - 1]) } @muts;
 
             next if (@muts < $minMutPerRead);
@@ -518,7 +556,7 @@ HELP
  -o   or --output             <string>     Output MM file (Default: <input>.extracted.mm)
  -ow  or --overwrite                       Overwrites output MM file (if the specified file already exists)
  -kb  or --keepBases          <string>     Only retains mutations on specified bases (Default: N)
- -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (Default: 1)
+ -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (>=0, Default: 1)
  -mrl or --minReadLen         <int>        Reads shorter than this length are discarded (>0, Default: 1)
  -rs  or --randSubsample      <int>        Randomly subsamples this fraction of reads (Default: keep all reads)
                                            Note: for example, if -rs 2, 1/2 of the reads will be subsampled
@@ -528,6 +566,8 @@ HELP
                                                  BED intervals will be retained and subjected to the other filtering steps
  -wl  or --whitelist          <string>     Path to a file containing a list (one per line) of transcripts to be extracted 
                                            from the MM file
+ -dp  or --discardPositions   <string>     Path to a blacklist file containing a list of transcript positions to be filtered
+                                           out of the output file
 
 HELP
 

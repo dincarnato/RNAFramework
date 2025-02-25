@@ -82,9 +82,13 @@ sub start {
     
         $self->throw("Cannot start while executing another queue") if ($self->{_children});
 
-        undef($self->{processes});
+        $self->{_processes} = {};
+        $self->{_done} = {};
+        $self->{_children} = 0;
 
         $SIG{CHLD} = sub { $cleanup = 1; };
+
+        my $nEnqueued = @{$self->{_queue}};
 
         while (@{$self->{_queue}}) {
 
@@ -95,14 +99,20 @@ sub start {
                     if (exists $self->{_processes}->{$pid}) {
 
                         $self->{_children}--;
-                        $self->{_done}->{$pid} = 1;
                         $self->{_processes}->{$pid}->wait();
-                        $self->{parentOnExit}->($self->{_processes}->{$pid}->id(), $pid);
+
+                        # As PIDs get recycled, this can cause collisions. We avoid it with the following
+                        my $id = join(".", $self->{_processes}->{$pid}->_tmpId(), $pid);
+                        $self->{_processes}->{$id} = $self->{_processes}->{$pid};
+                        delete($self->{_processes}->{$pid});
+                        $self->{_done}->{$id} = 1;
+
+                        $self->{parentOnExit}->($self->{_processes}->{$id}->id(), $pid, $id);
 
                     }
                 
                 }
-
+                
                 $cleanup = 0;
 
             }
@@ -111,6 +121,12 @@ sub start {
 
                 my ($parameters, $process);
                 $parameters = shift(@{$self->{_queue}});
+
+                # Ensuring reaping of all children
+                if (!@{$self->{_queue}} && $nEnqueued > scalar(keys %{$self->{_done}})) { push(@{$self->{_queue}}, undef); }
+                
+                next if (!defined $parameters);
+
                 $process = Core::Process->new( id      => $parameters->{id},
                                                stdout  => $parameters->{stdout} || $self->{stdout},
                                                stderr  => $parameters->{stderr} || $self->{stderr},
@@ -139,17 +155,22 @@ sub waitall {
 
         for (values %{$self->{_processes}}) {
 
-            next if exists $self->{_done}->{$_->pid()};  # Skip already completed processes
+            my ($pid, $jobId, $id);
+            $pid = $_->pid();
+            $jobId = $_->id();
+            $id = join(".", $_->_tmpId(), $pid);
+
+            next if (exists $self->{_done}->{$id});  # Skip already completed processes
             
             $_->wait();
-            
-            if (!exists $self->{_done}->{$_->pid()}) {
-            
-                $self->{_children}--;
-                $self->{_done}->{$_->pid()} = 1;
-                $self->{parentOnExit}->($_->id(), $_->pid());
-            
-            }
+
+            $self->{_children}--;
+
+            $self->{_processes}->{$id} = $self->{_processes}->{$pid};
+            $self->{_done}->{$id} = 1;
+            delete($self->{_processes}->{$pid});
+
+            $self->{parentOnExit}->($jobId, $pid, $id);
         
         }
         
@@ -232,14 +253,16 @@ sub queueSize { return(scalar(@{$_[0]->{_queue}})); }
 
 sub dequeue {
 
-    my $self = shift;
-    my $pid = shift;
+    my $self = shift; 
+    my $id = shift;
 
-    if (defined $pid) {
+    my $pid = (split /\./, $id)[-1];
 
-        $self->throw("Invalid PID $pid") if (!exists $self->{_processes}->{$pid});
+    if (defined $id && defined $pid) {
+
+        $self->throw("Invalid Job ID/PID ($id/$pid)") if (!exists $self->{_processes}->{$id} && !exists $self->{_processes}->{$pid});
         
-        if (!exists $self->{_done}->{$pid}) {
+        if (!exists $self->{_done}->{$id} && exists $self->{_processes}->{$pid}) {
 
             $self->warn("Process $pid is still running");
             
@@ -252,11 +275,11 @@ sub dequeue {
     if (keys %{$self->{_done}}) {
 
         my ($p, $process);
-        $p = $pid // (keys %{$self->{_done}})[0];
+        $p = $id || (keys %{$self->{_done}})[0];
         $process = $self->{_processes}->{$p};
 
         delete($self->{_processes}->{$p});
-        delete($self->{_done}->{$p});
+        #delete($self->{_done}->{$p});
 
         return($process);
 

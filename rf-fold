@@ -482,9 +482,9 @@ print "\n[+] Folding RNA structures. Please wait...\n\n";
 $progressBar->init();
 $processManager->parentOnExit(sub { 
     
-    my ($file, $pid, $ret);
-    ($file, $pid) = @_[0,1];
-    $ret = ($processManager->dequeue($pid)->exitcode())[0];
+    my ($file, $pid, $uid, $ret);
+    ($file, $pid, $uid) = @_[0..2];
+    $ret = ($processManager->dequeue($uid)->exitcode())[0];
 
     $progressBar->update(1); 
     
@@ -526,11 +526,16 @@ sub fold {
 
     my @xml = @_;
 
-    my ($sequence, $id, $structure, $cmd,
+    my ($sequence, $id, $structure, $cmd, $plot,
         $ret, $entry, $length, $nwins, $file, $io, $energy,
         $constraint, @foldwins, @windows, @constraint,
         @pkpairs, @keptpairs, @dotplot, @shannon,
         @reactivity, @meanReact, %pairprobs, %npairs, %seen);
+
+    $plot = Graphics::Image->new( width  => 6 * 3,
+                                  height => ($windowed || $dp || $sh ? 7 : 5) * 3,
+                                  R      => $R,
+                                  tmpdir => $tmpdir ) if ($img);
 
     foreach my $xml (@xml) {
 
@@ -1024,13 +1029,10 @@ sub fold {
 
     if ($img) {
 
-        my ($plot, $hasReact, $winSize, @plots, @heights);
+        my ($hasReact, $winSize, @plots, @heights);
         $winSize = 20;
-        $plot = Graphics::Image->new( file   => "${output}plots/$id.pdf",
-                                      width  => 6 * 3,
-                                      height => ($windowed || $dp || $sh ? 7 : 5) * 3,
-                                      R      => $R,
-                                      tmpdir => $tmpdir );
+        $plot->file("${output}plots/$id.pdf");
+
         $hasReact = scalar(grep { isnumeric($_) } @meanReact);
 
         if ($hasReact) {
@@ -1185,7 +1187,7 @@ sub fold {
                 my ($maxBp, $probsPlot, @data);
                 @data = map { [ @$_[0, 1] ] } @dotplot;
                 $maxBp = max(map { abs(diff(@$_)) } @data);
-                $probsPlot = Graphics::Chart::Arcs->new( data            => [ map { [ @$_[0, 1] ] } @dotplot ],
+                $probsPlot = Graphics::Chart::Arcs->new( data            => \@data,
                                                          dataLabels      => { "prob" => [ map { $_->[2] < 0.1 ? "5-10%" : ($_->[2] < 0.4 ? "10-40%" : ($_->[2] < 0.7 ? "40-70%" : "70-100%")) } @dotplot ] },
                                                          flip            => "down",
                                                          fill            => "prob",
@@ -1221,6 +1223,8 @@ sub fold {
         $plot->plot([ map { [$_] } @plots ], { heights => \@heights});
 
     }
+
+    $plot->stop();
 
 }
 
@@ -1931,4 +1935,5 @@ sub help {
 HELP
 
 }
+
 

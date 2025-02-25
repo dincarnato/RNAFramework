@@ -13,12 +13,13 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ file        => undef,
-                   width       => "NA",
-                   height      => "NA",
-                   format      => "pdf",
-                   units       => "in",
-                   dpi         => 300, }, \%parameters);
+    $self->_init({ file          => undef,
+                   width         => "NA",
+                   height        => "NA",
+                   format        => "pdf",
+                   units         => "in",
+                   dpi           => 300,
+                   checkPackages => 0 }, \%parameters);
 
     $self->_validate();
 
@@ -38,19 +39,11 @@ sub _validate {
     $self->throw("Invalid image format \"" . $self->{format} . "\"") if ($self->{format} !~ /^(?:eps|ps|tex|pdf|jpeg|tiff|png|bmp|svg)$/);
     $self->throw("Invalid units \"" . $self->{units} . "\"") if (defined $self->{units} && $self->{units} !~ m/^(?:in|cm|mm|px)$/);
 
-    $self->start();
+    if ($self->{checkPackages}) {
 
-    foreach my $library (qw(ggplot2 patchwork RColorBrewer)) {
+        my $installed = $self->isPackageInstalled(qw(ggplot2 patchwork RColorBrewer));
 
-        my $eval = do {
-            
-            local $@;
-            eval {$self->run("library($library)"); };
-            $@;
-
-        };
-
-        $self->throw("Missing $library R package") if ($eval =~ m/Error in library\($library\) : there is no package/);
+        if (my @missing = grep { !$installed->{$_} } keys %$installed) { $self->throw("The following R packages are missing: " . join(", ", @missing)); }
 
     }
 
@@ -113,7 +106,10 @@ sub plot {
     $self->throw("No output file specified") if (!defined $self->{file});
     $self->throw("Nothing to plot") if (!@$rows);
 
-    my ($Rcode, $stdout, @plotLayout);
+    my ($Rcode, $output, @plotLayout);
+    $Rcode = "library(ggplot2)\n" .
+             "library(RColorBrewer)\n" .
+             "library(patchwork)\n";
     $sizes = checkparameters({ widths  => [],
                                heights => [] }, $sizes);
 
@@ -144,7 +140,7 @@ sub plot {
 
             if (defined $_) {
 
-                $self->run($_->Rcode());
+                $Rcode .= $_->Rcode();
                 $_ = "plot_" . $_->id();
 
             }
@@ -154,13 +150,13 @@ sub plot {
 
     }
 
-    $Rcode = "(" . join(") / (", map { join(" + ", @$_) } @$rows) . ")";
+    $Rcode .= "image<-(" . join(") / (", map { join(" + ", @$_) } @$rows) . ")";
     $Rcode .= " + plot_layout(" . join(", ", @plotLayout) . ")" if (@plotLayout);
-    $self->run("image<-$Rcode");
-    $stdout = $self->run("ggsave('" . $self->{file} . "', plot=image, dpi=" . $self->{dpi} . ", units='" . $self->{units} . "'" .
-                         ", width=" . $self->{width} . ", height=" . $self->{height} . ", device='" . $self->{format} . "', useDingbats=FALSE)");
+    $Rcode .= "\nggsave('" . $self->{file} . "', plot=image, dpi=" . $self->{dpi} . ", units='" . $self->{units} . "'" .
+              ", width=" . $self->{width} . ", height=" . $self->{height} . ", device='" . $self->{format} . "', useDingbats=FALSE)\n";
+    $output = $self->run($Rcode);
 
-    return($stdout !~ /Error/ && $stdout =~ /Saving \d+ x \d+ .+? image/ ? 1 : undef);
+    return($output !~ /Error/ && $output =~ /Saving \d+ x \d+ .+? image/ ? 1 : undef);
 
 }
 

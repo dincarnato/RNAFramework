@@ -546,9 +546,9 @@ $processmanager->onexit(sub {});
 $processmanager->parentOnExit(sub {
 
     # Here we retrieve the partials from each process and combine them
-    my ($sample, $pid, $stats);
-    ($sample, $pid) = @_[0,1];
-    $stats = ($processmanager->dequeue($pid)->exitcode())[0];
+    my ($sample, $pid, $uid, $stats);
+    ($sample, $pid, $uid) = @_[0..2];
+    $stats = ($processmanager->dequeue($uid)->exitcode())[0];
     if (ref($stats) ne "HASH") { $stats = { error => $stats };  }
 
     $progressBar->update($multiBar ? $sample : 1) if (!defined $stats->{error});
