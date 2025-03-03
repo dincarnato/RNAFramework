@@ -279,7 +279,7 @@ sub dequeue {
         $process = $self->{_processes}->{$p};
 
         delete($self->{_processes}->{$p});
-        #delete($self->{_done}->{$p});
+        delete($self->{_done}->{$p});
 
         return($process);
 
