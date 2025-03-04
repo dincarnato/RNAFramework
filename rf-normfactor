@@ -116,9 +116,9 @@ $reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupa
 
 if ($scoreMethod !~ /^[24]$/) {
 
-    @ctrlFiles = ($ctrlFiles[0] x @treatFiles) if (@ctrlFiles == 1);
+    @ctrlFiles = ($ctrlFiles[0]) x @treatFiles if (@ctrlFiles == 1);
 
-    if ($scoreMethod == 3) { @denatFiles = ($denatFiles[0] x @treatFiles) if (@denatFiles == 1); }
+    if ($scoreMethod == 3) { @denatFiles = ($denatFiles[0]) x @treatFiles if (@denatFiles == 1); }
     else { undef(@denatFiles); }
 
 }
