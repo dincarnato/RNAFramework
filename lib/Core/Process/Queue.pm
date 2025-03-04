@@ -25,7 +25,8 @@ sub new {
                    _children    => 0,
                    _processes   => {},
                    _queue       => [],
-                   _done        => {} }, \%parameters);
+                   _done        => {},
+                   _n           => 0 }, \%parameters);
 
     $self->_validate();
 
@@ -84,6 +85,7 @@ sub start {
 
         $self->{_processes} = {};
         $self->{_done} = {};
+        $self->{_n} = 0;
         $self->{_children} = 0;
 
         $SIG{CHLD} = sub { $cleanup = 1; };
@@ -106,6 +108,7 @@ sub start {
                         $self->{_processes}->{$id} = $self->{_processes}->{$pid};
                         delete($self->{_processes}->{$pid});
                         $self->{_done}->{$id} = 1;
+                        $self->{_n}++;
 
                         $self->{parentOnExit}->($self->{_processes}->{$id}->id(), $pid, $id);
 
@@ -123,7 +126,7 @@ sub start {
                 $parameters = shift(@{$self->{_queue}});
 
                 # Ensuring reaping of all children
-                if (!@{$self->{_queue}} && $nEnqueued > scalar(keys %{$self->{_done}})) { push(@{$self->{_queue}}, undef); }
+                if (!@{$self->{_queue}} && $nEnqueued > $self->{_n}) { push(@{$self->{_queue}}, undef); }
                 
                 next if (!defined $parameters);
 
@@ -168,6 +171,7 @@ sub waitall {
 
             $self->{_processes}->{$id} = $self->{_processes}->{$pid};
             $self->{_done}->{$id} = 1;
+            $self->{_n}++;
             delete($self->{_processes}->{$pid});
 
             $self->{parentOnExit}->($jobId, $pid, $id);
