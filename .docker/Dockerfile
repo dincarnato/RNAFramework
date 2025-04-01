@@ -41,16 +41,18 @@ RUN cpanm \
     XML::LibXML \
     Config::Simple
 
-# Install Mambaforge
+# Install Miniforge
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
-RUN wget -O Mambaforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-$(uname)-$(uname -m).sh" && \
-    bash Mambaforge.sh -b -p "${HOME}/conda"
+RUN wget -O Miniforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" && \
+    bash Miniforge.sh -b -p "${HOME}/conda"
 ENV PATH="/home/${USERNAME}/conda/bin:${PATH}"
 
 # Setup Bioconda channel configuration and install dependencies
 RUN conda config --add channels defaults && \
     conda config --add channels bioconda && \
+    conda config --add channels conda-forge && \
+    conda install -y mamba -n base -c conda-forge && \
     mamba install -y \
         python=3.10 \
         gxx_linux-64 \
@@ -62,6 +64,7 @@ RUN conda config --add channels defaults && \
         viennarna>=2.4.0 \
         rnastructure>=5.6 && \
     mamba clean -a -y
+
 
 # Install RNA Framework
 COPY --chown=${USER_UID}:${USER_GID} . ${APP_DIR}
