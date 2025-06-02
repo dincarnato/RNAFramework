@@ -1007,11 +1007,11 @@ sub parsemd { # SAM MD flag parser
     $llen = $realStart;
     $lastGapEnd = $realStart;
 
-    return([], 1) if (@{$row} < 11);
+    return([], [], 1) if (@{$row} < 11);
 
     for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
 
-    return([], 1) if (!defined $md);
+    return([], [], 1) if (!defined $md);
 
     %posMap = ref2read($row);
     @quals = split(//, $row->[10]);
