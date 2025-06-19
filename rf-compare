@@ -36,6 +36,7 @@ use RF::Utils;
 use RNA::Utils;
 use Term::Table;
 use Term::Constants qw(:screen);
+use Term::Progress;
 
 $|++;
 
@@ -43,6 +44,8 @@ my ($input, $reference, $help, $relaxed,
     $kp, $kl, $img, $threads, $output, 
     $overwrite, $ignoreseq, $error, $nRefs,
     $R, $tmpDir, @pool);
+my $progressBar : shared;
+my @files : shared;
 my @results : shared;
 my %results : shared;
 my %reference : shared;
@@ -117,7 +120,7 @@ mkpath($output . "plots/", { mode  => 0755,
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
-print "\n[+] Importing reference structure file(s) [0 imported]";
+print "\n[+] Importing reference structure file(s)...\n\n";
 
 if (-d $reference) { # Directory of structure files
 
@@ -126,21 +129,21 @@ if (-d $reference) { # Directory of structure files
 
         next if ($file !~ m/\.(?:db|ct)$/);
 
-        my $io = Data::IO::Sequence->new( file        => "$reference/$file",
-                                          lonelypairs => $kl,
-                                          pseudoknots => $kp );
-        while(my $entry = $io->read()) { 
-            
-            die "\n\n  [!] Error: Duplicate reference structure ID \"" . $entry->id() . "\"\n\n" if (exists $reference{$entry->id()});
-
-            $reference{$entry->id()} = shared_clone({ sequence  => dna2rna($entry->sequence()),
-                                                      structure => $entry->structure() }) if ($entry->can("structure")); 
-            print CLRRET . "[+] Importing reference structure file(s) [" . scalar(keys %reference) . " imported]";
-
-        }
+        push(@files, $file);
 
     }
     closedir($dh);
+
+    $nRefs = scalar(@files);
+    $progressBar = shared_clone(Term::Progress->new( max     => $nRefs,
+                                                     width   => 50,
+                                                     colored => 1 ));
+    $progressBar->init();
+
+    @pool = map{ threads->create(\&import) } 1 .. $threads;
+    $_->join() for (@pool);
+
+    undef(@pool);
 
     die "\n\n  [!] Error: Specified reference folder doesn't contain any structure file\n\n" unless(keys %reference);
 
@@ -166,21 +169,31 @@ else { # Single structure file
 
 die "\n\n  [!] Error: No structure file imported\n\n" if (!keys %reference);
 
-print "\n[+] Comparing transcript structures [last: none]";
+print "\n\n[+] Comparing transcript structures...\n\n";
 
 $nRefs = scalar(keys %reference);
+$progressBar->reset();
+$progressBar->max($nRefs);
+$progressBar->init();
+
 @pool = map{ threads->create(\&compare) } 1 .. $threads;
 $_->join() for (@pool);
 
+print "\n";
+
 if ($results{compared}) {
     
-    my ($table, $top);
+    my ($table, $top, @median);
     $top = min(10, $results{compared});
     $table = Term::Table->new(indent => 2);
     $table->head("Transcript", "PPV", "Sensitivity", "FMI", "mFMI");
 
     @results = sort { $b->[3] <=> $a->[3] } @results;
     $table->row(@$_) for (@results[0 .. $top - 1]);
+
+    $table->blank();
+    @median = map { my $i = $_; my @i = grep { isnumeric($_) } map { $_->[$i] } @results; @i ? median(@i) : "NaN" } 1 .. 4;
+    $table->row("Median (all)", @median);
 
     print "\n[+] Top $top similar structures:\n\n";
     $table->print();
@@ -206,6 +219,39 @@ print "\n[+] Comparison statistics:\n" .
 
 print "\n\n[+] All done.\n\n";
 
+sub import {
+
+    while(1) {
+
+        my ($file, $io);
+
+        { lock(@files);
+          
+          if (@files) { $file = shift(@files); } }
+
+        last unless($file);
+
+        my $io = Data::IO::Sequence->new( file        => "$reference/$file",
+                                          lonelypairs => $kl,
+                                          pseudoknots => $kp );
+        while(my $entry = $io->read()) { 
+            
+            lock(%reference);
+
+            die "\n\n  [!] Error: Duplicate reference structure ID \"" . $entry->id() . "\"\n\n" if (exists $reference{$entry->id()});
+
+            $reference{$entry->id()} = shared_clone({ sequence  => dna2rna($entry->sequence()),
+                                                      structure => $entry->structure() }) if ($entry->can("structure")); 
+            
+        }
+
+        { lock($progressBar);
+          $progressBar->update(1); }
+
+    }
+
+}
+
 sub compare {
 
     while(1) {
@@ -224,6 +270,9 @@ sub compare {
           } }
 
         last unless($refStruct);
+
+        { lock($progressBar);
+          $progressBar->update(1); }
 
         my ($file, $format, $queryIO, $querySeq,
             $queryStruct, $ppv, $sensitivity, $fmi,
@@ -299,9 +348,7 @@ sub compare {
         $mfmi = sprintf("%.2f", mfmi($refStruct, $queryStruct, $relaxed));
 
         { lock(@results);
-          push(@results, shared_clone([$refId, $ppv, $sensitivity, $fmi, $mfmi])); 
-          
-          print CLRRET . "[+] Comparing transcript structures [last: " . $refId . "]"; }
+          push(@results, shared_clone([$refId, $ppv, $sensitivity, $fmi, $mfmi])); }
         
         if ($img) {
 

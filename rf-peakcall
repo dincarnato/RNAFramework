@@ -194,6 +194,8 @@ mkpath($output . "plots", { mode  => 0755,
 mkpath($output . "plots/transcripts", { mode  => 0755,
                                         error => \$error }) if ($img);
 
+die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
 # In case no index has been provided, we rebuild the index before generating the working threads
 # The new index will be generated in the same path of the rc file, with extension .rci
 $ctrlIndex = defined $index ? $index : (defined $control && -e "$control.rci" ? "$control.rci" : undef);

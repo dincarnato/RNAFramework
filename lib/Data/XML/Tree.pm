@@ -89,7 +89,7 @@ sub getNode {
     else {
 
         $nodes = (sort keys %{$self->{tree}})[0] if (!defined $nodes);
-        $nodes =~ s/^\/|\/$//;
+        $nodes =~ s/^\/|\/$//g;
 
         my ($subTree, @nodes, @trees);
         $subTree = $self->{tree};

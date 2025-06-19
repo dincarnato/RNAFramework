@@ -21,6 +21,7 @@ use File::Basename;
 use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
+use POSIX qw(ceil);
 use threads;
 use threads::shared;
 
@@ -45,7 +46,7 @@ my ($help, $output, $overwrite, $minPairedFrac,
     $winSize, $rffoldOut, $xmlFolder, $threads, $onePerFile,
     $minValueFrac, $ignoreReact, $ignoreShannon, $isViennaInstalled,
     $minTranscriptLen, $minBelowMedian, $error, $evalEnergy,
-    $pvalue, $nShufflings, $dinuclShuffle, @pool);
+    $pvalue, $nShufflings, $dinuclShuffle, $truncateMotif, @pool);
 
 $isViennaInstalled = eval { require RNA; 1; };
 
@@ -80,7 +81,8 @@ do {
                 "ee|evalEnergy"         => \$evalEnergy,
                 "v|pvalue=s"            => \$pvalue,
                 "ns|nShufflings=s"      => \$nShufflings,
-                "ds|dinuclShuffle"      => \$dinuclShuffle ) or help(1);
+                "ds|dinuclShuffle"      => \$dinuclShuffle,
+                "tm|truncateMotif"      => \$truncateMotif ) or help(1);
 
 };
 
@@ -268,10 +270,10 @@ sub extract {
 
         @helices = $entry->helices();
 
-        for(my $i = 0; $i < @helices; $i++) {
+        for (my $i = 0; $i < @helices; $i++) {
 
-            my ($parentStart, $parentEnd, $parentStruct, @parents,
-                @parentHelices, %bpHelixLookup);
+            my ($parentStart, $parentEnd, $parentStruct, $realParentStruct,
+                @parents, @parentHelices, %bpHelixLookup);
             @parents = $helices[$i]->parents();
 
             next if (@parents); # If the helix has parents, than it does not delimit an independently folded domain
@@ -279,6 +281,7 @@ sub extract {
             $parentStart = $helices[$i]->h5start();
             $parentEnd = $helices[$i]->h3start();
             $parentStruct = substr($entry->structure(), $parentStart, $parentEnd - $parentStart + 1);
+            $realParentStruct = $parentStruct;
             @parentHelices = @{(listhelices($parentStruct, 1))[0]};
 
             # Populates the base-pair to helix lookup table
@@ -287,44 +290,88 @@ sub extract {
             while ($parentStruct =~ m/(\(\.+?\))/g) {
 
                 my ($loop, $j, $belongHelix, $motifStart,
-                    $motifEnd, $motifLen, $motif);
+                    $motifEnd, $motifLen, $originalStart, $originalLen, 
+                    $motif);
                 $loop = $1;
+
+                next if ($maxLoopSize && length($loop) - 2 > $maxLoopSize);
+
                 $j = index($parentStruct, $loop, 0);
                 $belongHelix = $parentHelices[$bpHelixLookup{$j}];
                 $motifStart = $belongHelix->{h5start};
                 $motifEnd = $belongHelix->{h3start};
                 $motifLen = $motifEnd - $motifStart + 1;
+                $originalStart = $motifStart;
+                $originalLen = $motifLen;
 
-                next if (defined $maxMotifLen && $motifLen >= $maxMotifLen);
-                next if ($maxLoopSize && length($loop) - 2 > $maxLoopSize);
-                next if (!minPaired($parentStruct, $motifStart, $motifEnd));
-                next if (!reactAndShannonFilter($parentStart, $motifStart, $motifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+                if (defined $maxMotifLen && $motifLen > $maxMotifLen) {
 
-                while(@{$belongHelix->{parents}} && defined (my $k = $belongHelix->{parents}->[-1])) {
+                    if ($truncateMotif) {
 
-                    my ($parentHelix, $parentMotifStart, $parentMotifEnd);
-                    $parentHelix = $parentHelices[$k];
-                    $parentMotifStart = $parentHelix->{h5start};
-                    $parentMotifEnd = $parentHelix->{h3start};
+                        my @helices = @{(listhelices(substr($realParentStruct, $motifStart, $motifLen), 1))[0]};
+                        
+                        for my $i (0 .. $#helices) {
 
-                    last if (defined $maxMotifLen && $parentMotifEnd - $parentMotifStart + 1 >= $maxMotifLen);
+                            if (($i < $#helices && @{$helices[$i]->{parents}} + 1 == @{$helices[$i + 1]->{parents}}) || $i == $#helices) {
 
-                    if (minPaired($parentStruct, $parentMotifStart, $parentMotifEnd)) {
+                                my @helixPairs = reverse(map { [$helices[$i]->{h5bases}->[$_], $helices[$i]->{h3bases}->[$_]] } 0 .. $#{$helices[$i]->{h5bases}});
 
-                        last if ($maxLoopSize && loopSize($k, \@parentHelices) > $maxLoopSize);
-                        last if (!reactAndShannonFilter($parentStart, $parentMotifStart, $parentMotifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+                                while($motifLen > $maxMotifLen && @helixPairs) {
 
-                        $belongHelix = $parentHelix;
-                        $motifStart = $parentMotifStart;
-                        $motifEnd = $parentMotifEnd;
-                        $motifLen = $motifEnd - $motifStart + 1;
+                                    my $newCoords = shift(@helixPairs);
+                                    $motifStart = $originalStart + $newCoords->[0];
+                                    $motifEnd = $originalStart + $newCoords->[1];
+                                    $motifLen = $motifEnd - $motifStart + 1;
+                                
+                                }
+
+                            }
+                            else { last; }
+
+                        }
+
+                        next if ($motifLen > $maxMotifLen);
+                        
+                        undef($belongHelix);
 
                     }
-                    else { last; }
+                    else { next; }
 
                 }
 
-                $motif = substr($parentStruct, $motifStart, $motifLen);
+                next if (!reactAndShannonFilter($parentStart, $motifStart, $motifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+                
+                if (defined $belongHelix) {
+
+                    while(@{$belongHelix->{parents}} && defined (my $k = $belongHelix->{parents}->[-1])) {
+
+                        my ($parentHelix, $parentMotifStart, $parentMotifEnd);
+                        $parentHelix = $parentHelices[$k];
+                        $parentMotifStart = $parentHelix->{h5start};
+                        $parentMotifEnd = $parentHelix->{h3start};
+
+                        last if (defined $maxMotifLen && $parentMotifEnd - $parentMotifStart + 1 > $maxMotifLen);
+
+                        if (minPaired($parentStruct, $parentMotifStart, $parentMotifEnd)) {
+
+                            last if ($maxLoopSize && loopSize($k, \@parentHelices) > $maxLoopSize);
+                            last if (!reactAndShannonFilter($parentStart, $parentMotifStart, $parentMotifEnd, \@winReact, \@winShannon) && $entry->length() >= $minTranscriptLen);
+
+                            $belongHelix = $parentHelix;
+                            $motifStart = $parentMotifStart;
+                            $motifEnd = $parentMotifEnd;
+                            $motifLen = $motifEnd - $motifStart + 1;
+
+                        }
+                        else { last; }
+
+                    }
+
+                }
+
+                $motif = substr($realParentStruct, $motifStart, $motifLen);
+
+                next if (!minPaired($realParentStruct, $motifStart, $motifEnd));
 
                 # Motif's min criteria are met
                 if ($motifLen >= $minMotifLen && (($multiwayOnly && $motif =~ /\)\.*\(/) || !$multiwayOnly)) {
@@ -334,7 +381,7 @@ sub extract {
                     $realStart = $parentStart + $motifStart;
                     $realEnd = $parentStart + $motifEnd;
                     $sequence = substr($entry->sequence(), $realStart, $motifLen);
-                    $structure = substr($parentStruct, $motifStart, $motifLen);
+                    $structure = substr($realParentStruct, $motifStart, $motifLen);
                     $motifId = $id . "_" . $realStart . "-" . $realEnd;
 
                     if ($evalEnergy) {
@@ -343,7 +390,7 @@ sub extract {
                         $energy = RNA::energy_of_struct($sequence, $structure);
 
                         # If there is a lonely pair, than lonely pairs are allowed
-                        $RNA::noLonelyPairs = 1 if ($structure =~ m/\.[\(\)]\./);
+                        $RNA::noLonelyPairs = 1 if ($structure !~ m/\.[\(\)]\./);
 
                         for (1 .. $nShufflings) {
 
@@ -370,7 +417,7 @@ sub extract {
                 }
 
                 # Mask the motif and keep looking
-                substr($parentStruct, $motifStart, $motifLen) = "." x $motifLen;
+                substr($parentStruct, $originalStart, $originalLen) = "." x $originalLen;
 
                 $j++;
 
@@ -521,6 +568,7 @@ sub help {
  -mp  or --minPairedFrac        <float>         Structure elements having less than this fraction of paired bases will be discarded (Default: 0.45 [45%])
  -mm  or --minMotifLen          <int>           Structure elements below this length will be discarded (Default: 50)
  -xm  or --maxMotifLen          <int>           Structure elements above this length will be discarded (Default: no limit)
+ -tm  or --truncateMotif                        Structure elements above the length specified by -xm, will be truncated to that length and reported
  -xl  or --maxLoopSize          <int>           Structure elements encompassing a loop larger than this number of bases, will be discarded (Default: no limit)
  -mo  or --multiwayOnly                         Only report structure elements encompassing multiway junctions
  -opf or --onePerFile                           Extracted structure elements belonging to the same transcript are reported in separate files

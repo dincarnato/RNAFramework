@@ -1,3 +1,29 @@
+## [2.9.3] - 2025-06-19
+### Added
+- Added progress bar to rf-combine, rf-compare, rf-correlate
+- Added the -hm (--heatmap) parameter, along with a number of accessory parameters (-lhm, -ghm and -ho), to rf-duplex to enable the generation of contact maps from RNA proximity ligation experiments
+- Added the -no (--no-overall) parameter to rf-eval to disable the calculation of overall statistics
+- Added the "split" command to rf-mmtools to generate a separate MM file for each transcript, startig from a multi-transcript MM file
+- Added the "correlate" command to rf-mmtools to calculate the per-transcript correlation of co-mutation patterns between two experiments
+- Added the "alignIds" command to rf-mmtools to generate sets of MM files containing exactly the same transcripts in the same order (needed by the upcoming version of DRACO (v1.3), which will introduce handling of replicates)
+- Added the -dp (--discardPositions) parameter to the "extract" command of rf-mmtools, to allow removing specific mutated positions from reads
+- Added the -tm (--truncateMotif) parameter to rf-structextract, to enable reporting chunks of structured elements to fit the size specified by -xm (--maxMotifLen), by truncating their lower stem (normally these elements would be discarded)
+- Added to rf-json2rc support for the upcoming version of DRACO (v1.3), which will introduce handling of replicate experiments 
+- Added the -d (--decimals) parameter to rf-jackknife to control the number of decimals in reported FMI/mFMI values
+- Added the -rn (--run-norm) parameter to rf-normfactor to enable automatically invoking rf-norm to run normalization using the identified normalization factors
+
+### Changed
+- Modified rf-compare to exploit multithreading for a faster import of the reference transcripts
+- Modified the behaviour of the -oc (--only-common) parameter of rf-fold to take a numeric argument. Now, XML files common to at least this number of replicates will be analyzed, as compared to the previous version, which only allowed the analysis of XML files common to all replicates
+- Fixed the order of filters in rf-structextract, causing certain elements not to be reported
+
+### API changes
+- Added the mergeDataStructs() function to Core::Utils, to enable the customized merging of complex data structures
+- Added the invertPalette parameter to Graphics::Chart objects
+- Added the readCount() method to RF::Data::IO::MM to retrieve the number of reads mapping to a certain transcript
+- Fixed a minor bug in Data::XML::Tree
+- Fixed a minor bug in the fixdotbracket() function of RNA::Utils, causing an empty string to be returned when the portion of the dot-bracket to be fixed only contained brackets but no dots
+
 ## [2.9.2] - 2025-02-25
 ### Added
 - Added the -dp (or --discardPositions) parameter to rf-mmtools to enable filtering out certain transcript positions before performing analysis with DRACO
@@ -11,7 +37,6 @@
 - Fixed a bug in rf-fold occurring in remote occasions
 - Fixed a bug in rf-mutate causing the program to continue with unbalanced structures as input, instead of throwing an exception
 - Fixed a bug in rf-count-genome triggered in very edge cases with reads spanning multiple splice junctions (thanks to Lambert Moyon for reporting)
-- 
 
 ### API changes
 - Core::Process now uses Storable's lock_store and lock_retrieve to prevent multiple processes from writing to the same file

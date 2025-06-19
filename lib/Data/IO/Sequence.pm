@@ -129,7 +129,8 @@ sub _findformat {
                     
                     my $line2 = $rows[$i+1];
                     $line2 =~ s/\s*\(\s*[\+-]?\d+\.\d+\)$//; # In case is Vienna format and free energy is appended to structure
-                            
+                    $line2 =~ s/^\s*|\s*$//g;
+
                     $format = "Vienna" if (isdotbracket($line2));
                 
                 }

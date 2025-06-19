@@ -40,10 +40,10 @@ die "\n  [!] Error: This program requires ithreads." .
 my ($minCov, $output, $help, $overwrite,
     $reactiveBases, $scoreMethod, $normMethod, $pseudoCount,
     $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
-    $treated, $untreated, $denatured, $threads, 
-    $index, $whitelist, $medianCoverage, @ctrlFiles, 
-    @treatFiles, @denatFiles, @files, @pool, 
-    %io, %commonReact);
+    $treated, $untreated, $denatured, $threads, $rfnorm,
+    $index, $whitelist, $medianCoverage, $runNorm,
+    @ctrlFiles, @treatFiles, @denatFiles, @files, @pool, 
+    %io, %commonReact, %fileMap);
 
 my $common : shared;
 my @ids : shared;
@@ -72,7 +72,9 @@ do {
                 "mm|max-mutation-rate=s"         => \$maxMutRate,
                 "il|ignore-lower-than-untreated" => \$ignoreLower,
                 "wl|whitelist=s"                 => \$whitelist,
-                "ec|median-coverage=s"           => \$medianCoverage ) or help(1);
+                "ec|median-coverage=s"           => \$medianCoverage,
+                "rn|run-norm"                    => \$runNorm,
+                "rf|rf-norm=s"                   => \$rfnorm ) or help(1);
 
 };
 
@@ -88,7 +90,9 @@ $maxUntreatedMut //= 0.05;
 $medianCoverage //= 0;
 $maxMutRate ||= 1;
 $pseudoCount ||= 1;
+$maxScore ||= 10;
 $reactiveBases ||= "ACGT";
+$rfnorm ||= which("rf-norm");
 @treatFiles = split /,/, $treated;
 @ctrlFiles = split /,/, $untreated;
 @denatFiles = split /,/, $denatured;
@@ -112,13 +116,28 @@ die "\n  [!] Error: Minimum coverage must be an INT > 0\n\n" if (!isint($minCov)
 die "\n  [!] Error: Median coverage must be positive\n\n" if (!ispositive($medianCoverage));
 die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
+if ($runNorm) {
+
+    die "\n  [!] Error: No path to rf-norm provided\n\n" if (!$rfnorm);
+    die "\n  [!] Error: Provided path to rf-norm does not exist\n\n" if (!-e $rfnorm);
+    die "\n  [!] Error: rf-norm is not executable\n\n" if (!-x $rfnorm);
+
+}
+
 $reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($reactiveBases))))))));
 
 if ($scoreMethod !~ /^[24]$/) {
 
     @ctrlFiles = ($ctrlFiles[0]) x @treatFiles if (@ctrlFiles == 1);
 
-    if ($scoreMethod == 3) { @denatFiles = ($denatFiles[0]) x @treatFiles if (@denatFiles == 1); }
+    $fileMap{$treatFiles[$_]} = { "ctrl" => $ctrlFiles[$_] } for (0 .. $#treatFiles);
+
+    if ($scoreMethod == 3) { 
+        
+        @denatFiles = ($denatFiles[0]) x @treatFiles if (@denatFiles == 1); 
+        $fileMap{$treatFiles[$_]}->{"denat"} = $denatFiles[$_] for (0 .. $#treatFiles);
+        
+    }
     else { undef(@denatFiles); }
 
 }
@@ -128,13 +147,13 @@ else {
     undef(@ctrlFiles);
     undef(@denatFiles);
 
-    print "\n  [!] Warning: Parameter --ignore-lower-than-untreated will have no effect in the absence of an untreated sample\n" if ($ignoreLower);
+    warn "\n  [!] Warning: Parameter --ignore-lower-than-untreated will have no effect in the absence of an untreated sample\n" if ($ignoreLower);
 
 }
 
 @files = (@treatFiles, @ctrlFiles, @denatFiles);
 
-die "\n  [!] Error: Provided RC files have unequal sizes\n\n" if (uniq(map { -s $_ } @files) != 1);
+die "\n  [!] Error: Provided RC files have unequal sizes\n\n" if (scalar(uniq(map { -s $_ } @files)) != 1);
 
 print "\n[+] Loading RC files...";
 
@@ -230,6 +249,8 @@ if ($normMethod =~ /^[13]$/) {
             print "\n  [*] $sample: $factor";
             print $wh join("\t", $sample, $factor) . "\n";
 
+            runNorm($file, $factor) if ($runNorm);
+
         }
 
         close($wh);
@@ -256,6 +277,8 @@ else {
         print "\n  [*] $sample: " . join(",", @norm);
         print $wh join("\t", $sample, @norm) . "\n";
 
+        runNorm($file, join(",", @norm)) if ($runNorm);
+
     }
 
     close($wh);
@@ -263,6 +286,39 @@ else {
 }
 
 print "\n\n[+] All done.\n\n";
+
+sub runNorm {
+
+    my ($file, $normFactor) = @_;
+
+    my ($cmd, $ret, $outDir);
+    $outDir = (fileparse($file, ".rc"))[0];
+    $cmd = "$rfnorm -sm $scoreMethod -nm $normMethod -n $minCov -ec $medianCoverage -t $file -rb $reactiveBases -nf $normFactor -ow";
+
+    if (exists $fileMap{$file}->{"ctrl"}) { 
+
+        $outDir .= "_vs_" . (fileparse($fileMap{$file}->{"ctrl"}, ".rc"))[0];
+        $cmd .= " -u " . $fileMap{$file}->{"ctrl"}; 
+        
+    }
+
+    if (exists $fileMap{$file}->{"denat"}) { 
+
+        $outDir .= (exists $fileMap{$file}->{"ctrl"} ? "_" : "_vs_") . (fileparse($fileMap{$file}->{"denat"}, ".rc"))[0];    
+        $cmd .= " -d " . $fileMap{$file}->{"denat"}; 
+        
+    }
+
+    $outDir .= "_normfactor";
+    $cmd .= " -o $outDir";
+    $cmd .= " -il" if ($scoreMethod =~ /^[13]$/);
+    $cmd .= " -mm $maxMutRate" if ($scoreMethod =~ /^[34]$/);
+    $cmd .= " -mu $maxUntreatedMut" if ($scoreMethod == 3);
+    $cmd .= " -pc $pseudoCount -s $maxScore" if ($scoreMethod == 1);
+
+    $ret = `$cmd 2>&1`;
+
+}
 
 sub getCoveredBases {
 
@@ -515,6 +571,10 @@ sub help {
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
  -mc or --min-coverage        <int>                 Discards any base with coverage below this threshold (>=1, Default: 10)
  -ec or --median-coverage     <float>               Discards transcripts having median coverage below this threshold (>=0, Default: 0)
+ -rn or --run-norm                                  Automatically runs rf-norm with the derived normalization factors on the input files
+                                                    Note: the default output folder name of rf-norm will be used, with appended "_normfactor"
+                                                          suffix. Any pre-existing folder with the same name wil be overwritten
+ -rf or --rf-norm             <string>              Path to rf-norm executable (Default: assumes rf-norm is in PATH)
 
  Scoring method #1 options (Ding et al., 2014) options
  -pc or --pseudocount         <float>               Pseudocount added to reactivities to avoid division by 0 (>0, Default: 1)

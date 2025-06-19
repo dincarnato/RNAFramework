@@ -25,6 +25,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use lib $Bin . "/lib";
 
 use Core::Mathematics qw(:all);
+use Core::Statistics;
 use Core::Utils;
 use Data::Sequence::Utils;
 use RF::Data::IO::MM;
@@ -37,9 +38,10 @@ $|++;
 my ($output, $overwrite, $command, $help,
     $tab, $keepBases, $minMutPerRead,
     $minReadLen, $randSubsample, $bedAnno, $whitelist, 
-    $discardPos, @mm, %commands);
+    $discardPos, $minReads, $spearman, @mm, %commands);
 
-%commands = map { $_ => 1 } qw(index view merge extract stats torc);
+%commands = map { $_ => 1 } qw(index view merge extract alignids
+                               stats torc correlate split);
 
 do {
 
@@ -54,7 +56,9 @@ do {
                 "rs|randSubsample=s"    => \$randSubsample,
                 "a|annotation=s"        => \$bedAnno,
                 "wl|whitelist=s"        => \$whitelist,
-                "dp|discardPositions=s" => \$discardPos ) or help(1);
+                "dp|discardPositions=s" => \$discardPos,
+                "mr|minReads=s"         => \$minReads,
+                "S|spearman"            => \$spearman ) or help(1);
 
     $command = shift(@ARGV);
     @mm = uniq(@ARGV);
@@ -69,6 +73,7 @@ $randSubsample ||= 1;
 $minMutPerRead //= 1;
 $keepBases ||= "ACGT";
 $minReadLen ||= 0;
+$minReads ||= 1000;
 
 ##
 # Input validation
@@ -78,7 +83,7 @@ die "\n  [!] Error: No command specified\n\n" if (!$command);
 die "\n  [!] Error: Invalid command \"$command\"\n\n" if (!exists $commands{$command});
 die "\n  [!] Error: No MM file specified\n\n" if (!@mm);
 
-for (0 .. ($command ne "merge" ? 0 : $#mm)) { 
+for (0 .. ($command !~ /^(?:merge|alignids)$/ ? 0 : ($command eq "correlate" ? 1 : $#mm))) { 
     
     die "\n  [!] Error: Provided MM file \"" . $mm[$_] . "\" does not exist\n\n" if (!-e $mm[$_]); 
 
@@ -131,7 +136,7 @@ elsif ($command eq "merge") {
     $output =~ s/(?:\.mm)?$/.mm/;
 
     die "\n  [!] Error: Output MM file already exists." .
-        "\n             Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output && !$overwrite);
+        "\n             Please use -ow (or --overwrite) to overwrite output file\n\n" if (-e $output && !$overwrite);
     die "\n  [!] Error: Only one MM file provided\n\n" if (@mm < 2);
 
     my ($mmOut, $mappedreads, @mmIn, @ids);
@@ -216,14 +221,14 @@ elsif ($command eq "extract") {
 
     if (!defined $output) {
 
-        $output = fileparse($mm[0], qr/\.[^.]*/);
+        $output = fileparse($mm[0], ".mm");
         $output =~ s/\.mm$//;
         $output .= ".extracted.mm";
 
     }
 
     die "\n  [!] Error: Output MM file already exists." .
-        "\n             Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output && !$overwrite);
+        "\n             Please use -ow (or --overwrite) to overwrite output file\n\n" if (-e $output && !$overwrite);
     die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepBases !~ /^all$/i && !isiupac($keepBases));
     die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 1\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
     die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || !ispositive($minReadLen));
@@ -327,6 +332,9 @@ elsif ($command eq "extract") {
         $length = length($realSeq);
 
         next if ($whitelist && !exists $whitelist{$id});
+        last if ($whitelist && !keys %whitelist);
+
+        delete($whitelist{$id});
 
         if ($bedAnno) {
 
@@ -396,7 +404,7 @@ elsif ($command eq "torc") {
     $output =~ s/(?:\.mm|\.rc)?$/.rc/;
 
     die "\n  [!] Error: Output RC file already exists." .
-        "\n             Please use -ow (or --overwrite) to overwrite output filey\n\n" if (-e $output && !$overwrite);
+        "\n             Please use -ow (or --overwrite) to overwrite output file\n\n" if (-e $output && !$overwrite);
 
     my ($mmIO, $rcIO, $totReads);
     $totReads = 0;
@@ -483,6 +491,202 @@ elsif ($command eq "stats") {
     }
 
 }
+elsif ($command eq "correlate") {
+
+    die "\n  [!] Error: Correlate requires two MM files\n\n" if (@mm < 2);
+
+    $output ||= fileparse($mm[0], ".mm") . "_vs_" . fileparse($mm[1], ".mm");
+    $output =~ s/(?:\.tsv)?$/.tsv/;
+    
+    die "\n  [!] Error: Output MM file already exists." .
+        "\n             Please use -ow (or --overwrite) to overwrite output file\n\n" if (-e $output && !$overwrite);
+
+    my ($r, $p, $corrFunc, @files, 
+        @data, @ids, @io, %excluded);
+    $corrFunc = $spearman ? \&spearman : \&pearson;
+    @files = (shift(@mm), shift(@mm));
+    @io = map { RF::Data::IO::MM->new( file  => $_,
+                                       index => "$_.mmi" ) } @files;
+    @ids = $io[0]->ids();
+
+    open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
+    select((select($wh), $|=1)[0]);
+    
+    foreach my $id (@ids) {
+
+        my ($r, $p, @keys, @data);
+        @data = ({}, {});
+
+        foreach my $n (0, 1) {
+
+            next if (exists $excluded{$id});
+
+            my ($mmIO, $readCount);
+            $mmIO = $io[$n];
+            $readCount = $mmIO->readCount($id) || 0;
+
+            if ($readCount < $minReads) {
+
+                $excluded{$id} = 1;
+                next;
+
+            }
+        
+            while(my ($start, $end, $muts) = $mmIO->readStream($id)) { 
+                
+                for my $i (0 .. $#{$muts}) {
+
+                    for my $j ($i + 1 .. $#{$muts}) {
+
+                        $data[$n]->{join("-", @$muts[$i, $j])}++;
+
+                    }
+
+                }
+                
+            }
+
+        }
+
+        @keys = uniq(map { keys %{$data[$_]} } 0, 1);
+
+        next if (@keys < 3);
+
+        ($r, $p) = $corrFunc->([map { exists $data[0]->{$_} ? $data[0]->{$_} : 0 } @keys],
+                               [map { exists $data[1]->{$_} ? $data[1]->{$_} : 0 } @keys]);
+
+        print $wh join("\t", $id, $r, $p) . "\n";
+
+    }
+
+    close($wh);
+
+    unlink($output) if (!-s $output);
+
+}
+elsif ($command eq "alignids") {
+
+    $output ||= "alignedIds/";
+    $output =~ s/\/?$/\//;
+
+    if (-e $output) {
+
+        if (!$overwrite) {
+
+            die "\n  [!] Error: Output directory \"$output\" already exists." .
+                "\n             Please use -ow (or --overwrite) to overwrite it\n\n";
+
+        }
+        else {
+
+            if (-d $output) { 
+
+                my $error = rmtree($output);
+
+                die "\n  [!] Error: Unable to overwrite output ($error)\n\n" if ($error);
+
+            }
+            else { unlink($output) or die "\n  [!] Error: Unable to overwrite output ($!)\n\n"; }
+
+        }
+
+    }
+
+    die "\n  [!] Error: Only one MM file provided\n\n" if (@mm < 2);
+
+    my ($error, @mmOut, @mmIn, @ids, %ids);
+    mkpath($output, { mode  => 0755,
+                      error => \$error });
+
+    die "\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+    @mmOut = map { my $filename = fileparse($mm[$_], ".mm");
+                   RF::Data::IO::MM->new( file       => $output . $filename . ".mm",
+                                          index      => $output . $filename . ".mm.mmi",
+                                          mode       => "w",
+                                          overwrite  => $overwrite ) } 0 .. $#mm;
+    @mmIn = map { RF::Data::IO::MM->new( file  => $mm[$_],
+                                         index => $mm[$_] . ".mmi",
+                                         mode  => "r" ) } 0 .. $#mm;
+
+    foreach my $mmIn (@mmIn) { $ids{$_}++ for ($mmIn->ids()); }
+    
+    @ids = grep { $ids{$_} == @mm } sort keys %ids;
+
+    die "\n  [!] Error: No transcript IDs common to all MM files\n\n" if (!@ids);
+
+    foreach my $id (@ids) {
+
+        foreach my $i (0 .. $#mmOut) {
+
+            my $mmOut = $mmOut[$i];
+            $mmOut->append_transcript($id, $mmIn[$i]->sequence($id));
+            while(my ($start, $end, $muts) = $mmIn[$i]->readStream($id)) { $mmOut->append_read($start, $end, scalar(@$muts), $muts); }
+
+        }
+
+    }
+
+    $_->close() for (@mmOut, @mmIn);
+
+}
+elsif ($command eq "split") {
+
+    if (!defined $output) {
+
+        $output = fileparse($mm[0], ".mm");
+        $output =~ s/(?:\.mm)?$/_split/;
+
+    }
+
+    if (-e $output) {
+
+        if (!$overwrite) {
+
+            die "\n  [!] Error: Output directory \"$output\" already exists." .
+                "\n             Please use -ow (or --overwrite) to overwrite it\n\n";
+
+        }
+        else {
+
+            if (-d $output) { 
+
+                my $error = rmtree($output);
+
+                die "\n  [!] Error: Unable to overwrite output ($error)\n\n" if ($error);
+
+            }
+            else { unlink($output) or die "\n  [!] Error: Unable to overwrite output ($!)\n\n"; }
+
+        }
+
+    }
+
+    my ($error, $mmIn);
+    mkpath($output, { mode  => 0755,
+                      error => \$error });
+
+    die "\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+
+    $mmIn = RF::Data::IO::MM->new( file  => $mm[0],
+                                   index => $mm[0] . ".mmi",
+                                   mode  => "r" );
+
+    foreach my $id ($mmIn->ids()) {
+
+        my $mmOut = RF::Data::IO::MM->new( file  => "$output/$id.mm",
+                                           index => "$output/$id.mm.mmi",
+                                           mode  => "w" );
+
+        $mmOut->append_transcript($id, $mmIn->sequence($id));
+
+        while(my ($start, $end, $muts) = $mmIn->readStream($id)) { $mmOut->append_read($start, $end, scalar(@$muts), $muts); }
+
+        $mmOut->close();
+
+    }
+
+}
 
 sub help {
 
@@ -503,6 +707,15 @@ HELP
         die <<HELP;
  Description: Generates MMI index files for a set of input MM files
  Usage:       rf-mmtools index Sample1.mm Sample2.mm ... Samplen.mm
+
+HELP
+
+    }
+    elsif ($command eq "stats") {
+
+        die <<HELP;
+ Description: Provides stats on length and mutation distribution per read
+ Usage:       rf-mmtools stats Sample.mm
 
 HELP
 
@@ -545,6 +758,20 @@ HELP
 HELP
 
     }
+    elsif ($command eq "split") {
+
+        die <<HELP;
+
+ Description: Splits an MM file into multiple files, each containing a single transcript
+ Usage:       rf-mmtools split [options] Sample.mm
+
+ Options                                     Description
+ -o  or --output       <string>              Output folder (Default: <input>_split/)
+ -ow or --overwrite                          Overwrites output folder if already exists
+
+HELP
+
+    }
     elsif ($command eq "extract") {
 
         die <<HELP;
@@ -559,7 +786,8 @@ HELP
  -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (>=0, Default: 1)
  -mrl or --minReadLen         <int>        Reads shorter than this length are discarded (>0, Default: 1)
  -rs  or --randSubsample      <int>        Randomly subsamples this fraction of reads (Default: keep all reads)
-                                           Note: for example, if -rs 2, 1/2 of the reads will be subsampled
+                                           Note: the provided value represents the denominator of the fraction (for example, 
+                                                 if -rs 2, 1/2 of the reads will be subsampled)
  -a   or --annotation         <string>     Path to a file containing a list of regions (in BED format) to extract from 
                                            the MM file
                                            Note: only the portion of the read falling within the boundaries of the provided
@@ -567,7 +795,39 @@ HELP
  -wl  or --whitelist          <string>     Path to a file containing a list (one per line) of transcripts to be extracted 
                                            from the MM file
  -dp  or --discardPositions   <string>     Path to a blacklist file containing a list of transcript positions to be filtered
-                                           out of the output file
+                                           out of the output file (mutations occurring on these positions will be discarded)
+
+HELP
+
+    }
+    elsif ($command eq "alignids") {
+
+        die <<HELP;
+
+ Description: Given multiple MM files, it rewrites them by only retaining the transcripts
+              common to all of them, so that they appear in the same order in all the
+              files (necessary for DRACO replicate analysis)
+ Usage:       rf-mmtools alignids [options] Sample.mm
+
+ Options                                     Description
+ -o  or --output       <string>              Output folder (Default: alignedIds/)
+ -ow or --overwrite                          Overwrites output folder if already exists
+
+HELP
+
+    }
+    elsif ($command eq "correlate") {
+
+        die <<HELP;
+
+ Description: Calculates the correlation of co-mutation patterns between two MM files
+ Usage:       rf-rctools correlate [Options] Sample.mm
+
+ Options                           Description
+ -o  or --output       <string>    Output TSV file (Default: <MM#1>_vs_<MM#2>.tsv)
+ -ow or --overwrite                Overwrites output TSV file (if the specified file already exists)
+ -mr or --minReads     <int>       Transcripts having less than these number of reads are excluded (>0, Default: 1000)
+ -S  or --spearman                 Uses Spearman to calculate correlation (Default: Pearson)
 
 HELP
 
@@ -582,9 +842,12 @@ HELP
  view             Dumps to screen the content of the provided MM file
  merge            Combines multiple MM files
  extract          Filters reads in MM file
+ split            Splits an MM file into multiple files, each containing a single transcript
+ alignIds         Rewrites a set of input MM files, keeping only the common transcripts
  toRC             Converts an MM file to RC format
+ correlate        Calculates the per-transcript correlation of co-mutation patterns between 2 MM files
  stats            Provides stats on length and mutation distribution per read
- index            Indexes MM files
+ index            Indexes an MM file
 
 HELP
 

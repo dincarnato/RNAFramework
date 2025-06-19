@@ -113,7 +113,7 @@ do {
                 "d|data-path=s"              => \$data,
                 "i|ignore-reactivity"        => \$ignore,
                 "is|ignore-sequence"         => \$ignoreSeq,
-                "oc|only-common"             => \$onlyCommon,
+                "oc|only-common=s"           => \$onlyCommon,
                 "hc|hard-constraint"         => \$hc,
                 "w|windowed"                 => \$windowed,
                 "fw|fold-window=i"           => \$foldwin,
@@ -210,7 +210,14 @@ die "\n  [!] Error: Temperature must be a positive value\n\n" unless(ispositive(
 die "\n  [!] Error: Temperature must be comprised between 0 and 100 degree Celsius\n\n" if ($t > 100);
 die "\n  [!] Error: Maximum distance value must be a positive integer\n\n" if (!ispositive($maxdist));
 die "\n  [!] Error: No closing GU parameter requires folding method 1 (ViennaRNA)\n\n" if ($ngu && $method != 1);
-die "\n  [!] Error: Reactivity cutoff must be a value >0 and <= 1" if (!inrange($cutoff, [0, 1]));
+die "\n  [!] Error: Reactivity cutoff must be a value >0 and <= 1\n\n" if (!inrange($cutoff, [0, 1]));
+
+if ($onlyCommon) {
+
+    die "\n  [!] Error: Parameter -oc value must be a positive INT >= 1\n\n" if (!isint($onlyCommon) || $onlyCommon < 1);
+    die "\n  [!] Error: Parameter -oc value cannot exceed the number of samples (" . scalar(@samples) . ")\n\n" if ($onlyCommon > scalar(@samples));
+
+}
 
 if (!$ignore) {
 
@@ -417,9 +424,9 @@ foreach my $sample (@samples) {
 
 }
 
-%xml = map { $_ => $xml{$_} } grep { @{$xml{$_}} == @samples } keys %xml if ($onlyCommon);
+%xml = map { $_ => $xml{$_} } grep { @{$xml{$_}} >= $onlyCommon } keys %xml if ($onlyCommon);
 
-print " " . scalar(keys %xml) . " imported (of which " . scalar(grep { @{$xml{$_}} == @samples } keys %xml) . " common to all replicates)";
+print " " . scalar(keys %xml) . " imported (of which " . scalar(grep { @{$xml{$_}} >= ($onlyCommon ? $onlyCommon : @samples) } keys %xml) . " common to " . ($onlyCommon ? "at least $onlyCommon" : "all") . " replicates)";
 
 die "\n\n  [!] Error: Specified folder doesn't contain any XML file\n\n" unless (keys %xml);
 
@@ -434,7 +441,7 @@ if ($constraintDir) {
     opendir(my $dh, $constraintDir) or die "\n\n  [!] Error: Unable to read constraint files from directory\n\n";
     while(my $file = readdir($dh)) {
 
-        next if ($file =~ m/^\./);
+        next if (substr($file, 0, 1) eq "." || substr($file, -3) !~ /^\.(?:db|ct)$/);
 
         my $eval = do { 
 
@@ -1224,8 +1231,6 @@ sub fold {
 
     }
 
-    $plot->stop();
-
 }
 
 ##
@@ -1869,7 +1874,8 @@ sub help {
                                                                                              [2] RNAstructure
 
  -p   or --processors            <int>       Number of processors to use for the analysis (Default: 1)
- -oc  or --only-common                       In case of multiple experiments, only transcripts covered across all experiments will be folded
+ -oc  or --only-common           <int>       In case of multiple experiments, only transcripts covered across at least this number of experiments
+                                             will be folded
  -g   or --img                               Enables the generation of graphical reports (requires R)
  -R   or --R-path                <string>    Path to R executable (Default: assumes R is in PATH)
  -t   or --temperature           <float>     Temperature in Celsius degrees (Default: 37.0)

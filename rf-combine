@@ -33,6 +33,7 @@ use Data::IO;
 use Data::XML;
 use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
+use Term::Progress;
 
 die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads and try again\n\n" unless(exists $Config{useithreads});
@@ -44,6 +45,7 @@ my ($output, $overwrite, $stdev, $help,
     $minvalues, $logtransform, $spearman, $ignoreNaNs,
     @pool, @xml, %xml);
 
+my $progressBar : shared;
 my @ids : shared;
 my %results : shared;
 %results = ( diffseq     => 0,
@@ -106,7 +108,7 @@ print "\n[+] Importing input XML directories\/files...";
 
 for (@xml) {
 
-    die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $_);
+    die "\n\n  [!] Error: Provided XML directory\/file \"$_\" does not exist\n\n" if (!-e $_);
 
     if (-d $_) {
 
@@ -156,13 +158,18 @@ mkpath($output, { mode  => 0755,
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
-print "\n[+] Combining reactivities [Last: none]";
+print "\n[+] Combining reactivities...\n\n";
 
 @ids = keys %xml;
+$progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
+                                                 width   => 50,
+                                                 colored => 1 ));
+$progressBar->init();
+
 @pool = map{ threads->create(\&combine) } 1 .. $threads;
 $_->join() for(@pool);
 
-print "\n[+] Combination statistics:\n" .
+print "\n\n[+] Combination statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{combined} .
       "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
       "\n                             " . ($results{failed} - $results{diffseq} - $results{diffscore} - $results{diffnorm} - $results{difftool} - $results{nominvalues} - $results{lowcorr}) . " XML parsing failed" .
@@ -194,6 +201,9 @@ sub combine {
             $win, $remap, $tool, $reactive2,
             $algorithm, $xml, $nbases, $length,
             @values1, @values2);
+
+        { lock($progressBar);
+          $progressBar->update(1); }
 
         foreach my $dir (@xml) {
 
@@ -507,8 +517,6 @@ sub combine {
         }
 
         $xmlio->write($xml->xml());
-
-        print CLRRET . "[+] Combining reactivities [Last: $id]";
 
     }
 

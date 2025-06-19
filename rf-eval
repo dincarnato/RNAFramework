@@ -43,7 +43,7 @@ $|++;
 my ($help, $output, $overwrite, $reactCutoff, 
     $structs, $reacts, $termAsUnpaired, $ignoreTerminal,
     $keepLonelyPairs, $keepPseudoknots, $threads, $error,
-    $failed, $image, $R, $tmpDir, @pool, %structs);
+    $failed, $image, $R, $tmpDir, $noOverall, @pool, %structs);
 
 my $progressBar : shared;
 my @overallCoeff : shared;
@@ -73,7 +73,8 @@ do {
                 "kp|keep-pseudoknots"     => \$keepPseudoknots,
                 "c|reactivity-cutoff=s"   => \$reactCutoff,
                 "g|img"                   => \$image,
-                "R|R-path=s"              => \$R ) or help(1);
+                "R|R-path=s"              => \$R,
+                "no|no-overall"           => \$noOverall ) or help(1);
 
 };
 
@@ -233,15 +234,20 @@ print ", failed $failed (XML parsing failed: " . $results{parseErr} . "; Differe
 if ($results{success}) {
 
     my ($coeffUnpaired, $dsci, $auc, @combinedRoc);
-    $coeffUnpaired = @overallCoeff ? $overallCoeff[0] / $overallCoeff[1] : "NaN";
-    $dsci = @overallDsci ? $overallDsci[0] / $overallDsci[1] : "NaN";
-    @combinedRoc = _combineRocData();
-    $auc = _auc(@combinedRoc);
 
-    print "\n[i] Overall metrics:\n" .
-            "\n  [*] Coefficient unpaired: " . sprintf("%.3f", $coeffUnpaired) .
-            "\n  [*] DSCI:                 " . sprintf("%.3f", $dsci) .
-            "\n  [*] AUC:                  " . sprintf("%.3f", $auc) . "\n";
+    if (!$noOverall) {
+
+        $coeffUnpaired = @overallCoeff ? $overallCoeff[0] / $overallCoeff[1] : "NaN";
+        $dsci = @overallDsci ? $overallDsci[0] / $overallDsci[1] : "NaN";
+        @combinedRoc = _combineRocData();
+        $auc = _auc(@combinedRoc);
+
+        print "\n[i] Overall metrics:\n" .
+                "\n  [*] Coefficient unpaired: " . sprintf("%.3f", $coeffUnpaired) .
+                "\n  [*] DSCI:                 " . sprintf("%.3f", $dsci) .
+                "\n  [*] AUC:                  " . sprintf("%.3f", $auc) . "\n";
+
+    }
 
     print "\n[+] Writing metrics to file...";
 
@@ -249,10 +255,10 @@ if ($results{success}) {
     select((select($fh), $|=1)[0]);
     print $fh join("\t", qw(Transcript coeffUnpaired DSCI AUROC)) . "\n";
     print $fh join("\t", @$_) . "\n" for (sort { $a->[0] cmp $b->[0] } @metrics);
-    print $fh join("\t", "Overall", $coeffUnpaired, $dsci, $auc) . "\n";
+    print $fh join("\t", "Overall", $coeffUnpaired, $dsci, $auc) . "\n" if (!$noOverall);
     close($fh);
 
-    if ($image) {
+    if ($image && !$noOverall) {
 
         print "\n[+] Generating plots of overall metrics...";
 
@@ -633,14 +639,15 @@ sub help {
  -r  or --reactivities           <string>      Path to a (folder of) XML reactivity file(s)
                                                Note: file names must match transcript IDs in structure files
  -o  or --output                 <string>      Output folder (Default: rf_eval/)
+ -ow or --overwrite                            Overwrites output folder (if the specified folder already exists)
  -g  or --img                                  Generates plots for the various metrics (requires R)
- -ow or --overwrite                            Overwrites output file (if the specified file already exists)
  -tu or --terminal-as-unpaired                 Treats terminal base-pairs as if they were unpaired
  -it or --ignore-terminal                      Terminal base-pairs are excluded from calculations
  -kl or --keep-lonelypairs                     Lonely base-pairs (helices of 1 bp) are retained
  -kp or --keep-pseudoknots                     Pseudoknotted base-pairs are retained
  -c  or --reactivity-cutoff      <float>       Cutoff for considering a base highly-reactive when computing the
                                                unpaired coefficient (>0, Default: 0.7)
+ -no or --no-overall                           Disables overall stats computation
  -R  or --R-path                 <string>      Path to R executable (Default: assumes R is in PATH) 
 
 HELP

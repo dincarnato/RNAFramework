@@ -481,4 +481,29 @@ sub sequence {
 
 }
 
+sub readCount {
+
+    my $self = shift;
+    my $id = shift;
+
+    return if (!defined $id || !exists $self->{_offsets}->{$id});
+
+    my ($fh, $data, $idLen, $length);
+    $fh = $self->{_fh};
+    seek($fh, $self->{_offsets}->{$id}->{start}, SEEK_SET);
+    read($fh, $data, 2); #read id length
+    $idLen = unpack("S<", $data);
+    seek($fh, $idLen, SEEK_CUR);
+    read($fh, $data, 4);
+    $length = unpack("L<", $data);
+
+    $self->{_lengths}->{$id} = $length;
+
+    read($fh, $data, ($length + ($length % 2)) / 2);
+    read($fh, $data, 4);
+    
+    return(unpack("L<", $data));
+
+}
+
 1;

@@ -190,9 +190,9 @@ else {
 if (!defined $output) {
 
     my ($uid, $did, $tid);
-    $uid = fileparse($untreated, qr/\.[^.]*/) if (defined $untreated);
-    $did = fileparse($denatured, qr/\.[^.]*/) if (defined $denatured);
-    $tid = fileparse($treated, qr/\.[^.]*/);
+    $uid = fileparse($untreated, ".rc") if (defined $untreated);
+    $did = fileparse($denatured, ".rc") if (defined $denatured);
+    $tid = fileparse($treated, ".rc");
 
     $output = ($config->scoremethod() =~ /^[24]$/ ? $tid : ($config->scoremethod() == 3 &&
                                                             defined $denatured ? $tid . "_vs_" . $uid . "_" . $did : $tid . "_vs_" . $uid)) . $suffix;

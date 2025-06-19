@@ -22,6 +22,7 @@ use Data::IO::Sequence;
 use Data::Sequence::Utils;
 use Graphics::Chart::Area;
 use Graphics::Chart::Arcs;
+use Graphics::Chart::Heatmap;
 use Graphics::Image;
 use RF::Utils;
 use RNA::Utils;
@@ -31,11 +32,11 @@ use Term::Table;
 $|++;
 
 my ($output, $overwrite, $minOverlapFrac, $minGap,
-    $minReads, $minProb, $noUseVienna, $makeImage,
+    $minReads, $minProb, $noUseVienna, $makeImage, $greyHeatmap,
     $makeClustersSam, $reference, $minPairedFrac, $makeConstraint,
     $minHalfLen, $minSampleSize, $maxReads, $requireBpSupport,
-    $refIO, $help, $samtools, $table, $evalOnly,
-    $threads, $tmpDir, $logDir, $error, $R,
+    $refIO, $help, $samtools, $table, $evalOnly, $heatmapOnly,
+    $threads, $tmpDir, $logDir, $error, $R, $heatmap, $logHeatmap,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
     $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
     $dumpChimaeras, $dumpChimaerasOnly, @colorScale, @input, 
@@ -78,7 +79,11 @@ do {
                 "mi|max-iterations=i"       => \$maxIter,
                 "dc|dump-chimaeras"         => \$dumpChimaeras,
                 "do|dump-chimaeras-only"    => \$dumpChimaerasOnly,
-                "R|R-path=s"                => \$R ) or help(1);
+                "R|R-path=s"                => \$R,
+                "hm|heatmap"                => \$heatmap,
+                "lhm|log-heatmap"           => \$logHeatmap,
+                "ghm|grey-heatmap"          => \$greyHeatmap,
+                "ho|heatmap-only"           => \$heatmapOnly ) or help(1);
 
     @input = @ARGV;
 
@@ -134,6 +139,9 @@ die "\n  [!] Error: Color scale must contain exactly 4 cut-points\n\n" if (@colo
 die "\n  [!] Error: Parameters -do and -eo are mutually exclusive\n\n" if ($dumpChimaerasOnly && $evalOnly);
 die "\n  [!] Error: Parameter -eo requires -es\n\n" if ($evalOnly && !$evalStructures);
 die "\n  [!] Error: Parameter -do requires -dc\n\n" if ($dumpChimaerasOnly && !$dumpChimaeras);
+die "\n  [!] Error: Parameter -ho requires -hm\n\n" if ($heatmapOnly && !$heatmap);
+die "\n  [!] Error: Parameter -lhm requires -hm\n\n" if ($logHeatmap && !$heatmap);
+die "\n  [!] Error: Parameter -ghm requires -hm\n\n" if ($greyHeatmap && !$heatmap);
 
 if ($makeImage) {
 
@@ -263,8 +271,7 @@ foreach my $sample (sort keys %samples) {
     @transcripts = map { $_ } sort keys %transcripts;
 
     my ($chimericFile, $bamFile, @pool, %chimericIndex);
-    $bamFile = $samples{$sample}->{BAM}->{file} || $samples{$sample}->{SAM}->{file} if (exists $samples{$sample}->{SAM} ||
-                                                                                        exists $samples{$sample}->{BAM});
+    $bamFile = $samples{$sample}->{BAM}->{file} || $samples{$sample}->{SAM}->{file} if (exists $samples{$sample}->{SAM} || exists $samples{$sample}->{BAM});
     $chimericFile = $samples{$sample}->{chimeric}->{file};
     %stats = ( totTranscripts => 0,
                totChimeras    => 0 );
@@ -283,6 +290,8 @@ foreach my $sample (sort keys %samples) {
                                                error => \$error }) if ($evalStructures);
     mkpath($output . $sample . "/chimaeras/", { mode  => 0755,
                                                 error => \$error }) if ($dumpChimaeras);
+    mkpath($output . $sample . "/heatmaps/", { mode  => 0755,
+                                               error => \$error }) if ($heatmap);
 
     die "\n\n  [!] Error: Unable to create output directory for sample \"" . $sample . "\" (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
@@ -421,6 +430,7 @@ sub processTranscript {
               mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
               mkpath($output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($evalStructures);
               mkpath($output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($dumpChimaeras);
+              mkpath($output . $sample . "/heatmaps/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($heatmap);
 
           } }
 
@@ -454,7 +464,13 @@ sub processTranscript {
 
         if (@ranges) {
 
+            { lock(%stats);
+              $stats{totChimeras} += $sharedData{$id}->{total};
+              $stats{totTranscripts}++; }
+
             if ($dumpChimaeras) {
+
+                print CLRRET . "  [*] Transcript " . $id . ": dumping chimeras to file";
 
                 open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
                 select((select($th), $|=1)[0]);
@@ -462,6 +478,86 @@ sub processTranscript {
                 close($th);
 
                 next if ($dumpChimaerasOnly);
+
+            }
+
+            if ($heatmap) {
+
+                print CLRRET . "  [*] Transcript " . $id . ": generating heatmap";
+
+                my ($plot, $heatmap, $hLength, @matrix, 
+                    @x, @y, @counts);
+                $hLength = min(1000, $transcripts{$id});
+
+                foreach my $range (@ranges) {
+
+                    my ($start1, $end1, $start2, $end2, %seen);
+                    ($start1, $end1, $start2, $end2) = @$range;
+
+                    for my $i ($start1 .. $end1) { 
+                        
+                        for my $j ($start2 .. $end2) { 
+
+                            my ($m, $n) = (int($i / $transcripts{$id} * $hLength), int($j / $transcripts{$id} * $hLength));
+
+                            next if (exists $seen{join("-", $m, $n)} );
+
+                            $seen{join("-", $m, $n)} = 1;
+                            $matrix[$m]->[$n]++; 
+                        
+                        }
+
+                    }
+
+                }
+
+                for my $i (0 .. $hLength - 1) {
+
+                    for my $j (0 .. $hLength - 1) {
+
+                        next if ($i >= $j);
+                        next if (!$matrix[$i]->[$j]);
+
+                        push(@x, $i, $j);
+                        push(@y, $j, $i);
+                        push(@counts, ($matrix[$i]->[$j]) x 2);
+
+                    }
+
+                }
+
+                @counts = map { log($_) } @counts if ($logHeatmap);
+
+                $plot = Graphics::Image->new( file   => $output . $sample . "/heatmaps/" . uc(substr($id, 0, 1)) . "/$id.pdf",
+                                              width  => 10,
+                                              height => 9.2,
+                                              R      => $R,
+                                              tmpdir => $tmpDir );
+                $heatmap = Graphics::Chart::Heatmap->new( dataLabels    => { x => \@x,
+                                                                             y => \@y },
+                                                          dataLabelSort => { x => [ uniq(sort { $a <=> $b } @x) ],
+                                                                             y => [ uniq(sort { $a <=> $b } @y) ] },
+                                                          data          => \@counts,
+                                                          background    => 0,
+                                                          grid          => 0,
+                                                          legendTitle   => $logHeatmap ? "log(# reads)" : "# reads",
+                                                          labelTextSize => 12,
+                                                          axisTextSize  => 12,
+                                                          axisTitleSize => 12,
+                                                          valueTextSize => 3,
+                                                          x             => "x",
+                                                          y             => "y",
+                                                          colorPalette  => $greyHeatmap ? "Greys" : "YlOrRd",
+                                                          plotValues    => 0,
+                                                          yTitle        => "Position (1-" . $transcripts{$id} . ")",
+                                                          xTitle        => "Position (1-" . $transcripts{$id} . ")",
+                                                          xTicks        => 0,
+                                                          yTicks        => 0,
+                                                          xLabels       => 0,
+                                                          yLabels       => 0 );
+                $plot->plot([$heatmap]);
+
+                next if ($heatmapOnly);
 
             }
 
@@ -513,15 +609,7 @@ sub processTranscript {
 
                 }
 
-                if ($evalOnly) {
-
-                    { lock(%stats);
-                      $stats{totChimeras} += $sharedData{$id}->{total};
-                      $stats{totTranscripts}++; }
-
-                    next;
-
-                }
+                next if ($evalOnly);
 
             }
 
@@ -1228,7 +1316,7 @@ sub parseSam {
 
     my (@ranges);
 
-    if (open(my $fh, "samtools view " . $file . " " . $id . " 2>&1 |")) {
+    if (open(my $fh, "-|", "samtools view " . $file . " " . $id . " 2>&1")) {
 
         while(<$fh>) {
 
@@ -1412,7 +1500,7 @@ sub fileTypeAndSorting {
         $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
         $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
-        open(my $fh, $samtools . " view " . $file . " 2>&1|") or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
+        open(my $fh, "-|", $samtools . " view " . $file . " 2>&1") or die "  [!] Error: Unable to open sample \"" . $file . "\" (" . $! . ")\n\n";
         for (1 .. 10) {
 
             my ($row, @row);
@@ -1439,19 +1527,7 @@ sub fileTypeAndSorting {
             read($fh, $data[1], 28);
             close($fh);
 
-            if ($data[0] eq $header &&
-                $data[1] eq $eof) {
-
-                    $type = "BAM";
-
-                    open($fh, $samtools . " view -H " . $file . " | grep '^\@HD'");
-
-                    if (my $row = <$fh>) { $sorted = 0 if ($row !~ m/SO:coordinate/); }
-                    else { $sorted = 0; }
-
-                    close($fh);
-
-            }
+            if ($data[0] eq $header && $data[1] eq $eof) { $type = "BAM"; }
             else {
 
                 $type = "SAM";
@@ -1463,7 +1539,17 @@ sub fileTypeAndSorting {
 
     }
 
-    if ($fail) { # Not a SAM/BAM, let's try chimeric reads file
+    if ($type eq "BAM") {
+
+        open(my $fh, "-|", $samtools . " view -H " . $file . " | grep '^\@HD'");
+
+        if (my $row = <$fh>) { $sorted = 0 if ($row !~ m/SO:coordinate/); }
+        else { $sorted = 0; }
+
+        close($fh);
+
+    }
+    elsif ($fail) { # Not a SAM/BAM, let's try chimeric reads file
 
         my ($lastId);
         $fail = 0;
@@ -1482,7 +1568,9 @@ sub fileTypeAndSorting {
 
             @row = split("\t", $row);
 
-            if (@row < 13 || !isint($row[1], $row[4]) || $row[2] !~ m/^[\+-]$/) {
+            next if ($row[0] eq "chr_donorA");
+
+            if (@row < 13 || !isint($row[1], $row[4]) || $row[2] !~ /^[\+-]$/) {
 
                 $fail = 1;
 
@@ -1554,8 +1642,8 @@ sub help {
                                                 each base-pair will be calculated
                                                 Note: structure files must be named after their respective reference transcript
  -eo or --eval-only                             Only calculates the chimeric read support for a reference structure (requires -es), and exits
- -dc or --dump-chimaeras                        Dumps extracted chimeric reads to file
- -do or --dump-chimaeras-only                   Only dumps chimeric reads to file (requires -dc), and exits
+ -dc or --dump-chimeras                         Dumps extracted chimeric reads to file
+ -do or --dump-chimeras-only                    Only dumps chimeric reads to file (requires -dc), and exits
 
  |
  +- Base-pairs inference options
@@ -1572,11 +1660,15 @@ sub help {
 
  |
  +- Plotting options
- -g  or --img                                   Enables the generation of graphical reports reporting the inferred base-pairing probabilities 
-                                                and, if -c is enabled, the inferred structure/constraint (requires R)
- -cs or --color-scale            <string>       Allows specifying 4 cut-points for the color scale used to report base-pairing probabilities
+ -hm  or --heatmap                              Generates contact heatmaps from chimeras (requires R)
+ -ho  or --heatmap-only                         Only generates heatmaps (requires -hm), and exits
+ -lhm or --log-heatmap                          Read counts are log-transformed for heatmap generation (requires -hm)
+ -ghm or --grey-heatmap                         Heatmap will be colored in grey scale
+ -g   or --img                                  Generates plots of the inferred base-pairing probabilities and, if -c is enabled, the inferred 
+                                                structure/constraint (requires R)
+ -cs  or --color-scale            <string>      Allows specifying 4 cut-points for the color scale used to report base-pairing probabilities
                                                 (Default: 0.05,0.1,0.4,0.7 for 0.05-0.1:grey, 0.1-0.4:yellow, 0.4-0.7:blue, 0.7-1:green)
- -R  or --R-path                 <string>       Path to R executable (Default: assumes R is in PATH)
+ -R   or --R-path                 <string>      Path to R executable (Default: assumes R is in PATH)
 
  |
  +- Clustering options

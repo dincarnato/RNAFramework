@@ -32,6 +32,7 @@ use Data::Sequence::Utils;
 use RF::Data::IO::RC;
 use RF::Data::IO::XML;
 use Term::Constants qw(:screen);
+use Term::Progress;
 use Term::Table;
 
 die "\n  [!] Error: This program requires ithreads." .
@@ -46,6 +47,7 @@ my ($output, $overwrite, $help, $minvalues,
     $capReact, $medianCov, @pool, @files, 
     @overall, %files);
 
+my $progressBar : shared;
 my @ids : shared;
 my @results : shared;
 my @allreactivities1 : shared;
@@ -70,7 +72,7 @@ do {
                 "S|spearman"           => \$spearman,
                 "kb|keep-bases=s"      => \$keepbases,
                 "i|ignore-sequence"    => \$ignoreseq,
-                "c|coverage"          => \$coverage,
+                "c|coverage"           => \$coverage,
                 "r|ratio"              => \$ratio,
                 "ec|median-coverage=s" => \$medianCov,
                 "mc|min-coverage=i"    => \$minCov,
@@ -134,8 +136,10 @@ for (@files) {
     }
     else {
 
+        next if ($_ !~ /\.(?:rc|xml)$/);
+
         $files{(fileparse($_, qw(.rc .xml)))[0]}++;
-        $isRC++ if ($_ =~ m/\.rc$/);
+        $isRC++ if ($_ =~ /\.rc$/);
 
     }
 
@@ -164,7 +168,7 @@ if (-e $output) {
 
 }
 
-print "\n[+] Calculating correlations [Last: none]";
+print "\n[+] Calculating correlations...\n\n";
 
 if ($isRC) {
 
@@ -174,8 +178,15 @@ if ($isRC) {
 }
 else { @ids = $singlefile ? (keys %files)[0] : keys %files; }
 
+$progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
+                                                 width   => 50,
+                                                 colored => 1 ));
+$progressBar->init();
+
 @pool = map{ threads->create(\&correlate) } 1 .. $threads;
 $_->join() for(@pool);
+
+print "\n";
 
 if ($singlefile && !$isRC) {
 
@@ -232,8 +243,10 @@ sub correlate {
 
     if ($isRC) {
 
-        $io1 = RF::Data::IO::RC->new(file => $files[0]);
-        $io2 = RF::Data::IO::RC->new(file => $files[1]);
+        $io1 = RF::Data::IO::RC->new( file  => $files[0],
+                                      index => -e $files[0] . ".rci" ? $files[0] . ".rci" : undef );
+        $io2 = RF::Data::IO::RC->new( file  => $files[1],
+                                      index => -e $files[1] . ".rci" ? $files[1] . ".rci" : undef );
 
     }
 
@@ -247,6 +260,9 @@ sub correlate {
           $id = shift(@ids) if (@ids); }
 
         last unless($id);
+
+        { lock($progressBar);
+          $progressBar->update(1); }
 
         eval {
 
@@ -397,8 +413,6 @@ sub correlate {
               push(@allreactivities2, @reactivity2);
 
           } }
-
-        print CLRRET . "[+] Calculating correlations [Last: $id]";
 
     }
 

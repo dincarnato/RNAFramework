@@ -323,7 +323,6 @@ sub sci {
 sub helices {
 
     my $self = shift;
-    my $split = shift;
 
     if (!@{$self->{_helices}}) {
 

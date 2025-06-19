@@ -74,7 +74,7 @@ my ($help, $output, $overwrite, $rcin, $needRC,
     $rcindex, $spearman, $minCorrMatch, $acOnly,
     $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
     $skipZeroClusterWins, $capMutFreqs, $keepIgnored, @rcin, @jsonin,
-    @jsonData, @rcindex, @rcout, %allWins, %commonWins, %files);
+    @jsonData, @rcindex, @rcout, @filenames, %allWins, %commonWins, %files);
 
 do {
 
@@ -135,7 +135,7 @@ for (@jsonin) { die "\n  [!] Error: Provided JSON file \"" . $_ . "\" doesn't ex
 die "\n  [!] Error: No input RC file provided\n\n" if ($needRC && !@rcin);
 for (@rcin) { die "\n  [!] Error: Provided RC file \"$_\" doesn't exist\n\n" if (!-e $_); }
 die "\n  [!] Error: Unexpected number of RCI index files\n\n" if ($needRC && defined $rcindex && @rcindex != 1 && @rcindex != @rcin);
-die "\n  [!] Error: Different number of JSON and RC files provided\n\n" if ($needRC && @jsonin != @rcin);
+die "\n  [!] Error: Fewer RC files than JSON files provided\n\n" if ($needRC && @rcin < @jsonin);
 die "\n  [!] Error: Median cumulative coverage must be a positive int\n\n" if (!ispositive($medianCov) || !isint($medianCov));
 die "\n  [!] Error: Median preCoverage must be a positive int\n\n" if (!ispositive($medianPreCov) || !isint($medianPreCov));
 die "\n  [!] Error: Bases to ignore must be comprised between 0 and 0.2\n\n" if (!isnumeric($ignoreTerm) || !inrange($ignoreTerm, [0, 0.2]));
@@ -173,80 +173,93 @@ print "\n[+] Opening RC file(s)...";
 
     # Replaces the RC file with an IO object pointing to that file
     $rcin[$_] = RF::Data::IO::RC->new( file  => $rcin[$_],
-                                    index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
+                                       index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
 
 }
 
 print "\n[+] Importing JSON file(s) [0 imported]";
 
-for (0 .. $#jsonin) {
+for my $jsonIdx (0 .. $#jsonin) {
 
-    my ($data, $file, $fixed, $lastid);
-    $file = $jsonin[$_];
+    my ($data, $file, $fixed, $lastid, 
+        $nFiles, $legacy);
+    $file = $jsonin[$jsonIdx];
     ($data, $fixed) = fixJson($file);
     $data = decode_json($data);
-    push(@jsonData, {}); # Initializing storage of JSON data
+    $legacy = 1 if (exists $data->{filename});
+    push(@filenames, $legacy ? $data->{filename} : @{$data->{filenames}});
+    $nFiles = $legacy ? 1 : scalar(@{$data->{filenames}});
 
-    foreach my $transcript (@{$data->{transcripts}}) {
+    die "\n\n  [!] Error: Fewer RC files than processed MM files provided (provided: " . scalar(@rcin) . 
+        ", expected so far: " . scalar(@filenames) . ")\n\n" if ($needRC && @rcin < @filenames);
 
-        my ($id, $sequence, $nReads, @windows);
-        $id = $transcript->{id}; 
-        $sequence = $transcript->{sequence};
-        $nReads = $transcript->{nReads};
+    foreach my $fileIdx (0 .. $nFiles - 1) {
 
-        if ($needRC && !$rcin[$_]->read($id)) {
+        $file = $legacy ? $data->{filename} : $data->{filenames}->[$fileIdx];
+        push(@jsonData, {}); # Initializing storage of JSON data
 
-            print CLRRET . "[!] Warning: transcript \"" . $id . "\" is missing in RC file, and it will be skipped...\n";
+        foreach my $transcript (@{$data->{transcripts}}) {
 
-            next;
+            my ($id, $sequence, $nReads, @windows);
+            $id = $transcript->{id}; 
+            $sequence = $transcript->{sequence};
+            $nReads = $legacy ? $transcript->{nReads} : $transcript->{nReads}->[$fileIdx];
 
-        }
+            if ($needRC && !$rcin[$jsonIdx + $fileIdx]->read($id)) {
 
-        # Storing parsed JSON for later
-        $jsonData[-1]->{$id} = { sequence => $sequence,
-                                 nReads   => $nReads,
-                                 windows  => {} };
+                print CLRRET . "[!] Warning: transcript \"$id\" is missing in RC file, and it will be skipped...\n";
 
-        foreach my $window (@{$transcript->{windows}}) {
-
-            die "\n\n  [!] Error: Input file \"" . $file . "\" does not look like a valid DRACO JSON file (preCoverage field is missing)\n\n" if (!exists $window->{preCoverage});
-
-            next if (median(@{$window->{preCoverage}}) < $medianPreCov);
-
-            my ($start, $end, @stoichiometries, @cumCov);
-            $start = $window->{start};
-            $end = $window->{end};
- 
-            if (exists $window->{stoichiometries} && @{$window->{stoichiometries}}) { @stoichiometries = map { [$_] } @{$window->{stoichiometries}}; }
-            else {
-
-                next if ($skipZeroClusterWins);
-
-                @stoichiometries = ([1]);
+                next;
 
             }
 
-            next if (@stoichiometries < $minConf || @stoichiometries > $maxConf);
-
-            # This handles the special cases in which DRACO fails to re-assign reads to the sortConformations
-            # so the counts and coverage arrays are not reported
-            next if (@stoichiometries > 1 && (!exists $window->{counts} || !exists $window->{coverage}));
-
-            foreach my $cov (@{$window->{coverage}}) { @cumCov = map { $cumCov[$_] + $cov->[$_] } 0 .. $#{$cov}; }
-
-            next if (@cumCov && median(@cumCov) < $medianCov);
-
             # Storing parsed JSON for later
-            $jsonData[-1]->{$id}->{windows}->{$start} = { end             => $end,
-                                                          stoichiometries => \@stoichiometries,
-                                                          counts          => @stoichiometries > 1 ? $window->{counts} : [],
-                                                          coverage        => @stoichiometries > 1 ? $window->{coverage} : [] };
+            $jsonData[-1]->{$id} = { sequence => $sequence,
+                                     nReads   => $nReads,
+                                     windows  => {} };
 
-            $allWins{$file}->{$id} = [] if (!exists $allWins{$file}->{$id});
-            push(@{$allWins{$file}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
+            foreach my $window ($legacy ? @{$transcript->{windows}} : @{$transcript->{windows}->[$fileIdx]}) {
 
-            $lastid = $id;
-		
+                die "\n\n  [!] Error: Input file \"$file\" does not look like a valid DRACO JSON file (preCoverage field is missing)\n\n" if (!exists $window->{preCoverage});
+
+                next if (median(@{$window->{preCoverage}}) < $medianPreCov);
+
+                my ($start, $end, @stoichiometries, @cumCov);
+                $start = $window->{start};
+                $end = $window->{end};
+    
+                if (exists $window->{stoichiometries} && @{$window->{stoichiometries}}) { @stoichiometries = map { [$_] } @{$window->{stoichiometries}}; }
+                else {
+
+                    next if ($skipZeroClusterWins);
+
+                    @stoichiometries = ([1]);
+
+                }
+
+                next if (@stoichiometries < $minConf || @stoichiometries > $maxConf);
+
+                # This handles the special cases in which DRACO fails to re-assign reads to the sortConformations
+                # so the counts and coverage arrays are not reported
+                next if (@stoichiometries > 1 && (!exists $window->{counts} || !exists $window->{coverage}));
+
+                foreach my $cov (@{$window->{coverage}}) { @cumCov = map { $cumCov[$_] + $cov->[$_] } 0 .. $#{$cov}; }
+
+                next if (@cumCov && median(@cumCov) < $medianCov);
+
+                # Storing parsed JSON for later
+                $jsonData[-1]->{$id}->{windows}->{$start} = { end             => $end,
+                                                              stoichiometries => \@stoichiometries,
+                                                              counts          => @stoichiometries > 1 ? $window->{counts} : [],
+                                                              coverage        => @stoichiometries > 1 ? $window->{coverage} : [] };
+
+                $allWins{$file}->{$id} = [] if (!exists $allWins{$file}->{$id});
+                push(@{$allWins{$file}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
+
+                $lastid = $id;
+            
+            }
+
         }
 
     }
@@ -258,17 +271,20 @@ for (0 .. $#jsonin) {
 
 }
 
-die "\n\n  [!] Error: no window passed the provided filters\n\n" unless (scalar(keys %allWins));
+die "\n\n  [!] Error: No window passed the provided filters\n\n" unless (scalar(keys %allWins));
+
+print "\n\n[i] Order of input files (must be matched by RC files):" .
+      "\n    " . join(", ", @filenames) . "\n" if ($needRC);
 
 if (!$noMergeOverlapping) {
 
     print "\n[+] Merging concordant overlapping windows...\n";
 
-    foreach my $fileIdx (0 .. $#jsonin) {
+    foreach my $fileIdx (0 .. $#filenames) {
 
         my ($from, $to, $file);
         ($from, $to) = (0, 0);
-        $file = $jsonin[$fileIdx];
+        $file = $filenames[$fileIdx];
 
         foreach my $id (keys %{$allWins{$file}}) {
 
@@ -333,7 +349,7 @@ if (!$noMergeOverlapping) {
                                     @lastCounts, @lastCoverage, @winCounts, @winCoverage);
                                 $lastWin = $jsonData[$fileIdx]->{$id}->{windows}->{$lastStart};
                                 $win = $jsonData[$fileIdx]->{$id}->{windows}->{$start};
-                                $int = intersect([$lastStart, $lastWin->{end} - 1], [$start, $win->{end} - 1]);
+                                $int = intersect([$lastStart, $lastWin->{end} - 1], [$start, $win->{end} - 1]); 
                                 @lastCounts = map { [ @{$_}[$int->[0] - $lastStart .. $int->[1] - $lastStart] ] } @{$lastWin->{counts}};
                                 @lastCoverage = map { [ @{$_}[$int->[0] - $lastStart .. $int->[1] - $lastStart] ] } @{$lastWin->{coverage}};
                                 @winCounts = map { [ @{$_}[$int->[0] - $start .. $int->[1] - $start] ] } @{$win->{counts}};
@@ -385,7 +401,7 @@ if (!$noMergeOverlapping) {
 
         }
 
-        print "\n  [-] " . (fileparse($file, ".json"))[0] . ": " . $from . " windows merged into " . $to . " windows";
+        print "\n  [-] " . (fileparse($file, ".mm"))[0] . ": " . $from . " windows merged into " . $to . " windows";
 
     }
 
@@ -394,10 +410,10 @@ if (!$noMergeOverlapping) {
 }
 
 # Initialize common windows with one of the files
-foreach my $id (keys %{$allWins{$jsonin[0]}}) { $commonWins{$id} = [ map { [@$_, { $jsonin[0] => [ @$_[0..1] ] }] } @{$allWins{$jsonin[0]}->{$id}} ]; }
-delete($allWins{$jsonin[0]});
+foreach my $id (keys %{$allWins{$filenames[0]}}) { $commonWins{$id} = [ map { [@$_, { $filenames[0] => [ @$_[0..1] ] }] } @{$allWins{$filenames[0]}->{$id}} ]; }
+delete($allWins{$filenames[0]});
 
-if (@jsonin > 1) {
+if (@filenames > 1) {
 
     print "\n[+] Identifying common windows...";
 
@@ -471,9 +487,9 @@ if (@jsonin > 1) {
 print "\n[+] Filtering windows...";
 
 # Create RC IO objects for output
-for (@jsonin) {
+for (@filenames) {
 
-    my $id = (fileparse($_, ".json"))[0];
+    my $id = (fileparse($_, ".mm"))[0];
 
     if (exists $files{$id}) { 
         
@@ -491,7 +507,7 @@ for (@jsonin) {
 open(my $sh, ">", $output . "stoichiometries.txt") or die "\n\n  [!] Error: Unable to write stoichiometry summary (" . $! . ")\n\n";
 select((select($sh), $|=1)[0]);
 
-print $sh join("\t", qw(#Transcript Start End extStart extEnd), map { (fileparse($_, ".json"))[0] } @jsonin) . "\n";
+print $sh join("\t", qw(#Transcript Start End extStart extEnd), map { (fileparse($_, ".mm"))[0] } @filenames) . "\n";
 
 foreach my $id (sort keys %commonWins) {
 
@@ -504,8 +520,8 @@ foreach my $id (sort keys %commonWins) {
 
         $winSeq = substr($jsonData[0]->{$id}->{sequence}, $start, $end - $start);
         %coords = %{$win->[3]};
-        @rcCache = map { [] } 0 .. $#jsonin; # For storing RC data, before writing it
-        @stoichiometryCache = map { [] } 0 .. $#jsonin; # For storing stoichiometries
+        @rcCache = map { [] } 0 .. $#filenames; # For storing RC data, before writing it
+        @stoichiometryCache = map { [] } 0 .. $#filenames; # For storing stoichiometries
 
         # In case we have to enlarge the window upstream and downstream
         # upExtend and downExtend will contain the extension sequence, counts, and coverage
@@ -519,10 +535,10 @@ foreach my $id (sort keys %commonWins) {
 
         }
 
-        for my $i (0 .. $#jsonin) {
+        for my $i (0 .. $#filenames) {
 
             my ($realStart, $realEnd, $realWin);
-            ($realStart, $realEnd) = @{$coords{$jsonin[$i]}};
+            ($realStart, $realEnd) = @{$coords{$filenames[$i]}};
             $realWin = $jsonData[$i]->{$id}->{windows}->{$realStart};
 
             if ($nConfs > 1) {
@@ -880,4 +896,3 @@ sub help {
 HELP
 
 }
-

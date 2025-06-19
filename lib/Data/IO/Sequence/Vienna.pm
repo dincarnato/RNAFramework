@@ -116,6 +116,8 @@ sub read {
 
         last if ($line =~ m/^>$/);
 
+        $line =~ s/^\s*|\s*$//g;
+
         if (isseq($line, "-")) { $sequence .= $line; }
         elsif (isdotbracket($line)) { $structure .= $line; }
         else {

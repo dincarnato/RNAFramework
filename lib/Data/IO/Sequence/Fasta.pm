@@ -71,8 +71,7 @@ sub read {
 
     foreach my $line (split(/\n/, $stream)) {
 
-        next if ($line =~ m/^\s*$/ ||
-                 $line =~ m/^#/);
+        next if ($line =~ m/^\s*$/ || $line =~ m/^#/);
 
         if (!defined $header) {
 
@@ -99,8 +98,7 @@ sub read {
     $sequence = striptags($sequence);
     $sequence =~ s/[\s\r>]//g;
 
-    return($self->read()) if (!defined $sequence ||
-                              !isseq($sequence, "-"));
+    return($self->read()) if (!defined $sequence || !isseq($sequence, "-"));
 
     # Index building at runtime
     $self->warn("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&

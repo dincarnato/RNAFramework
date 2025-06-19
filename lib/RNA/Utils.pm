@@ -47,7 +47,7 @@ sub fixdotbracket {
 
     my $dotbracket = shift;
 
-    return() if (!isdotbracket($dotbracket));
+    return("." x length($dotbracket)) if (!isdotbracket($dotbracket));
 
     my ($i, @dotbracket);
     $i = 0;

@@ -47,7 +47,7 @@ my ($output, $overwrite, $reference, $refio,
     $error, $rffold, $processmanager,
     $threads, $slope, $intercept, $sstep,
     $istep, $rfparams, $relaxed, $mFMI,
-    $kp, $kl, $m, $am, $help, $tmpdir,
+    $kp, $kl, $m, $am, $help, $tmpdir, $decimals,
     $ignoreseq, $onlyCommon, $installed, $image,
     $R, @slope, @intercept, @samples, %files, 
     %reference, %table, %results);
@@ -82,7 +82,8 @@ do {
                 "i|ignore-sequence"    => \$ignoreseq,
                 "oc|only-common"       => \$onlyCommon,
                 "g|img"                => \$image,
-                "R|R-path=s"           => \$R ) or help(1);
+                "R|R-path=s"           => \$R,
+                "d|decimals=s"         => \$decimals ) or help(1);
 
     @samples = uniq(@ARGV);
 
@@ -98,6 +99,7 @@ $slope ||= "0:5";
 $intercept ||= "-3:0";
 $istep ||= 0.2;
 $sstep ||= 0.2;
+$decimals ||= 3;
 $R = checkRinstall($R) if ($image);
 
 $installed = eval { require RNA; 1; };
@@ -122,6 +124,7 @@ die "\n  [!] Error: Too many values in slope range\n\n" if (@slope > 2);
 die "\n  [!] Error: Too many values in intercept range\n\n" if (@intercept > 2);
 die "\n  [!] Error: Slope range upper and lower limits must be different\n\n" if ($slope[0] == $slope[1]);
 die "\n  [!] Error: Intercept range upper and lower limits must be different\n\n" if ($intercept[0] == $intercept[1]);
+die "\n  [!] Error: Number of decimals must be an INT comprised between 1 and 10\n\n" if (!isint($decimals) || !inrange($decimals, [1, 10]));
 
 for (0 .. 1) {
 
@@ -335,9 +338,9 @@ if (keys %files) {
 
             if (isnumeric(@{$table{$sl}->{$in}})) {
 
-                if ($m) { $fmi = (sprintf("%.3f", median(@{$table{$sl}->{$in}}))); }
-                elsif ($am) { $fmi = (sprintf("%.3f", mean(@{$table{$sl}->{$in}}))); }
-                else { $fmi = (sprintf("%.3f", geomean(@{$table{$sl}->{$in}}))); }
+                if ($m) { $fmi = (sprintf("%." . $decimals . "f", median(@{$table{$sl}->{$in}}))); }
+                elsif ($am) { $fmi = (sprintf("%." . $decimals . "f", mean(@{$table{$sl}->{$in}}))); }
+                else { $fmi = (sprintf("%." . $decimals . "f", geomean(@{$table{$sl}->{$in}}))); }
 
             }
 
@@ -498,6 +501,7 @@ sub help {
                                               Note: default is to aggregate them by geometric mean
  -am or --arithmetic-mean                     FMI values across multiple reference structures are aggregated by arithmetic mean
                                               Note: default is to aggregate them by geometric mean
+ -d  or --decimals         <int>              Number of decimals for reporting FMI/mFMI values (1-10, Default: 3)
  -rf or --rf-fold          <string>           Path to rf-fold executable (Default: assumes rf-fold is in PATH)
  -rp or --rf-fold-params   <string>           Manually specify additional RF Fold parameters (e.g. -rp "-md 500 -m 2")
  -R  or --R-path           <string>           Path to R executable (Default: assumes R is in PATH)

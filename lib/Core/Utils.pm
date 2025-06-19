@@ -16,15 +16,16 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.9.2";
+$VERSION = "2.9.3";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
              randint randnum randalpha randalphanum
              randmixed which isdirempty rmtree
              mktree ncores blessed unbless shareDataStruct
-             formatTime isGzipped isBinary spaceLeft bytesToHuman
-             humanToBytes slurpFile rmEndSpaces);
+             mergeDataStructs formatTime isGzipped isBinary 
+             spaceLeft bytesToHuman humanToBytes slurpFile 
+             rmEndSpaces);
 
 BEGIN {
 
@@ -164,8 +165,7 @@ sub clonearrayref {
                $element->can("clone")) { $clone->[$i] = $element->clone(); }
         elsif (ref($element) eq "HASH") { $clone->[$i] = clonehashref($element); }
         elsif (ref($element) eq "ARRAY") { $clone->[$i] = clonearrayref($element); }
-        elsif (ref($element) eq "GLOB" &&
-               fileno($element)) { $clone->[$i] = clonefh($element); }
+        elsif (ref($element) eq "GLOB" && fileno($element)) { $clone->[$i] = clonefh($element); }
         else { $clone->[$i] = $array->[$i]; }
 
     }
@@ -215,6 +215,58 @@ sub clonefh {
     seek($clone, 0, SEEK_SET);
 
     return($clone);
+
+}
+
+sub mergeDataStructs {
+
+    my ($struct1, $struct2, $params) = @_;
+    $params ||= {};
+
+    Core::Utils::throw("Parameters must be a HASH reference") if (ref($params) ne "HASH");
+
+    $params = checkparameters({ scalarMergeFunc => sub { return(isnumeric(@_) ? $_[0] + $_[1] : join("", @_)); },
+                                arrayMergeFunc  => \&_mergeArray,
+                                hashMergeFunc   => \&_mergeHash }, $params);
+
+    for (keys %$params) { Core::Utils::throw("Parameter \"$_\" is not a CODE reference") if (ref($params->{$_}) ne "CODE"); }
+
+    my ($typeOf1, $typeOf2, $merge);
+    $typeOf1 = ref($struct1) || "SCALAR";
+    $typeOf2 = ref($struct2) || "SCALAR";
+
+    Core::Utils::throw("Unable to merge data structures of different types ($typeOf1 != $typeOf2)") if ($typeOf1 ne $typeOf2);
+
+    if ($typeOf1 eq "SCALAR") { $merge = $params->{scalarMergeFunc}->($struct1, $struct2); }
+    elsif ($typeOf1 eq "ARRAY") { $merge = $params->{arrayMergeFunc}->($struct1, $struct2); }
+    elsif ($typeOf1 eq "HASH") { $merge = $params->{hashMergeFunc}->($struct1, $struct2); }
+    else { Core::Utils::throw("Cannot handle elements of type $typeOf1"); }
+
+    return($merge);
+
+}
+
+sub _mergeArray {
+
+    my ($array1, $array2) = @_;
+
+    my $merge = [];
+
+    if (@$array1 == @$array2) {  push(@$merge, mergeDataStructs($array1->[$_], $array2->[$_])) for (0 .. $#{$array1}); }
+    else { push(@$merge, @$array1, @$array2); }
+
+    return($merge);
+
+}
+
+sub _mergeHash {
+
+    my ($hash1, $hash2) = @_;
+
+    foreach my $key (keys %$hash1) { if (exists $hash2->{$key}) { $hash1->{$key} = mergeDataStructs($hash1->{$key}, $hash2->{$key}); } }
+    foreach my $key (keys %$hash2) { if (!exists $hash1->{$key}) { $hash1->{$key} = $hash2->{$key}; } }
+
+    return($hash1);
 
 }
 

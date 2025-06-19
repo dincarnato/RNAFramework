@@ -27,6 +27,7 @@ sub new {
                    legendColors    => {},
                    colorScale      => "discrete",
                    colorPalette    => "YlGnBu",
+                   invertPalette   => 0,
                    xLimit          => [],
                    yLimit          => [],
                    xBreaks         => {},
@@ -62,7 +63,7 @@ sub _validate {
     my $palettes = join("|", qw(Spectral Blues BuGn BuPu GnBu Greens Greys Oranges OrRd PuBu PuBuGn 
                                 PuRd Purples RdPu Reds YlGn YlGnBu YlOrBr YlOrRd Accent Dark2 Paired 
                                 Pastel1 Pastel2 Set1 Set2 Set3 BrBG PiYG PRGn PuOr RdBu RdGy RdYlBu
-                                RdYlGn ));
+                                RdYlGn));
 
     $self->throw("Data ARRAY is empty") if (!@{$self->{data}});
     $self->throw("No data label defined for fill") if ($self->{legend} && !defined $self->{fill});
@@ -98,7 +99,7 @@ sub _validate {
 
     }
 
-    for (qw(grid xTicks yTicks xLabels
+    for (qw(grid xTicks yTicks xLabels invertPalette
             yLabels background legend flipCoords)) { $self->throw($_ . " must be BOOL") if (!isbool($self->{$_})); }
 
     $self->throw("Invalid legendPos value (supported: \"top\" and \"right\")") if ($self->{legendPos} !~ m/^(?:top|right)$/);
@@ -224,10 +225,16 @@ sub _generateRcode {
 
             $Rcode = ($self->{colorScale} eq "discrete" ? "scale_" . $self->{_paletteType} . "_brewer" : "scale_" . $self->{_paletteType} . "_distiller") . "(palette='" . $self->{colorPalette} . "'";
             $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')" if (@{$self->{legendSort}});
-            $Rcode .= ", guide = 'colourbar')";
+            $Rcode .= ", guide = 'colourbar', direction=" . ($self->{invertPalette} ? 1 : -1) . ")";
 
         }
-        else { $Rcode = "scale_" . $self->{_paletteType} . "_manual(values = colorRampPalette(brewer.pal(9, '" . $self->{colorPalette} . "'))(" . $self->{_nFillValues} . "))"; }
+        else { 
+            
+            my $palette = "colorRampPalette(brewer.pal(9, '" . $self->{colorPalette} . "')";
+            $palette = "rev($palette)" if ($self->{invertPalette});
+            $Rcode = "scale_" . $self->{_paletteType} . "_manual(values = $palette)(" . $self->{_nFillValues} . "))"; 
+            
+        }
            
         $Rcode .= " + ";
 
