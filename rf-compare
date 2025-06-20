@@ -193,9 +193,13 @@ if ($results{compared}) {
     @results = sort { $b->[3] <=> $a->[3] } @results;
     $table->row(@$_) for (@results[0 .. $top - 1]);
 
-    $table->blank();
-    @median = map { my $i = $_; my @i = grep { isnumeric($_) } map { $_->[$i] } @results; @i ? median(@i) : "NaN" } 1 .. 4;
-    $table->row("Median (all)", @median);
+    if ($top > 1) {
+
+        $table->blank();
+        @median = map { my $i = $_; my @i = grep { isnumeric($_) } map { $_->[$i] } @results; @i ? median(@i) : "NaN" } 1 .. 4;
+        $table->row("Median (all)", @median);
+
+    }
 
     print "\n[+] Top $top similar structures:\n\n";
     $table->print();
