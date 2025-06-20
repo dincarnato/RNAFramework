@@ -120,6 +120,10 @@ mkpath($output . "plots/", { mode  => 0755,
 
 die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
 
+$progressBar = shared_clone(Term::Progress->new( max     => 1,
+                                                 width   => 50,
+                                                 colored => 1 ));
+
 print "\n[+] Importing reference structure file(s)...\n\n";
 
 if (-d $reference) { # Directory of structure files
@@ -135,9 +139,7 @@ if (-d $reference) { # Directory of structure files
     closedir($dh);
 
     $nRefs = scalar(@files);
-    $progressBar = shared_clone(Term::Progress->new( max     => $nRefs,
-                                                     width   => 50,
-                                                     colored => 1 ));
+    $progressBar->max($nRefs);
     $progressBar->init();
 
     @pool = map{ threads->create(\&import) } 1 .. $threads;

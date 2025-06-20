@@ -702,6 +702,7 @@ sub fold {
             }
 
         }
+        else { @constraint = map { [@$_, 1] } listpairs($constraint); }
 
         undef($nwins);
         undef(@foldwins);
