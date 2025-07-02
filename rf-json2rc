@@ -680,6 +680,7 @@ if (!$success) {
     rmtree($output);
 
 }
+else { $_->close() for (@rcout); }
 
 print "\n[+] All done.\n\n";
 

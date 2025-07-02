@@ -337,6 +337,8 @@ sub correlate {
         $sequence = $entry1->sequence();
         ($nbases) = $sequence =~ s/([$keepbases])/$1/ge;
 
+        next if (!$nbases);
+
         if ($isRC) {
 
             my (@counts1, @counts2, @cov1, @cov2);
