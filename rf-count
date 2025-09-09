@@ -269,7 +269,7 @@ foreach my $sample (uniq(@ARGV)) {
     # If only one value for 5' trimming in SAM/BAM files has been specified, this is applied to all the passed SAM/BAM files
     $qcounter[-1]->{trim5} = isint($bam_trim5) && ispositive($bam_trim5) ? $bam_trim5 : shift(@bam_trim5);
 
-    die "  [!] Error: Less 5'-end trimming values in -t5 list than provided SAM/BAM files\n\n" if (!defined $qcounter[-1]->{trim5});
+    die "  [!] Error: Fewer 5'-end trimming values in -t5 list than provided SAM/BAM files\n\n" if (!defined $qcounter[-1]->{trim5});
     die "  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($qcounter[-1]->{trim5}) ||
                                                                                 !isint($qcounter[-1]->{trim5}));
 

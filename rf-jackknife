@@ -392,6 +392,7 @@ if (keys %files) {
                                                   x             => "intercept",
                                                   y             => "slope",
                                                   colorPalette  => "RdYlBu",
+                                                  invertPalette => 1,
                                                   plotValues    => 1,
                                                   yTitle        => "Slope (kcal/mol)",
                                                   xTitle        => "Intercept (kcal/mol)",

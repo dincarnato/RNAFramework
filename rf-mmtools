@@ -264,6 +264,8 @@ elsif ($command eq "extract") {
 
             chomp();
 
+            next if ($_ eq "");
+
             my @row = split /[;,]/;
 
             die "\n  [!] Error: Malformed line in blacklisted positions' file (\"$_\")\n\n" if (@row < 2);

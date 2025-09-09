@@ -39,8 +39,8 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
     $threads, $tmpDir, $logDir, $error, $R, $heatmap, $logHeatmap,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
     $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
-    $dumpChimaeras, $dumpChimaerasOnly, @colorScale, @input, 
-    @colorLegend, %samples, %transcripts);
+    $dumpChimaeras, $dumpChimaerasOnly, $makeDotPlot, @colorScale, 
+    @input, @colorLegend, %samples, %transcripts);
 
 my @transcripts : shared;
 my %sharedData : shared;
@@ -83,7 +83,8 @@ do {
                 "hm|heatmap"                => \$heatmap,
                 "lhm|log-heatmap"           => \$logHeatmap,
                 "ghm|grey-heatmap"          => \$greyHeatmap,
-                "ho|heatmap-only"           => \$heatmapOnly ) or help(1);
+                "ho|heatmap-only"           => \$heatmapOnly,
+                "dp|dot-plot"               => \$makeDotPlot ) or help(1);
 
     @input = @ARGV;
 
@@ -144,6 +145,8 @@ die "\n  [!] Error: Parameter -lhm requires -hm\n\n" if ($logHeatmap && !$heatma
 die "\n  [!] Error: Parameter -ghm requires -hm\n\n" if ($greyHeatmap && !$heatmap);
 
 if ($makeImage) {
+
+    die "\n  [!] Error: Parameter -g requires -dp and/or -c\n\n" if (!$makeDotPlot && !$makeConstraint);
 
     for (1 .. $#colorScale) { 
         
@@ -271,8 +274,8 @@ foreach my $sample (sort keys %samples) {
     @transcripts = map { $_ } sort keys %transcripts;
 
     my ($chimericFile, $bamFile, @pool, %chimericIndex);
-    $bamFile = $samples{$sample}->{BAM}->{file} || $samples{$sample}->{SAM}->{file} if (exists $samples{$sample}->{SAM} || exists $samples{$sample}->{BAM});
-    $chimericFile = $samples{$sample}->{chimeric}->{file};
+    $bamFile = exists $samples{$sample}->{BAM} ? $samples{$sample}->{BAM}->{file} : (exists $samples{$sample}->{SAM} ? $samples{$sample}->{SAM}->{file} : undef);
+    $chimericFile = exists $samples{$sample}->{chimeric} ? $samples{$sample}->{chimeric}->{file} : undef;
     %stats = ( totTranscripts => 0,
                totChimeras    => 0 );
 
@@ -487,28 +490,31 @@ sub processTranscript {
 
                 my ($plot, $heatmap, $hLength, @matrix, 
                     @x, @y, @counts);
-                $hLength = min(1000, $transcripts{$id});
+                $hLength = min(500, $transcripts{$id});
 
                 foreach my $range (@ranges) {
 
-                    my ($start1, $end1, $start2, $end2, %seen);
+                    my ($start1, $end1, $start2, $end2, 
+                        $scale, $mStart, $mEnd, $nStart, $nEnd); 
                     ($start1, $end1, $start2, $end2) = @$range;
+                    $scale = $hLength / $transcripts{$id};
 
-                    for my $i ($start1 .. $end1) { 
-                        
-                        for my $j ($start2 .. $end2) { 
+                    # Compute index ranges directly
+                    $mStart = int($start1 * $scale);
+                    $mEnd   = int($end1   * $scale);
+                    $nStart = int($start2 * $scale);
+                    $nEnd   = int($end2   * $scale);
 
-                            my ($m, $n) = (int($i / $transcripts{$id} * $hLength), int($j / $transcripts{$id} * $hLength));
+                    for my $m ($mStart .. $mEnd) {
 
-                            next if (exists $seen{join("-", $m, $n)} );
-
-                            $seen{join("-", $m, $n)} = 1;
-                            $matrix[$m]->[$n]++; 
+                        for my $n ($nStart .. $nEnd) {
+                            
+                            $matrix[$m]->[$n]++;
                         
                         }
-
+                    
                     }
-
+                
                 }
 
                 for my $i (0 .. $hLength - 1) {
@@ -562,7 +568,7 @@ sub processTranscript {
             }
 
             # Splits ranges in chunks, that will be processed by each thread
-            my @rangeChunks = splitRanges($id, @ranges);
+            my @rangeChunks = splitRanges($id, $sample, @ranges);
             undef(@ranges);
 
             if ($evalStructures) {
@@ -615,15 +621,13 @@ sub processTranscript {
 
             my ($structure, @pool, @clusters, @clusteredRanges);
 
-            { lock(%stats);
-              $stats{totChimeras} += $sharedData{$id}->{total};
-              $stats{totTranscripts}++; }
-
             print CLRRET . "  [*] Transcript " . $id . ": clustering reads (this might take a while)";
 
             @clusters = clusterReads($id, @rangeChunks);
 
             print CLRRET . "  [*] Transcript " . $id . ": " . scalar(@clusters) . " clusters detected\n";
+
+            unlink(glob($tmpDir . $sample . "_" . $id . "_ranges_*"));
 
             # Updates group number (for SAM file generation) in clustered reads
             # and create collapsed table
@@ -641,27 +645,31 @@ sub processTranscript {
 
             }
 
-            print CLRRET . "  [*] Transcript " . $id . ": identifying base-pairs";
+            if ($makeDotPlot || $makeConstraint) {
 
-            # Builds most likely base-pairs
-            @rangeChunks = splitRanges($id, $requireBpSupport ? @clusteredRanges : @centroids);
-            @pool = map { threads->create(\&foldChimeras, $id, $_) } @rangeChunks;
-            @basePairs = map { $_->join() } @pool;
-            %basePairs = %{mergeBpHashes(\%basePairs, $_)} for (@basePairs);
+                print CLRRET . "  [*] Transcript " . $id . ": identifying base-pairs";
 
-            # Merges basePairs from all threads
-            print CLRRET . "  [*] Transcript " . $id . ": refining base-pairs and centroids";
-            @centroids = refineBpAndCentroids(\@centroids, \%basePairs);
+                # Builds most likely base-pairs
+                @rangeChunks = splitRanges($id, $sample, $requireBpSupport ? @clusteredRanges : @centroids);
+                @pool = map { threads->create(\&foldChimeras, $id, $_) } @rangeChunks;
+                @basePairs = map { $_->join() } @pool;
+                %basePairs = %{mergeBpHashes(\%basePairs, $_)} for (@basePairs);
 
-            print CLRRET . "  [*] Transcript " . $id . ": calculating probability table";
-            %probTable = probTable(@centroids);
+                # Merges basePairs from all threads
+                print CLRRET . "  [*] Transcript " . $id . ": refining base-pairs and centroids";
+                @centroids = refineBpAndCentroids(\@centroids, \%basePairs);
 
-            print CLRRET . "  [*] Transcript " . $id . ": calculating base-pair probabilities";
-            %baseProbs = calcBaseProbs(\%probTable, \%basePairs);
+                print CLRRET . "  [*] Transcript " . $id . ": calculating probability table";
+                %probTable = probTable(@centroids);
 
-            dotPlot($sample, $id, \%baseProbs);
-            $structure = makeConstraint($sample, $id, \%baseProbs) if ($makeConstraint);
-            plotImage($plot, $output . $sample . "/plots/" . uc(substr($id, 0, 1)), $id, $structure, \%baseProbs) if ($makeImage);
+                print CLRRET . "  [*] Transcript " . $id . ": calculating base-pair probabilities";
+                %baseProbs = calcBaseProbs(\%probTable, \%basePairs);
+
+                dotPlot($sample, $id, \%baseProbs) if ($makeDotPlot);
+                $structure = makeConstraint($sample, $id, \%baseProbs) if ($makeConstraint);
+                plotImage($plot, $output . $sample . "/plots/" . uc(substr($id, 0, 1)), $id, $structure, \%baseProbs) if ($makeImage);
+
+            }
 
         }
 
@@ -674,12 +682,13 @@ sub processTranscript {
 sub splitRanges {
 
     my $id = shift;
+    my $sample = shift;
     my @ranges = @_;
 
     my ($nRanges, $baseName, @split);
     $nRanges = @ranges;
-    $baseName = $tmpDir . $id . "_ranges_";
-    @split = map { [ splice(@ranges, 0, min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges))) ] } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
+    $baseName = $tmpDir . $sample . "_" . $id . "_ranges_";
+    @split = map { [ splice(@ranges, 0, $singleTranscript ? min(max(ceil($nRanges / $threads), $minSampleSize), scalar(@ranges)) : scalar(@ranges)) ] } 1 .. ($singleTranscript ? min(max(1, ceil($nRanges / $minSampleSize)), $threads) : 1);
 
     unlink(glob($baseName . "*"));
     store $split[$_], $baseName . $_ . ".tmp" for (0 .. $#split);
@@ -746,21 +755,50 @@ sub probTable {
 
     my @ranges = @_;
 
-    my (%probTable);
+    my ($n, @weights, @compat, @denom,
+        %probTable);
+    @weights = map { $_->[4] } @ranges;
+    $n = @ranges;
 
-    foreach my $range (@ranges) {
+    # Precompute compatibility
+    for my $i (0 .. $n - 1) {
 
-        my $prob = $range->[4] / sum(map { $_->[4] } grep { !isChimeraCompatible($range, $_) } @ranges);
+        for my $j ($i .. $n - 1) {
 
-        next if ($range->[4] < $minReads || $prob < $minProb);
+            $compat[$i][$j] = $compat[$j][$i] = isChimeraCompatible($ranges[$i], $ranges[$j]);
+        
+        }
+    
+    }
 
-        $probTable{$range->[-1]} = $prob;
+    # Precompute denominators
+    for my $i (0 .. $n - 1) {
+
+        $denom[$i] = 0;
+
+        for my $j (0 .. $n - 1) {
+
+            $denom[$i] += $weights[$j] unless $compat[$i][$j];
+
+        }
 
     }
 
-    return(%probTable);
+    # Compute probabilities
+    for my $i (0 .. $n-1) {
+
+        my $prob = $weights[$i] / $denom[$i];
+
+        next if ($weights[$i] < $minReads || $prob < $minProb);
+
+        $probTable{$ranges[$i][-1]} = $prob;
+
+    }
+
+    return %probTable;
 
 }
+
 
 sub calcBaseProbs {
 
@@ -903,7 +941,7 @@ sub clusterReads {
     @sampleCentroids = map { @{$_->[0]} } @allSamples;
     @sampleClusters = map { @{$_->[1]} } @allSamples;
 
-    if ($threads > 1) {
+    if ($threads > 1 && $singleTranscript) {
 
         @i = sort { $sampleCentroids[$a]->[0] <=> $sampleCentroids[$b]->[0] } (0 .. $#sampleClusters);
         @sampleClusters = @sampleClusters[@i];
@@ -1076,26 +1114,33 @@ sub clustersSam {
     print $bh "\@HD\tVN:1.4\tSO:coordinate\n" .
               "\@SQ\tSN:" . $id . "\tLN:" . $transcripts{$id} . "\n";
 
-    for (0 .. $#reads) {
+    for my $i (0 .. $#reads) {
 
-         my ($readgroup, @range1, @range2);
-         $readgroup = $reads[$_]->[-1];
-         @range1 = ($reads[$_]->[0] + 1, $reads[$_]->[1] + 1);
-         @range2 = ($reads[$_]->[2] + 1, $reads[$_]->[3] + 1);
+        my ($readgroup, $lenFirstHalf, $lenSecondHalf, $cigar, 
+            @range1, @range2);
+        @range1 = ($reads[$i]->[0] + 1, $reads[$i]->[1] + 1);
+        @range2 = ($reads[$i]->[2] + 1, $reads[$i]->[3] + 1);
+        $readgroup = $reads[$i]->[-1];
+        $lenFirstHalf = $range1[1] - $range1[0] + 1;
+        $lenSecondHalf = $range2[1] - $range2[0] + 1;
+        $cigar = "${lenFirstHalf}M" . ($range2[0] - $range1[1] - 1) . "N${lenSecondHalf}M";
 
-         print $bh "read#" . $_ . "\t0\t" . $id . "\t" . $range1[0] . "\t255\t" . ($range1[1] - $range1[0] + 1) . "M" . ($range2[0] - $range1[1] - 1) . "N" .
-                   ($range2[1] - $range2[0] + 1) . "M\t*\t0\t0\t" . substr($sharedData{$id}->{sequence}, $range1[0] - 1, $range1[1] - $range1[0] + 1) . substr($sharedData{$id}->{sequence}, $range2[0] - 1, $range2[1] - $range2[0] + 1) . "\t" .
-                   ("F" x (($range1[1] - $range1[0] + 1) + ($range2[1] - $range2[0] + 1))) . "\tXG:i:" . $readgroup . "\n";
+        print $bh "read#" . $i . "\t0\t" . $id . "\t" . $range1[0] . "\t255\t" . $cigar .
+                  "\t*\t0\t0\t" . substr($sharedData{$id}->{sequence}, $range1[0] - 1, $lenFirstHalf) . substr($sharedData{$id}->{sequence}, $range2[0] - 1, $lenSecondHalf) . "\t" .
+                  ("F" x (($range1[1] - $range1[0] + 1) + ($range2[1] - $range2[0] + 1))) . "\tXG:i:" . $readgroup . "\n";
 
     }
 
     close($bh);
 
-    system($samtools . " sort --threads " . $threads . " -O BAM -o \"" . $path . "\" -T \"" . $tmpPath . "\" \"" . $tmpPath . ".sam\" 2>/dev/null");
-    print "\n  [!] Error: Sort of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127);
+    my ($cmd, $ret);
+    $cmd = "$samtools sort --threads $threads -O BAM -o \"$path\" -T \"$tmpPath\" \"$tmpPath.sam\" 2>&1";
+    $ret = `$cmd`;
+    print "\n  [!] Error: Sort of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127 || $ret =~ /(?:\[E::sam_parse|Aborting|Error)/i);
 
-    system($samtools . " index -@ " . $threads . " \"" . $path . "\" 2>/dev/null");
-    print "\n  [!] Error: Indexing of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127);
+    $cmd = "$samtools index -@ $threads \"$path\" 2>&1";
+    $ret = `$cmd`;
+    print "\n  [!] Error: Indexing of clustered BAM file failed. Skipping transcript...\n" if ($? == -1 || $? & 127 || $ret =~ /(?:\[E::sam_parse|Aborting|Error)/i);
 
     unlink($tmpPath . ".sam");
 
@@ -1374,7 +1419,10 @@ sub parseChimeric {
                      $line[5] ne "+");      # Only keeps reads mapping same strand of the transcript
             next if ($line[13] =~ m/N/);    # Skips chimeric reads with gaps
 
-            $range1 = [$line[10] - 1, $line[1] - 1];
+            # This should never happen, and its a bug in STAR (already reported to A. Dobin)
+            next if (!$line[12]); 
+
+            $range1 = [$line[10] - 1, $line[1] - 2];
             $range2 = [$line[12] - 1, $line[12] - 1 + parseCigar($line[13]) - 1];
 
             # Should never happen
@@ -1638,6 +1686,7 @@ sub help {
  -c  or --constraint                            Generates a dot-bracket constraint file containing the inferred base-pairs whose probability
                                                 exceeds a given threshold (controlled by -ct or --constraint-theshold)
  -ct or --constraint-theshold    <float>        Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
+ -dp or --dot-plot                              Calculates 
  -es or --eval-structures        <string>       Path to a folder of structure files (in .db or .ct format), for which the number of chimeric reads supporting
                                                 each base-pair will be calculated
                                                 Note: structure files must be named after their respective reference transcript
@@ -1646,7 +1695,7 @@ sub help {
  -do or --dump-chimeras-only                    Only dumps chimeric reads to file (requires -dc), and exits
 
  |
- +- Base-pairs inference options
+ +- Base-pairs inference options (requires -dp or -c)
  -nv  or --no-use-vienna                        A modified Smith-Waterman local alignment algorithm is used instead of the ViennaRNA package to
                                                 infer base-pairs from chimeric reads
  -mr  or --min-reads             <int>          Minimum number of chimeric reads to retain a cluster (>0, Default: 2)
@@ -1664,8 +1713,8 @@ sub help {
  -ho  or --heatmap-only                         Only generates heatmaps (requires -hm), and exits
  -lhm or --log-heatmap                          Read counts are log-transformed for heatmap generation (requires -hm)
  -ghm or --grey-heatmap                         Heatmap will be colored in grey scale
- -g   or --img                                  Generates plots of the inferred base-pairing probabilities and, if -c is enabled, the inferred 
-                                                structure/constraint (requires R)
+ -g   or --img                                  Generates plots of the inferred base-pairing probabilities (if -dp is passed) and of the inferred 
+                                                structure/constraint (if -c is passed) (requires R)
  -cs  or --color-scale            <string>      Allows specifying 4 cut-points for the color scale used to report base-pairing probabilities
                                                 (Default: 0.05,0.1,0.4,0.7 for 0.05-0.1:grey, 0.1-0.4:yellow, 0.4-0.7:blue, 0.7-1:green)
  -R   or --R-path                 <string>      Path to R executable (Default: assumes R is in PATH)

@@ -225,7 +225,7 @@ sub _generateRcode {
 
             $Rcode = ($self->{colorScale} eq "discrete" ? "scale_" . $self->{_paletteType} . "_brewer" : "scale_" . $self->{_paletteType} . "_distiller") . "(palette='" . $self->{colorPalette} . "'";
             $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')" if (@{$self->{legendSort}});
-            $Rcode .= ", guide = 'colourbar', direction=" . ($self->{invertPalette} ? 1 : -1) . ")";
+            $Rcode .= ", guide = 'colourbar', direction=" . ($self->{invertPalette} ? -1 : 1) . ")";
 
         }
         else { 
