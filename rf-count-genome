@@ -308,7 +308,8 @@ print "\n[+] Importing chromosomes from reference, and building count table base
 
 if (!defined $baseRC) {
 
-    my $seqio = Data::IO::Sequence->new(file => $multifasta);
+    my $seqio = Data::IO::Sequence->new( file      => $multifasta,
+                                         maskIUPAC => 1 );
     $rcio = RF::Data::IO::RC->new( file       => $tmpdir . "base.rc",
                                    index      => $output . "index.rci",
                                    buildindex => 1,

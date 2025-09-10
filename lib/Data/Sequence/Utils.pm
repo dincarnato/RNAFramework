@@ -40,7 +40,7 @@ sub isiupac { return(is($_[0], $_[1] . "ACGTUBDHKMNRSVWY")); }
 
 sub isaa { return(is($_[0], $_[1] . "ACDEFGHIKLMNPQRSTVWXY*")); }
 
-sub isseq { return(is($_[0], $_[1] . "ACDEFGHIKLMNPQRSTUVWXY*")); }
+sub isseq { return(is($_[0], $_[1] . "ABCDEFGHIKLMNPQRSTUVWXY*")); }
 
 sub isalignment { return(is($_[0], $_[1] . " |*.")); }
 

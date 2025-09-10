@@ -100,6 +100,8 @@ sub read {
 
     return($self->read()) if (!defined $sequence || !isseq($sequence, "-"));
 
+    if ($self->{maskIUPAC}) { $sequence =~ tr/BDHKMNRSVWYbdhkmnrsvwy/NNNNNNNNNNNnnnnnnnnnnn/; }
+
     # Index building at runtime
     $self->warn("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
                                                                                                                          $self->{_index}->{$id} != $offset);
