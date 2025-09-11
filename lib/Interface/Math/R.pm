@@ -74,7 +74,7 @@ sub run {
     $tmpCmdFile = $self->{_tmpCmdFile};
     $self->_writeTmpCommand($command);
     
-    $output = `$R --no-save --slave --vanilla 2>&1 < '$tmpCmdFile'`;
+    $output = `$R --no-save --slave --vanilla -e "source('$tmpCmdFile')" 2>&1`;
     chomp($output);
 
     $self->throw("R returned an error\n\n" . BOLD . $output . RESET) if ($output =~ /Error/);
