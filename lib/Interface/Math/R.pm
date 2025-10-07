@@ -74,6 +74,8 @@ sub run {
     $tmpCmdFile = $self->{_tmpCmdFile};
     $self->_writeTmpCommand($command);
     
+    # Originally we were running it as $R --no-save --slave --vanilla < '$tmpCmdFile'
+    # but with -e "source('$tmpCmdFile')" it speeds up from min to sec for large scripts
     $output = `$R --no-save --slave --vanilla -e "source('$tmpCmdFile')" 2>&1`;
     chomp($output);
 

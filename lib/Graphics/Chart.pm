@@ -196,7 +196,7 @@ sub _generateRcode {
 
     my $self = shift;
 
-    my ($Rcode, @coordLims);
+    my $Rcode;
 
     if (keys %{$self->{legendColors}}) {
 
@@ -275,10 +275,8 @@ sub _generateRcode {
 
     }
 
-    push(@coordLims, "xlim=c(" . join(", ", @{$self->{xLimit}}) . ")") if (@{$self->{xLimit}});
-    push(@coordLims, "ylim=c(" . join(", ", @{$self->{yLimit}}) . ")") if (@{$self->{yLimit}});
-
-    $Rcode .= " + coord_cartesian(" . join(", ", @coordLims) . ")" if (@coordLims);
+    $Rcode .= " + coord_cartesian(xlim=c(" . join(", ", @{$self->{xLimit}}) . "))" if (@{$self->{xLimit}});
+    $Rcode .= " + scale_y_continuous(limits=c(" . join(", ", @{$self->{yLimit}}) . "), oob=scales::squish)" if (@{$self->{yLimit}});
     $Rcode .= " + xlab('" . $self->{xTitle} . "')" if (defined $self->{xTitle});
     $Rcode .= " + ylab('" . $self->{yTitle} . "')" if (defined $self->{yTitle});
 

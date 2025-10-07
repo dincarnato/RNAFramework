@@ -63,7 +63,7 @@ sub _generateRcode {
               "    r <- (x1 - x2) / 2\n" .
               "    mid <- (x1 + x2) / 2\n" .
               "    theta <- seq(0, pi, length.out = n)\n" .
-              "    x <- mid + r * cos(theta)\n" .
+              "    x <- mid + r * cos(theta) + 1\n" .
               "    y <- r * ydiff / xdiff * " . ($self->{flip} eq "down" ? "sin(theta)" : "-sin(theta)") . "\n" .
               "    data.frame(x, y, g=g, " . $self->{fill} . "=" . $self->{fill} . ")\n" .
               "  }, x1Values, x2Values, seq_along(x1Values), fillValues))\n" .
