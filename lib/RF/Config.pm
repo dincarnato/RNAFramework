@@ -15,7 +15,8 @@ our (%scoremethods, %normmethods);
                   "4" => "Zubradt" );
 %normmethods = ( "1" => "2-8\%",
                  "2" => "90\% Winsorizing",
-                 "3" => "Box-plot" );
+                 "3" => "Box-plot",
+                 "4" => "Mitchell" );
 
 sub new {
 
@@ -82,15 +83,15 @@ sub _validate {
     $self->{windowoffset} = $self->{normwindow} if ($self->{windowoffset} > $self->{normwindow});
 
     $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
-    $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|[123])$/i);
-    $self->throw("2-8% normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(2-8\%|1)$/i);
-    $self->throw("Box-plot normalization cannot be used with Rouskin scoring method") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(Box-?plot|3)$/i);
+    $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|Mitchell|[1234])$/i);
+    $self->throw("Normalization method \"" . $self->{normmethod} . "\" cannot be used with Rouskin scoring") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(2-8\%|Box-?plot|Mitchell|[134])$/i);
+    $self->throw("Normalization method \"" . $self->{normmethod} . "\" cannot be used with Ding scoring") if ($self->{scoremethod} =~ m/^(Ding|1)$/i && $self->{normmethod} =~ m/^(Mitchell|4)$/i);
     $self->throw("Invalid normWindow value") if (!isint($self->{normwindow}));
     $self->throw("normWindow value should be greater than or equal to 3") if ($self->{normwindow} < 3);
     $self->throw("Invalid windowOffset value") if (!isint($self->{windowoffset}) || $self->{windowoffset} < 1);
     $self->throw("Invalid reactive bases") if ($self->{reactivebases} !~ m/^all$/i && !isiupac($self->{reactivebases}));
     $self->throw("normIndependent value must be boolean") if ($self->{normindependent} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
-    $self->throw("Rqw value must be boolean") if ($self->{raw} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
+    $self->throw("Raw value must be boolean") if ($self->{raw} !~ m/^TRUE|FALSE|yes|no|[01]$/i);
     $self->throw("Invalid pseudoCount value") if (!ispositive($self->{pseudocount}));
     $self->throw("pseudoCount value should be greater than 0") if (!$self->{pseudocount});
     $self->throw("Invalid maxScore value") if (!ispositive($self->{maxscore}));
@@ -114,7 +115,7 @@ sub _fixproperties {
     elsif ($self->{scoremethod} =~ m/^Siegfried|3$/i) { $self->{scoremethod} = 3; }
     elsif ($self->{scoremethod} =~ m/^Zubradt|4$/i) { $self->{scoremethod} = 4; }
 
-    $self->{normmethod} = $self->{normmethod} =~ m/^2-8\%|1$/ ? 1 : ($self->{normmethod} =~ m/^(90\% Winsorising|2)$/i ? 2 : 3);
+    $self->{normmethod} = $self->{normmethod} =~ m/^2-8\%|1$/ ? 1 : ($self->{normmethod} =~ m/^(90\% Winsorising|2)$/i ? 2 : ($self->{normmethod} =~ m/^(Box-?plot|3)$/i ? 3 : 4));
     $self->{reactivebases} = $self->{reactivebases} =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($self->{reactivebases}))))))));
     $self->{normindependent} = $self->{normindependent} =~ m/^TRUE|yes|1$/i ? 1 : 0;
     $self->{remapreactivities} = $self->{remapreactivities} =~ m/^TRUE|yes|1$/i ? 1 : 0;

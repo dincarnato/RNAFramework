@@ -3,6 +3,7 @@ package Interface::ViennaRNA;
 use strict;
 use Core::Mathematics qw(:all);
 use Core::Utils;
+use Data::IO::Sequence;
 use Data::Sequence::Structure;
 #use Data::Sequence::Structure::Ensemble;
 use Data::Sequence::Utils;
@@ -19,7 +20,9 @@ sub new {
     $self->_init({ RNAfold       => which("RNAfold"),
                    #RNAsubopt     => which("RNAsubopt"),
                    RNAalifold    => which("RNAalifold"),
-                   ssPseudoknots => 0 }, \%parameters);
+                   RNAplot       => which("RNAplot"),
+                   ssPseudoknots => 0,
+                   _version      => 0 }, \%parameters);
 
     $self->_validate();
 
@@ -31,7 +34,7 @@ sub _validate {
 
     my $self = shift;
 
-    for (qw(RNAfold RNAsubopt RNAalifold)) { $self->throw($_ . " is not executable (" . $self->{$_} . ")") if (defined $self->{$_} && !-x $self->{$_}); }
+    for (qw(RNAfold RNAsubopt RNAalifold RNAplot)) { $self->throw($_ . " is not executable (" . $self->{$_} . ")") if (defined $self->{$_} && !-x $self->{$_}); }
 
 }
 
@@ -137,10 +140,9 @@ sub alifold {
 
     }
 
-    %bpprobs = $self->_parseAliDpFile() if ($parameters->{partitionFunction} ||
-                                            $parameters->{MEA});
+    %bpprobs = $self->_parseAliDpFile() if ($parameters->{partitionFunction} || $parameters->{MEA});
 
-    #unlink($id . "_0001_ali.out");
+    unlink($id . "_0001_ali.out");
 
     $fold = Data::Sequence::Structure->new( sequence          => $sequence,
                                             structure         => $structure,
@@ -153,6 +155,162 @@ sub alifold {
                                             lonelypairs       => $parameters->{noLonelyPairs} ? 0 : 1 );
 
     return($fold);
+
+}
+
+sub plot {
+
+    my $self = shift;
+    my ($input, $output, $reactivity) = @_;
+
+    if (!$self->{_version}) {
+
+        my $ver = `RNAplot --version`;
+        chomp($ver);
+
+        if ($ver =~ /^RNAplot (\d+)\.(\d+)\.(\w+)/) {
+
+            my @v = ($1, $2, $3);
+
+            if (($v[0] == 2 && $v[1] < 7) || $v[0] < 2) {
+
+                $self->warn("RNAplot v2.7.0 or greater is required"); 
+                $self->{_version} = -1;
+                
+            }
+            else { $self->{_version} = 1; }
+
+        }
+        else { 
+            
+            $self->warn("Unable to determine RNAplot version"); 
+            $self->{_version} = -1;
+
+
+        }
+
+    }
+
+    return if ($self->{_version} == - 1);
+
+    if (ref($input) ne "Data::Sequence::Structure") {
+
+        if (-e $input) {
+
+            my ($io, $entry);
+            $io = Data::IO::Sequence->new(file => $input);
+            $entry = $io->read();
+
+            if (!defined $entry) { $self->throw("Invalid structure file \"$input\""); }
+            else {
+
+                $self->throw("No structure found in file \"$input\"") if (!$entry->can("structure"));
+
+                $input = $entry;
+
+            }
+
+        }
+        else { $self->throw("Input must either be a structure file or a Data::Sequence::Structure object"); }
+
+    }
+
+    if ($reactivity) {
+
+        $self->throw("Reactivity must be an ARRAY ref") if (ref($reactivity) ne "ARRAY");
+        $self->throw("Reactivity and sequence have different lengths") if (@$reactivity != $input->length());
+
+    }
+    else { $reactivity = [ ("NaN") x $input->length() ]; }
+
+    my ($id, $command, $ret, $height, $width, 
+        @ret, @reactivity, %colors);
+    @reactivity = @$reactivity;
+    %colors = ( high => "#9A2322", 
+                mid  => "#FFCD2F", 
+                low  => "#000000",
+                none => "#B1B3B6");
+    $id = "." . $self->{_randId};
+    $self->_writeFastaFile($id, $input->sequence(), $input->structure());
+    $command = $self->{RNAplot} . " -f svg -i " . $self->{tmpdir} . $id . ".fasta";
+    $ret = `$command 2>&1`;
+    @ret = split(/\n/, $ret);
+
+    while ($ret =~ m/^ERROR: (.+?)\n/g) { $self->throw("RNAplot threw an exception (" . $1 . ")"); }
+    while ($ret =~ m/^WARNING: (.+?)\n/g) { $self->warn("RNAplot threw a warning (" . $1 . ")"); }
+
+    open(my $fh, "<", "$id\_ss.svg") or $self->throw("Unable to open RNAplot's SVG file ($!)");
+    open(my $wh, ">", $output) or $self->throw("Unable to write output SVG file ($!)");
+    select((select($wh), $|=1)[0]);
+
+    while (my $row = <$fh>) {
+
+        if ($row =~ /<svg xmlns="http:\/\/www.w3.org\/2000\/svg" height="(\d+)" width="(\d+)">/) { ($height, $width) = ($1, $2); }
+        elsif ($row =~ /\.nucleotide \{/) {
+
+            print $wh <<SVG;
+      .nucleotide-white {
+        font-family: Arial, Helvetica, sans-serif;
+        fill: white;
+        color: white;
+      }
+SVG
+
+        }
+        elsif ($row =~ /SansSerif/) { $row =~ s/SansSerif/Arial, Helvetica, sans-serif/; }
+        elsif ($row  =~ /stroke: red;/) { $row  =~ s/red/grey/; }
+        elsif ($row =~ /<text\s+([^>]*class="nucleotide"[^>]*)>([acgtuACGTU])<\/text>/) {
+            
+            my ($attrs, $base, $x, $y);
+            ($attrs, $base) = ($1, $2);
+            ($x) = $attrs =~ /\bx\s*=\s*"([\d\.\-]+)"/;
+            ($y) = $attrs =~ /\by\s*=\s*"([\d\.\-]+)"/;
+
+            if (defined $x && defined $y) {
+
+                my ($react, $color);
+                $react = shift(@reactivity);
+                $color = isnan($react) ? $colors{"none"} : ($react <= 0.4 ? $colors{"low"} : ($react < 0.7 ? $colors{"mid"} : $colors{"high"})); 
+                
+                $x += 4;
+                $y -= 4;
+
+                $row =~ s/"nucleotide"/"nucleotide-white"/ if ($color eq $colors{"high"} || $color eq $colors{"low"});
+                
+                print $wh "  <circle cx=\"$x\" cy=\"$y\" r=\"8\" fill=\"$color\" fill-opacity=\"0.75\" stroke=\"$color\" stroke-width=\"0.8\"/>\n";
+
+            }
+
+        }
+        elsif ($row =~ /<\/svg>/) {
+
+            my ($scale, $tx, $ty);
+            $scale = 0.75;
+            $tx = $width - 80 * $scale - 5;
+            $ty = $height - 54 * $scale - 10;
+
+        print $wh <<SVG;
+<g transform="translate($tx, $ty) scale($scale)" class="legend">
+  <rect x="0" y="0" width="12" height="12" fill="$colors{high}" stroke="black" />
+  <text x="18" y="10" class="nucleotide">0.7+</text>
+  <rect x="0" y="14" width="12" height="12" fill="$colors{mid}" stroke="black" />
+  <text x="18" y="24" class="nucleotide">0.4-0.7</text>
+  <rect x="0" y="28" width="12" height="12" fill="$colors{low}" stroke="black" />
+  <text x="18" y="38" class="nucleotide">0-0.4</text>
+  <rect x="0" y="42" width="12" height="12" fill="$colors{none}" stroke="black" />
+  <text x="18" y="52" class="nucleotide">No data</text>
+</g>
+SVG
+
+        }
+
+        print $wh $row;
+    }
+
+    close($wh);
+    close($fh);
+
+    unlink(glob($self->{tmpdir} . $id . "*"));
 
 }
 
@@ -356,9 +514,18 @@ sub _makeInputFile {
 
     substr($nestedbp, $_, 1) = "x" for (@unpaired);
 
+    $self->_writeFastaFile($id, $sequence, $nestedbp);
+
+}
+
+sub _writeFastaFile {
+
+    my $self = shift;
+    my ($id, $sequence, $structure) = @_;
+
     open(my $wh, ">", $self->{tmpdir} . $id . ".fasta") or $self->throw("Unable to write temporary input FASTA file (" . $! . ")");
     select((select($wh), $|=1)[0]);
-    print $wh ">" . $id . "\n" . $sequence . "\n" . $nestedbp . "\n";
+    print $wh ">$id\n$sequence\n$structure\n";
     close($wh);
 
 }

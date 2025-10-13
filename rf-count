@@ -17,9 +17,12 @@ use Core::Process::Queue;
 use Core::Statistics;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
+use Graphics::Chart::Barplot;
+use Graphics::Image;
 use RF::Data::RC;
 use RF::Data::IO::MM;
 use RF::Data::IO::RC;
+use RF::Utils;
 use Term::Progress;
 use Term::Progress::Multiple;
 use Term::Table;
@@ -39,9 +42,10 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $evalsurround, $leftalign, $discardshorter, $leftdel, 
     $rightdel, $rmconsecutive, $maxcov, $primaryonly, 
     $whitelist, $onlyMut, $noCovLowQual, $outRawCounts, 
-    $fast, $multiBar, @mutClasses, @bam_trim5, @ids,
-    @qcounter, %transcripts, %spacer, %files, 
-    %masks, %realid, %onlyMut, %allStats, %allFreqs);
+    $fast, $multiBar, $image, $R, @mutClasses, 
+    @bam_trim5, @ids, @qcounter, @stats, %transcripts, 
+    %spacer, %files, %masks, %realid, %onlyMut, %allStats, 
+    %allFreqs);
 
 do {
 
@@ -86,7 +90,9 @@ do {
                 "om|only-mut=s"              => \$onlyMut,
                 "ndd|no-discard-duplicates"  => \$nodiscarddup,
                 "ncl|no-cov-low-qual"        => \$noCovLowQual,
-                "P|per-file-progress"        => \$multiBar ) or help(1);
+                "P|per-file-progress"        => \$multiBar,
+                "g|img"                      => \$image,
+                "R|R-path=s"                 => \$R ) or help(1);
 
 };
 
@@ -107,6 +113,7 @@ $maxmut ||= 0.15;
 $discardshorter //= 1;
 $rmconsecutive //= 0;
 $samtools ||= which("samtools");
+$R = checkRinstall($R) if ($image && !$covonly);
 @mutClasses = qw(AC AG AT CA CG CT GA GC GT TA TC TG ins del);
 
 $output =~ s/\/?$/\//;
@@ -141,6 +148,13 @@ die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (de
                                                                               ((isint($discardshorter) && $discardshorter < 1) &&
                                                                                $discardshorter !~ m/^median$/i));
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
+
+if ($image && $covonly) {
+
+    print "\n  [i] Note: No plot will be generated in -co (--coverage-only) mode...\n";
+    undef($image);
+
+}
 
 if ($mutcount && $onlyMut) {
 
@@ -231,6 +245,9 @@ if ($mutcount) {
                                     error => \$error }) if ($outRawCounts);
 
 }
+
+mkpath($output . "plots/", { mode  => 0755,
+                             error => \$error }) if ($image);
 
 ##
 # Prepare files
@@ -726,10 +743,14 @@ foreach my $sample (sort keys %allStats) {
 
         if (!$covonly) {
 
-            my $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
-            $stats .= " [" . join("; ", map { $_ . ": " . sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T)) . "]" if ($total);
-            $stats .= " - " . $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . 
-                    " (" . sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100) . "\%) mutated alignments" if ($mutcount && $allStats{$sample}->{total});
+            my ($total, $mutReads, %bases);
+            $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
+            $mutReads = sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100) if ($mutcount && $allStats{$sample}->{total});
+            %bases = map { $_ => sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T);
+            $stats .= " [" . join("; ", map { "$_: " . $bases{$_} } qw(A C G T)) . "]" if ($total);
+            $stats .= " - " . $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . " ($mutReads\%) mutated alignments" if ($mutcount && $allStats{$sample}->{total});
+
+            push(@stats, [ $sample, (map { $bases{$_} } qw(A C G T)), $mutReads ]);
 
         }
 
@@ -754,6 +775,53 @@ foreach my $sample (sort keys %allStats) {
     }
 
     print "\n$stats";
+
+}
+
+if ($image && @stats) {
+
+    print "\n\n[+] Generating plots...";
+
+    my ($img, $plot);
+    $img = Graphics::Image->new( file   => $output . "plots/base_stats.pdf",
+                                 width  => min(scalar(@stats), 40),
+                                 height => 8,
+                                 R      => $R,
+                                 tmpdir => $tmpdir );
+
+    $plot = Graphics::Chart::Barplot->new( x             => "sample",
+                                           data          => [ map { @$_[1 .. 4] } @stats ],
+                                           dataLabels    => { base   => [ (qw(A C G T)) x @stats ],
+                                                              sample => [ map { ($_->[0]) x 4 } @stats ] },
+                                           fill          => "base",
+                                           groupMethod   => "stack",
+                                           dataLabelSort => { base => [ qw(T G C A) ]},
+                                           legendSort    => [ qw(A C G T) ],
+                                           legendColors  => { A => "#24A349",  
+                                                              C => "#4687C7", 
+                                                              G => "#EDBA1D",
+                                                              T => "#A62324" },
+                                           yTitle        => "Per-base " . ($mutcount ? "mutations" : "RT-stops") . " (\%)",
+                                           xLabelAngle   => 90,
+                                           labelTextSize => 8 );
+    $img->plot([$plot]);
+
+    if ($mutcount) {
+
+        $img->file($output . "plots/read_mutation_stats.pdf");
+        $plot = Graphics::Chart::Barplot->new( x             => "sample",
+                                               data          => [ map { $_->[-1] } @stats ],
+                                               dataLabels    => { sample => [ map { $_->[0] } @stats ] },
+                                               fill          => "sample",
+                                               legend        => 0,
+                                               legendColors  => { map { $_->[0] => "black" } @stats },
+                                               yTitle        => "Mutated reads (\%)",
+                                               xLabelAngle   => 90,
+                                               labelTextSize => 8 );
+
+        $img->plot([$plot]);
+
+    }
 
 }
 
@@ -1465,6 +1533,10 @@ sub help {
                                                         transcripts, but increases memory usage
  -o   or --output-dir              <string>       Output directory (Default: rf_count/)
  -ow  or --overwrite                              Overwrites output directory (if the specified path already exists)
+ -s   or --samtools                <string>       Path to samtools executable (Default: assumes samtools is in PATH)
+ -g   or --img                                    Enables the generation of statistic plots of per-base % mutations/RT-stops and, for MaP
+                                                  experiments only, of % mutated reads (requires R)
+ -R   or --R-path                  <string>       Path to R executable (Default: assumes R is in PATH)
  -t5  or --trim-5prime             <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
                                                   5'-end of reads in the respective sample SAM/BAM files (Default: 0)
                                                   Note: Values must be provided in the same order as the input files.

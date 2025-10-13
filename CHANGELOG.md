@@ -1,3 +1,25 @@
+## [2.9.4] - 2025-10-13
+### Added
+- Added generation of statistics plots to rf-count and rf-count-genome via the -g (or --img) parameter
+- Added a novel normalization method for MaP experiments (Mitchell Normalization, PMID: [37334863](https://pubmed.ncbi.nlm.nih.gov/37334863/)) tor rf-norm (-nm 4)
+- Added generation of secondary structure plots with overlaid reactivities via RNAplot (requires ViennaRNA package v2.7.0)
+
+### Changed
+- Bumped up minimum requirement for ViennaRNA version (v2.5.0)
+- Fixed a minor bug causing user-provided constraints to be ignored when -dp was specified without -w
+- Fixed a minor bug causing rf-compare to crash with single transcripts
+- Fixed a minor bug in rf-json2rc causing output RC files to lack EOF marker
+- Fixed a minor bug in rf-correlate causing the program to throw an exception in case a transcript without any of the bases specified by the -kb parameter was encountered (e.g., -kb A and a transcript containing no As)
+- Fixed several issues in rf-duplex, among which one caused by a bug in STAR (reported to Alex Dobin, awaiting fix, for now reads with the issue are silently discarded), and improved multithreading support
+
+### API changes
+- Fixed a bug in Graphics::Chart causing the color palette to be inverted by default
+- Fixed a bug in Graphics::Chart causing plotted elements to continue past the Y range (when a yRange was specified)
+- Fixed a bug in Graphics::Chart::Arcs causing an off-by-1 in the placing of the arcs
+- Added handling of IUPAC characters in DNA sequences to Data::IO::Sequence through the parameter "maskIUPAC", which enables masking of IUPAC characters as Ns
+- Changed the call to R in Interface::Math::R, which resulted in a dramatic decrease in runtimes
+- Added method plot() to Interface::ViennaRNA to generate secondary structure plots with RNAplot and modify them to overlay reactivities
+
 ## [2.9.3] - 2025-06-19
 ### Added
 - Added progress bar to rf-combine, rf-compare, rf-correlate

@@ -574,7 +574,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified (unmasked) bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -618,7 +618,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -648,7 +648,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -673,7 +673,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : boxplot(@base));
+                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -779,7 +779,7 @@ sub winsor_90 {  # 90% Winsorizing
 
     my @reactivity = @_;
 
-    return if (!@reactivity);
+    return if (@reactivity < 10);
 
     my ($percentile5, $percentile95);
 
@@ -803,7 +803,7 @@ sub norm_28 {  # 2-8% Normalization
 
     my @reactivity = @_;
 
-    return if (!@reactivity);
+    return if (@reactivity < 10);
 
     my ($avg, @norm);
 
@@ -833,7 +833,7 @@ sub boxplot {  # Box-plot Normalization
 
     my @reactivity = @_;
 
-    return if (!@reactivity);
+    return if (@reactivity < 10);
 
     my ($avg, @norm);
 
@@ -868,6 +868,34 @@ sub boxplot {  # Box-plot Normalization
 
 }
 
+sub mitchell { # Mitchell et al., 2023 (Mustoe lab)
+
+    my @reactivity = @_;
+
+    return if (@reactivity < 10);
+
+    my ($avg);
+
+    if (!defined $normfactor) {
+
+        my ($p90, $p95, $p75, @sorted, @sortedHigh);
+        @sorted = sort {$a <=> $b} @reactivity;
+        @sortedHigh = grep { $_ > 0.001 } @sorted;
+        $p90 = max(1, round(@sorted * 0.9) - 1);
+        $p95 = max(1, round(@sorted * 0.95) - 1);
+        $avg = mean(@sorted[$p90 .. $p95]);
+        $p75 = max(1, round(@sortedHigh * 0.75) - 1);
+        $avg = max($avg, $sortedHigh[$p75]);
+
+    }
+    else { $avg = $normfactor[0]; }
+
+    @reactivity = map { max(0, $_ / $avg) } @reactivity;
+
+    return(@reactivity);
+
+}
+
 sub zarringhalam {
 
     my @reactivity = @_;
@@ -884,10 +912,8 @@ sub zarringhalam {
         next if (!isnumeric($_));
 
         if ($_ < 0.25) { ($oldmin, $oldmax, $newmin, $newmax) = (0, 0.25, 0, 0.35); }
-        elsif ($_ >= 0.25 &&
-               $_ < 0.3) { ($oldmin, $oldmax, $newmin, $newmax) = (0.25, 0.3, 0.35, 0.55); }
-        elsif ($_ >= 0.3 &&
-               $_ < 0.7) { ($oldmin, $oldmax, $newmin, $newmax) = (0.3, 0.7, 0.55, 0.85); }
+        elsif ($_ >= 0.25 && $_ < 0.3) { ($oldmin, $oldmax, $newmin, $newmax) = (0.25, 0.3, 0.35, 0.55); }
+        elsif ($_ >= 0.3 && $_ < 0.7) { ($oldmin, $oldmax, $newmin, $newmax) = (0.3, 0.7, 0.55, 0.85); }
         else { ($oldmin, $oldmax, $newmin, $newmax) = (0.7, $max, 0.85, 1); }
 
         $_ = maprange($oldmin, $oldmax, $newmin, $newmax, $_);
@@ -938,6 +964,7 @@ sub help {
  -nm or --norm-method         <int>                 Specifies the normalization method (1-3, Default: 1): [1] 2-8%
                                                                                                           [2] 90% Winsorizing
                                                                                                           [3] Box-plot
+                                                                                                          [4] Mitchell et al., 2023
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
  -r  or --raw                                       Reports raw reactivities (skips normalization)
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012

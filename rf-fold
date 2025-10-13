@@ -41,6 +41,7 @@ use Graphics::Chart::Arcs;
 use Graphics::Chart::Area;
 use Graphics::Chart::Barplot;
 use Graphics::Image;
+use Interface::ViennaRNA;
 use RNA::Utils;
 use RF::Data::IO::XML;
 use RF::Utils;
@@ -64,9 +65,10 @@ my ($output, $ct, $method, $installed, $maxdist,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $keeptmp, $constraintDir, 
     $pkpercentmfe, $nozuker, $zukersubopt, $pkslope,
-    $pkintercept, $ignoreSeq, $onlyCommon, @skparams, 
-    @vrfoldparams, @rsfoldparams, @slope, @intercept, 
-    @samples, %xml, %lambda, %constraints, %results);
+    $pkintercept, $ignoreSeq, $onlyCommon, $rnaplot,
+    @skparams, @vrfoldparams, @rsfoldparams, @slope, 
+    @intercept, @samples, %xml, %lambda, %constraints, 
+    %results);
 
 %results = ( folded    => 0,
              parseErr  => 0,
@@ -130,6 +132,7 @@ do {
                 "pt|partition=s"             => \$partition,
                 "pp|probabilityplot=s"       => \$probplot,
                 "vrs|vienna-rnasubopt=s"     => \$rnasubopt,
+                "vrp|vienna-rnaplot=s"       => \$rnaplot,
                 "kw|pseudoknot-window=i"     => \$pkwin,
                 "ko|pseudoknot-offset=i"     => \$pkstep,
                 "ksl|pseudoknot-slope=s"     => \$pkslope,
@@ -186,6 +189,7 @@ $rnastructure = $rnastructure || which("Fold-smp") || which("Fold");
 $shapeknots = $shapeknots || which("ShapeKnots-smp") || which("ShapeKnots");
 $partition = $partition || which("partition-smp") || which("partition");
 $probplot = $probplot || which("ProbabilityPlot");
+$rnaplot = $rnaplot || which("RNAplot");
 $data ||= $ENV{DATAPATH};
 $R = checkRinstall($R) if ($img);
 $installed = eval { require RNA; 1; };
@@ -271,8 +275,7 @@ if ($method == 1) { # ViennaRNA
 
         my ($v1, $v2) = ($1, $2);
 
-        die "\n\n  [!] Error: RF Fold requires ViennaRNA package v2.2.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 ||
-                                                                                                                                  $v2 < 2);
+        die "\n\n  [!] Error: RF Fold requires ViennaRNA package v2.5.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 2 || $v2 < 5);
 
     }
     else { warn "\n\n  [!] Warning: Unable to detect ViennaRNA package version\n"; }
@@ -314,6 +317,31 @@ if ($pk) {
         elsif (!-e $shapeknots) { die "\n\n  [!] Error: ShapeKnots doesn't exist\n\n"; }
         elsif (!-x $shapeknots) { die "\n\n  [!] Error: ShapeKnots is not executable\n\n"; }
 
+    }
+
+}
+
+if ($img && $rnaplot) {
+
+    my $ret = `$rnaplot --version`;
+
+    if ($ret =~ m/RNAplot (\d+)\.(\d+)/) {
+
+        my ($v1, $v2) = ($1, $2);
+
+        if ($v1 < 2 || $v2 < 7) { 
+            
+            warn "\n\n  [!] Error: Plotting of secondary structures requires RNAplot v2.7.0 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n";
+            undef($rnaplot);
+
+        }
+
+    }
+    else { 
+        
+        warn "\n\n  [!] Warning: Unable to detect RNAplot version\n"; 
+        undef($rnaplot);    
+        
     }
 
 }
@@ -379,10 +407,17 @@ if (!$dotplotOnly) {
 
     mkpath($output . "structures", { mode  => 0755,
                                      error => \$error });
-    mkpath($output . "plots", { mode  => 0755,
-                                error => \$error }) if ($img);
     mkpath($output . "shannon", { mode  => 0755,
                                   error => \$error }) if ($sh);
+
+}
+
+if ($img) {
+
+    mkpath($output . "plots/summaries", { mode  => 0755,
+                                          error => \$error });
+    mkpath($output . "plots/structures", { mode  => 0755,
+                                           error => \$error }) if ($rnaplot);                                     
 
 }
 
@@ -535,14 +570,21 @@ sub fold {
 
     my ($sequence, $id, $structure, $cmd, $plot,
         $ret, $entry, $length, $nwins, $file, $io, $energy,
-        $constraint, @foldwins, @windows, @constraint,
+        $constraint, $intf, @foldwins, @windows, @constraint,
         @pkpairs, @keptpairs, @dotplot, @shannon,
         @reactivity, @meanReact, %pairprobs, %npairs, %seen);
 
-    $plot = Graphics::Image->new( width  => 6 * 3,
-                                  height => ($windowed || $dp || $sh ? 7 : 5) * 3,
-                                  R      => $R,
-                                  tmpdir => $tmpdir ) if ($img);
+    if ($img) {
+ 
+        $plot = Graphics::Image->new( width  => 6 * 3,
+                                      height => ($windowed || $dp || $sh ? 7 : 5) * 3,
+                                      R      => $R,
+                                      tmpdir => $tmpdir );
+
+        $intf = Interface::ViennaRNA->new( RNAplot => $rnaplot,
+                                           tmpdir  => $tmpdir) if ($rnaplot);
+
+    }
 
     foreach my $xml (@xml) {
 
@@ -1039,7 +1081,7 @@ sub fold {
 
         my ($hasReact, $winSize, @plots, @heights);
         $winSize = 20;
-        $plot->file("${output}plots/$id.pdf");
+        $plot->file("${output}plots/summaries/$id.pdf");
 
         $hasReact = scalar(grep { isnumeric($_) } @meanReact);
 
@@ -1229,6 +1271,9 @@ sub fold {
         }
 
         $plot->plot([ map { [$_] } @plots ], { heights => \@heights});
+
+        # Generate secondary structure plot
+        if ($intf) { $intf->plot($entry, "${output}plots/structures/$id.svg", \@meanReact); }
 
     }
 
@@ -1877,7 +1922,8 @@ sub help {
  -p   or --processors            <int>       Number of processors to use for the analysis (Default: 1)
  -oc  or --only-common           <int>       In case of multiple experiments, only transcripts covered across at least this number of experiments
                                              will be folded
- -g   or --img                               Enables the generation of graphical reports (requires R)
+ -g   or --img                               Enables the generation of graphical reports (requires R and, optionally, RNAplot v2.7.0 or greater)
+ -vrp or --vienna-rnaplot        <string>    Path to ViennaRNA RNAplot v2.7.0 (or greater) executable (Default: assumes RNAplot is in PATH)
  -R   or --R-path                <string>    Path to R executable (Default: assumes R is in PATH)
  -t   or --temperature           <float>     Temperature in Celsius degrees (Default: 37.0)
  -sl  or --slope                 <float>     Sets slope used with structural probing data restraints (Default: 1.8 [kcal/mol])

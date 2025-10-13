@@ -216,14 +216,18 @@ else {
         $table->row($_->[0], sprintf("%.3f", $_->[1]), sprintf("%.2e", $_->[2])) for (@results[0 .. $top - 1]);
         $table->print();
 
-        open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
-        select((select($wh), $|=1)[0]);
-        print $wh "#Transcript\tCorrelation\tp-value\n";
-        print $wh join("\t", @$_) . "\n" for (@results);
-        close($wh);
-
     }
     else { print "\n\n  [!] Error: Correlation calculation failed for all transcripts"; }
+
+}
+
+if (@results) {
+
+    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
+    select((select($wh), $|=1)[0]);
+    print $wh "#Transcript\tCorrelation\tp-value\n";
+    print $wh join("\t", @$_) . "\n" for (@results);
+    close($wh);
 
 }
 

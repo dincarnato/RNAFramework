@@ -44,6 +44,7 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
 
 my @transcripts : shared;
 my %sharedData : shared;
+my %initials : shared;
 my %stats : shared;
 
 do {
@@ -282,7 +283,7 @@ foreach my $sample (sort keys %samples) {
     print "\n[+] Processing sample \"" . $sample . "\"\n";
 
     mkpath($output . $sample . "/dotplot/", { mode  => 0755,
-                                              error => \$error }) if (!$evalOnly && !$dumpChimaerasOnly);
+                                              error => \$error }) if ($makeDotPlot);
     mkpath($output . $sample . "/clustered/", { mode  => 0755,
                                                 error => \$error }) if ($makeClustersSam);
     mkpath($output . $sample . "/plots/", { mode  => 0755,
@@ -425,15 +426,18 @@ sub processTranscript {
         { lock(@transcripts);
           $id = shift(@transcripts) if (@transcripts);
 
-          if (defined $id && !-e $output . $sample . "/dotplot/" . uc(substr($id, 0, 1))) {
+          if (defined $id && !exists $initials{"${sample}_" . uc(substr($id, 0, 1))}) {
 
-              mkpath($output . $sample . "/dotplot/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if (!$evalOnly && !$dumpChimaerasOnly);
-              mkpath($output . $sample . "/clustered/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeClustersSam);
-              mkpath($output . $sample . "/plots/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeImage);
-              mkpath($output . $sample . "/constraints/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($makeConstraint);
-              mkpath($output . $sample . "/bpcounts/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($evalStructures);
-              mkpath($output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($dumpChimaeras);
-              mkpath($output . $sample . "/heatmaps/" . uc(substr($id, 0, 1)), { mode  => 0755 }) if ($heatmap);
+              my $initial = substr($id, 0, 1);
+              $initials{"${sample}_$initial"} = 1;
+
+              mkpath($output . $sample . "/dotplot/$initial", { mode  => 0755 }) if ($makeDotPlot);
+              mkpath($output . $sample . "/clustered/$initial", { mode  => 0755 }) if ($makeClustersSam);
+              mkpath($output . $sample . "/plots/$initial", { mode  => 0755 }) if ($makeImage);
+              mkpath($output . $sample . "/constraints/$initial", { mode  => 0755 }) if ($makeConstraint);
+              mkpath($output . $sample . "/bpcounts/$initial", { mode  => 0755 }) if ($evalStructures);
+              mkpath($output . $sample . "/chimaeras/$initial", { mode  => 0755 }) if ($dumpChimaeras);
+              mkpath($output . $sample . "/heatmaps/$initial", { mode  => 0755 }) if ($heatmap);
 
           } }
 
@@ -471,16 +475,17 @@ sub processTranscript {
               $stats{totChimeras} += $sharedData{$id}->{total};
               $stats{totTranscripts}++; }
 
-            if ($dumpChimaeras) {
+            if ($dumpChimaerasOnly) {
 
                 print CLRRET . "  [*] Transcript " . $id . ": dumping chimeras to file";
 
                 open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
                 select((select($th), $|=1)[0]);
+                print $th "#" . join("\t", qw(start1 end1 start2 end2)) . "\n";
                 print $th join("\t", @$_) . "\n" for (@ranges);
                 close($th);
 
-                next if ($dumpChimaerasOnly);
+                next;
 
             }
 
@@ -635,6 +640,18 @@ sub processTranscript {
 
                 push(@clusteredRanges, map { [ @{$clusters[$c]->[$_]}, 1, $c + 1 ] } 0 .. $#{$clusters[$c]});
                 push(@centroids, [ collapse(\@{$clusters[$c]}, $transcripts{$id}), $c + 1 ]);
+
+            }
+
+            if ($dumpChimaeras) {
+
+                print CLRRET . "  [*] Transcript " . $id . ": dumping chimeras to file";
+
+                open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
+                select((select($th), $|=1)[0]);
+                print $th "#" . join("\t", qw(start1 end1 start2 end2 cluster)) . "\n";
+                print $th join("\t", @$_) . "\n" for (@clusteredRanges);
+                close($th);
 
             }
 

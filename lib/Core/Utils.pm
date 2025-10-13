@@ -16,7 +16,7 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.9.3";
+$VERSION = "2.9.4";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
