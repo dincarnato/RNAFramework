@@ -43,7 +43,7 @@ my ($tmp, $tmpdir, $output, $trim3,
     $samtools, $sam, $clipped, $help,
     $overwrite, $bm, $nobam, $error,
     $threads, $bseed, $processmanager, $madetmp,
-    $table, $bk, $cm, $mp,
+    $table, $bk, $cm, $mp, $bnf,
     $mo, $logdir, $keeplogs, $cq5,
     $cq3, $cqo, $bd, $haspaired,
     $trimN, $maxN, @tmp, %spacer,
@@ -90,6 +90,7 @@ do {
                 "bd|bowtie-dovetail"        => \$bd,
                 "bma|bowtie-ma=i"           => \$bma,
                 "bnr|bowtie-norc"           => \$bnr,
+                "bnf|bowtie-nofw"           => \$bnf,
                 "bdg|bowtie-rdg=s"          => \$bdg,
                 "bfg|bowtie-rfg=s"          => \$bfg,
                 "mp|mapping-params=s"       => \$mp,
@@ -163,47 +164,33 @@ die "\n  [!] Error: No minimum read length provided\n\n" if (!defined $cl);
 die "\n  [!] Error: Minimum read length should be an integer >= 10\n\n" if ($cl < 10);
 die "\n  [!] Error: Minimum adapter alignment should be an integer > 0\n\n" if ($cm < 1);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
-die "\n  [!] Error: Maximum number of Ns must be positive\n\n" if (defined $maxN &&
-                                                                   !ispositive($maxN));
+die "\n  [!] Error: Maximum number of Ns must be positive\n\n" if (defined $maxN && !ispositive($maxN));
 
 # Bowtie validation
-die "\n  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($trim5) ||
-                                                                              !isint($trim5));
-die "\n  [!] Error: 3'-end trimming value must be a positive integer\n\n" if (!ispositive($trim3) ||
-                                                                              !isint($trim3));
-die "\n  [!] Error: Parameter -bk must be an integer > 0\n\n" if (defined $bk &&
-                                                                  (!isint($bk) ||
-                                                                   !$bk));
-die "\n  [!] Error: Parameters -ba and -bk are mutually exclusive\n\n" if ($bk > 1 &&
-                                                                           $ba);
+die "\n  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($trim5) || !isint($trim5));
+die "\n  [!] Error: 3'-end trimming value must be a positive integer\n\n" if (!ispositive($trim3) || !isint($trim3));
+die "\n  [!] Error: Parameter -bk must be an integer > 0\n\n" if (defined $bk && (!isint($bk) || !$bk));
+die "\n  [!] Error: Parameters -ba and -bk are mutually exclusive\n\n" if ($bk > 1 && $ba);
+die "\n  [!] Error: Parameters -bnr and -bnf are mutually exclusive\n\n" if ($bnr && $bnf);
 
 if ($bowtie2) {
 
-    die "\n  [!] Error: Bowtie seed length value must be an integer >= 3 and <= 32\n\n" if (!isint($bseed) ||
-                                                                                            $bseed < 3 ||
-                                                                                            $bseed > 32);
+    die "\n  [!] Error: Bowtie seed length value must be an integer >= 3 and <= 32\n\n" if (!isint($bseed) || $bseed < 3 || $bseed > 32);
     die "\n  [!] Error: Bowtie seed mismatches value must be 0 or 1\n\n" if ($bN !~ m/^[01]$/);
-    die "\n  [!] Error: Bowtie maximum seed extension attempts value must be an integer >= 0\n\n" if (!isint($bD) ||
-                                                                                                      !ispositive($bD));
-    die "\n  [!] Error: Bowtie maximum re-seeding attempts value must be an integer >= 0\n\n" if (!isint($bR) ||
-                                                                                                  !ispositive($bR));
+    die "\n  [!] Error: Bowtie maximum seed extension attempts value must be an integer >= 0\n\n" if (!isint($bD) || !ispositive($bD));
+    die "\n  [!] Error: Bowtie maximum re-seeding attempts value must be an integer >= 0\n\n" if (!isint($bR) || !ispositive($bR));
     die "\n  [!] Error: Invalid Bowtie maximum and minimum mismatch penalities format\n\n" if ($bmp !~ m/^\d+(?:,\d+)$/);
     die "\n  [!] Error: Invalid Bowtie read's gap open and extend penalities format\n\n" if ($bdg !~ m/^\d+(?:,\d+)$/);
     die "\n  [!] Error: Invalid Bowtie reference's gap open and extend penalities format\n\n" if ($bfg !~ m/^\d+(?:,\d+)$/);
-    die "\n  [!] Error: Bowtie number of extra DP table bases must be an integer >= 0\n\n" if (!isint($bdp) ||
-                                                                                               !ispositive($bdp));
-    die "\n  [!] Error: Bowtie match bonus in local alignment mode must be an integer >= 0\n\n" if (!isint($bma) ||
-                                                                                                    !ispositive($bma));
+    die "\n  [!] Error: Bowtie number of extra DP table bases must be an integer >= 0\n\n" if (!isint($bdp) || !ispositive($bdp));
+    die "\n  [!] Error: Bowtie match bonus in local alignment mode must be an integer >= 0\n\n" if (!isint($bma) || !ispositive($bma));
 
 }
 else {
 
-    die "\n  [!] Error: Bowtie seed length value must be an integer >= 5\n\n" if (!isint($bseed) ||
-                                                                                  $bseed < 5);
-    die "\n  [!] Error: Bowtie mismatches value must be an integer comprised between 0 and 3\n\n" if ((defined $bv &&
-                                                                                                       $bv !~ m/^[0-3]$/) ||
-                                                                                                      (defined $bn &&
-                                                                                                       $bn !~ m/^[0-3]$/));
+    die "\n  [!] Error: Bowtie seed length value must be an integer >= 5\n\n" if (!isint($bseed) || $bseed < 5);
+    die "\n  [!] Error: Bowtie mismatches value must be an integer comprised between 0 and 3\n\n" if ((defined $bv && $bv !~ m/^[0-3]$/) ||
+                                                                                                      (defined $bn && $bn !~ m/^[0-3]$/));
 
 }
 
@@ -498,6 +485,7 @@ foreach my $sample (@tmp) {
         $command .= " -3 " . $trim3 if ($trim3);
         $command .= " -5 " . $trim5 if ($trim5);
         $command .= " --norc" if ($bnr);
+        $command .= " --nofw" if ($bnf);
         $command .= " -a" if ($ba);
         $command .= " -k " . $bk if ($bk);
         $command .= $bowtie2 ? " -L " . $bseed : " -l " . $bseed;
@@ -751,6 +739,7 @@ sub help {
  -bk  or --bowtie-k            <int>         Reports up to this number of mapping positions for reads (Default: disabled)
  -ba  or --bowtie-all                        Reports all mapping positions for reads (Default: disabled)
  -bnr or --bowtie-norc                       Maps only to transcript's sense strand (Default: both strands)
+ -bnf or --bowtie-nofw                       Maps only to transcript's antisense strand (Default: both strands)
  -b5  or --bowtie-trim5        <int>         Number of bases to trim from 5'-end of reads (>=0 bases, Default: 0)
  -b3  or --bowtie-trim3        <int>         Number of bases to trim from 3'-end of reads (>=0 bases, Default: 0)
  -bi  or --bowtie-index        <string>      Path to transcriptome reference index

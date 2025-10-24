@@ -650,7 +650,7 @@ sub processTranscript {
                 open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
                 select((select($th), $|=1)[0]);
                 print $th "#" . join("\t", qw(start1 end1 start2 end2 cluster)) . "\n";
-                print $th join("\t", @$_) . "\n" for (@clusteredRanges);
+                print $th join("\t", @$_[0..3,5]) . "\n" for (@clusteredRanges);
                 close($th);
 
             }

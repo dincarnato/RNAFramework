@@ -61,6 +61,7 @@ do {
                 "S|spearman"            => \$spearman ) or help(1);
 
     $command = shift(@ARGV);
+    $command = lc($command);
     @mm = uniq(@ARGV);
 
 };
@@ -68,7 +69,6 @@ do {
 help() if ($help);
 
 # Default
-$command = lc($command);
 $randSubsample ||= 1;
 $minMutPerRead //= 1;
 $keepBases ||= "ACGT";

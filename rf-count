@@ -144,9 +144,7 @@ die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel && !$mut
 die "\n  [!] Error: Parameter -orc requires parameter -m\n\n" if ($outRawCounts && !$mutcount);
 die "\n  [!] Error: Parameter -om requires parameter -m\n\n" if ($onlyMut && !$mutcount);
 die "\n  [!] Error: Whitelist must be an integer > 0\n\n" if (defined $whitelist && $whitelist < 1 && $mutcount);
-die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter &&
-                                                                              ((isint($discardshorter) && $discardshorter < 1) &&
-                                                                               $discardshorter !~ m/^median$/i));
+die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter && ((isint($discardshorter) && $discardshorter < 1) && $discardshorter !~ m/^median$/i));
 warn "\n  [!] Warning: Some input files are duplicates. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if ($image && $covonly) {
