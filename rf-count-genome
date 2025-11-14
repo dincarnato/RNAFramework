@@ -1396,6 +1396,9 @@ sub help {
  -o   or --output-dir              <string>       Output directory (Default: rf_count/)
  -ow  or --overwrite                              Overwrites output directory (if the specified path already exists)
  -s   or --samtools                <string>       Path to samtools executable (Default: assumes samtools is in PATH)
+ -g   or --img                                    Enables the generation of statistic plots of per-base % mutations/RT-stops and, for MaP
+                                                  experiments only, of % mutated reads (requires R)
+ -R   or --R-path                  <string>       Path to R executable (Default: assumes R is in PATH)
  -t5  or --trim-5prime             <int>[,<int>]  Comma separated list (no spaces) of values indicating the number of bases trimmed from the
                                                   5'-end of reads in the respective sample SAM/BAM files (Default: 0)
                                                   Note: Values must be provided in the same order as the input files.

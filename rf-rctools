@@ -33,7 +33,8 @@ $|++;
 
 my ($output, $overwrite, $command, $help,
     $index, $tab, $annoFile, $GTFfeature, 
-    $GTFattribute, $blockSize, @rc, %commands);
+    $GTFattribute, $blockSize, $whitelist, 
+    @rc, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge stats extract);
 
@@ -49,7 +50,8 @@ do {
                 "a|annotation=s"   => \$annoFile,
                 "f|GTFfeature=s"   => \$GTFfeature,
                 "b|GTFattribute=s" => \$GTFattribute,
-                "s|blockSize=s"    => \$blockSize ) or help(1);
+                "s|blockSize=s"    => \$blockSize,
+                "wl|whitelist=s"   => \$whitelist ) or help(1);
 
     $command = shift(@ARGV);
     @rc = uniq(@ARGV);
@@ -118,7 +120,7 @@ elsif ($command =~ m/^view|stats$/) {
             my $entry = @coords ? $rcin->readBytewise($region[0], \@coords) : $rcin->read($region);
 
             if ($command eq "view") { formatentry($entry); }
-            else { print $entry->id() . "\t" . $entry->readscount() . "\n"; }
+            else { print $entry->id() . "\t" . $entry->readscount() . "\t" . $entry->mediancoverage() . "\n"; }
 
         }
 
@@ -128,7 +130,7 @@ elsif ($command =~ m/^view|stats$/) {
         while(my $entry = $rcin->read()) {
 
             if ($command eq "view") { formatentry($entry); }
-            else { print $entry->id() . "\t" . $entry->readscount() . "\n"; }
+            else { print $entry->id() . "\t" . $entry->readscount() . "\t" . $entry->mediancoverage() . "\n"; }
 
         }
 
@@ -208,8 +210,10 @@ elsif ($command eq "merge") {
 }
 elsif ($command eq "extract") {
 
-    die "\n  [!] Error: No annotation file provided\n\n" if (!defined $annoFile);
-    die "\n  [!] Error: Provided annotation file does not exist\n\n" if (!-e $annoFile);
+    die "\n  [!] Error: No annotation or whitelist file provided\n\n" if (!defined $annoFile && !defined $whitelist);
+    die "\n  [!] Error: Annotation and whitelist files are mutually exclusive\n\n" if (defined $annoFile && defined $whitelist);
+    die "\n  [!] Error: Provided annotation file does not exist\n\n" if (defined $annoFile && !-e $annoFile);
+    die "\n  [!] Error: Provided whitelist file does not exist\n\n" if (defined $whitelist && !-e $whitelist);
 
     if (!defined $index) {
 
@@ -220,7 +224,7 @@ elsif ($command eq "extract") {
 
     }
 
-    $output = (fileparse($annoFile, qr/\.(?:bed|gtf)/i))[0] . ".rc" if (!$output);
+    $output = (fileparse($annoFile || $whitelist, qr/\.(?:bed|gtf|txt)/i))[0] . ".rc" if (!$output);
     $output =~ s/(?:\.rc)?$/.rc/;
 
     die "\n  [!] Error: Output RC file already exists." .
@@ -228,11 +232,17 @@ elsif ($command eq "extract") {
 
     my ($rcout, $mappedreads, $annoType, $lastChr,
         %chr, %rcin, %ids);
-    ($annoType) = $annoFile =~ m/\.(gtf|bed)$/i;
 
-    die "\n  [!] Error: Annotation must have .gtf or .bed extension\n\n" if (!defined $annoType);
+    if (defined $annoFile) {
 
-    $annoType = lc($annoType);
+        ($annoType) = $annoFile =~ m/\.(gtf|bed)$/i;
+
+        die "\n  [!] Error: Annotation must have .gtf or .bed extension\n\n" if (!defined $annoType);
+
+        $annoType = lc($annoType);
+    
+    }
+
     $mappedreads = 0;
     $rcin{"+"} = RF::Data::IO::RC->new( file  => $rc[0] =~ m/\.rc$/ ? $rc[0] : $rc[0] . ".plus.rc",
                                         index => $index );
@@ -253,105 +263,133 @@ elsif ($command eq "extract") {
                                     mode       => "w",
                                     overwrite  => $overwrite );
 
-    open(my $fh, "<", $annoFile) or die "\n  [!] Error: Unable to read from annotation file (" . $! . ")\n\n";
-    while(<$fh>) {
+    if (defined $annoFile) {
 
-	chomp();
+        open(my $fh, "<", $annoFile) or die "\n  [!] Error: Unable to read from annotation file (" . $! . ")\n\n";
+        while(<$fh>) {
 
-        next if ($_ =~ m/^\#/);
+        chomp();
 
-        my ($id, @row);
-        @row = split /\t/;
+            next if ($_ =~ m/^\#/);
 
-        next if (!exists $ids{$row[0]});
+            my ($id, @row);
+            @row = split /\t/;
 
-        if ($annoType eq "gtf") {
+            next if (!exists $ids{$row[0]});
 
-            next if ($row[2] ne $GTFfeature);
-            next if ($row[4] > $ids{$row[0]}); # GTF is 1-based
+            if ($annoType eq "gtf") {
 
-            $row[3]--;
-            $row[4]--;
+                next if ($row[2] ne $GTFfeature);
+                next if ($row[4] > $ids{$row[0]}); # GTF is 1-based
 
-            if (defined $GTFattribute) { ($id) = $row[8] =~ m/$GTFattribute "(.+?)"/; }
-            
-            $id = $row[0] . "_" . $row[3] . "-" . $row[4] if (!defined $id);
+                $row[3]--;
+                $row[4]--;
 
-        }
-        else {
+                if (defined $GTFattribute) { ($id) = $row[8] =~ m/$GTFattribute "(.+?)"/; }
+                
+                $id = $row[0] . "_" . $row[3] . "-" . $row[4] if (!defined $id);
 
-            next if ($row[2] > $ids{$row[0]});
+            }
+            else {
 
-            $row[2]--;
-            $id = @row < 4 ? $row[0] . "_" . $row[1] . "-" . $row[2] : $row[3];
+                next if ($row[2] > $ids{$row[0]});
 
-        }
+                $row[2]--;
+                $id = @row < 4 ? $row[0] . "_" . $row[1] . "-" . $row[2] : $row[3];
 
-        if ($lastChr ne $row[0]) {
+            }
 
-            if (defined $lastChr) {
+            if ($lastChr ne $row[0]) {
 
-                foreach my $strand (sort keys %chr) {
+                if (defined $lastChr) {
 
-                    foreach my $transcript (sort keys %{$chr{$strand}}) {
+                    foreach my $strand (sort keys %chr) {
 
-                        my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
-                        $rc->revcomp() if ($strand eq "-");
-                        $rc->id($transcript);
-                        $rcout->write($rc);
+                        foreach my $transcript (sort keys %{$chr{$strand}}) {
+
+                            my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
+                            $rc->revcomp() if ($strand eq "-");
+                            $rc->id($transcript);
+                            $rcout->write($rc);
+
+                        }
 
                     }
 
                 }
 
+                $lastChr = $row[0];
+                undef(%chr);
+
             }
 
-            $lastChr = $row[0];
-            undef(%chr);
-
-        }
-
-        if ($annoType eq "gtf") { push(@{$chr{$row[6] eq "-" ? "-" : "+"}->{$id}}, [$row[3], $row[4]]); }
-        else {
-
-            next if ($row[1] == $row[2]);
-
-            my $strand = @row >= 6 && $row[5] eq "-" ? "-" : "+";
-
-            if (@row < 12) { push(@{$chr{$strand}->{$id}}, [$row[1], $row[2]]); }
+            if ($annoType eq "gtf") { push(@{$chr{$row[6] eq "-" ? "-" : "+"}->{$id}}, [$row[3], $row[4]]); }
             else {
 
-                my (@exonSizes, @exonStarts);
-                @exonSizes = split ",", $row[10];
-                @exonStarts = split ",", $row[11];
+                next if ($row[1] == $row[2]);
 
-                push(@{$chr{$strand}->{$id}}, [$row[1] + $exonStarts[$_], $row[1] + $exonStarts[$_] + $exonSizes[$_] - 1]) for (0 .. $row[9] - 1);
+                my $strand = @row >= 6 && $row[5] eq "-" ? "-" : "+";
+
+                if (@row < 12) { push(@{$chr{$strand}->{$id}}, [$row[1], $row[2]]); }
+                else {
+
+                    my (@exonSizes, @exonStarts);
+                    @exonSizes = split ",", $row[10];
+                    @exonStarts = split ",", $row[11];
+
+                    push(@{$chr{$strand}->{$id}}, [$row[1] + $exonStarts[$_], $row[1] + $exonStarts[$_] + $exonSizes[$_] - 1]) for (0 .. $row[9] - 1);
+
+                }
+
+            }
+
+        }
+        close($fh);
+
+        if (defined $lastChr) {
+
+            foreach my $strand (sort keys %chr) {
+
+                foreach my $transcript (sort keys %{$chr{$strand}}) {
+
+                    my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
+                    $rc->revcomp() if ($strand eq "-");
+                    $rc->id($transcript);
+                    $rcout->write($rc);
+
+                }
 
             }
 
         }
 
+        $rcout->mappedreads($rcin{"+"}->mappedreads());
+
     }
-    close($fh);
+    else {
 
-    if (defined $lastChr) {
+        my $nReads = 0;
 
-        foreach my $strand (sort keys %chr) {
+        open(my $fh, "<", $whitelist) or die "\n  [!] Error: Unable to read from whitelist file (" . $! . ")\n\n";
+        while(my $id = <$fh>) {
 
-            foreach my $transcript (sort keys %{$chr{$strand}}) {
+            chomp($id);
 
-                my $rc = $rcin{$strand}->readBytewise($lastChr, @{$chr{$strand}->{$transcript}});
-                $rc->revcomp() if ($strand eq "-");
-                $rc->id($transcript);
-                $rcout->write($rc);
-
+            if (my $entry = $rcin{"+"}->read($id)) { 
+                
+                $rcout->write($entry); 
+                $nReads += $entry->readscount();
+                
             }
+            else { warn "\n  [!] Warning: Transcript \"$id\" does not exist\n"; }
 
         }
+        close($fh);
+
+        $rcout->mappedreads($nReads);
 
     }
 
-    $rcout->mappedreads($rcin{"+"}->mappedreads());
     $rcout->close();
 
 }
@@ -457,7 +495,10 @@ HELP
                                     Note: if an RCI index is not specified, the program will look in the same 
                                           directory of the input RC file for a file named after the RC file with 
                                           one of the following extensions: .rci, .plus.rc.rci, .minus.rc.rci
- -a  or --annotation   <string>     BED/GTF file containing a list of regions to be extracted (mandatory)
+ -a  or --annotation   <string>     BED/GTF file containing a list of regions to be extracted
+ -wl or --whitelist    <string>     Whitelist containing a list of IDs of transcript to be extracted
+                                    Note: either an annotation or a whitelist must be provided. The two are
+                                          mutually exclusive.
  -f  or --GTFfeature   <string>     If a GTF file is provided, only entries corresponding to this feature type
                                     will be extracted (Default: exon)
  -b  or --GTFattribute <string>     If a GTF file is provided, this attribute will be used as the entry ID in

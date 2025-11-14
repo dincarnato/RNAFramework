@@ -147,7 +147,7 @@ for (@files) {
 
 # Only one of the two files is in RC format
 die "\n\n  [!] Error: Mixed file types provided\n\n" if ($isRC == 1);
-die "\n\n  [!] Error: Provided RC files have unequal sizes\n\n" if ($isRC && uniq(map { -s $_ } @files) != 1);
+#die "\n\n  [!] Error: Provided RC files have unequal sizes\n\n" if ($isRC && uniq(map { -s $_ } @files) != 1);
 
 # Delete all transcripts that are not common to all XML directories
 if (!$singlefile) {
