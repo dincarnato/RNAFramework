@@ -38,7 +38,8 @@ $|++;
 my ($output, $overwrite, $command, $help,
     $tab, $keepBases, $minMutPerRead,
     $minReadLen, $randSubsample, $bedAnno, $whitelist, 
-    $discardPos, $minReads, $spearman, @mm, %commands);
+    $discardPos, $minReads, $minRate, $maxRate, 
+    $spearman, @mm, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge extract alignids
                                stats torc correlate split);
@@ -58,7 +59,9 @@ do {
                 "wl|whitelist=s"        => \$whitelist,
                 "dp|discardPositions=s" => \$discardPos,
                 "mr|minReads=s"         => \$minReads,
-                "S|spearman"            => \$spearman ) or help(1);
+                "S|spearman"            => \$spearman,
+                "nr|minRate=s"          => \$minRate,
+                "xr|maxRate=s"          => \$maxRate ) or help(1);
 
     $command = shift(@ARGV);
     $command = lc($command);
@@ -74,6 +77,8 @@ $minMutPerRead //= 1;
 $keepBases ||= "ACGT";
 $minReadLen ||= 0;
 $minReads ||= 1000;
+$minRate ||= 0;
+$maxRate ||= 1;
 
 ##
 # Input validation
@@ -233,6 +238,8 @@ elsif ($command eq "extract") {
     die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 1\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
     die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || !ispositive($minReadLen));
     die "\n  [!] Error: Random subsample factor must be a positive INT >= 1\n\n" if (!isint($randSubsample) || !ispositive($randSubsample));
+    die "\n  [!] Error: Minimum mutation rate must be comprised between 0 and 1\n\n" if (!inrange($minRate, [0, 1]));
+    die "\n  [!] Error: Maximum mutation rate must be comprised between 0 and 1\n\n" if (!inrange($maxRate, [0, 1]));
 
     $keepBases = $keepBases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepBases))))))));
 
@@ -347,7 +354,7 @@ elsif ($command eq "extract") {
 
             if ($end > $length) {
 
-                warn "\n  [!] Warning: End coordinate exceeds length for transcript \"$id\" (end: $end, length: $length)";
+                warn "\n  [!] Warning: End coordinate exceeds length for transcript \"$id\" (end: $end, length: $length)\n";
 
                 next;
 
@@ -365,6 +372,16 @@ elsif ($command eq "extract") {
             $start = 0;
             $end = $length;
             $sequence = $realSeq;
+
+        }
+
+        # Blacklist all positions with mutation rates > maxRate or < minRate
+        if ($minRate > 0 || $maxRate < 1) {
+
+            my ($nReads, $counts, $coverage, @mutRate);
+            ($nReads, $counts, $coverage) = _countsAndCovFromReads($mmIn, $id);
+            @mutRate = map { $coverage->[$_] ? $counts->[$_] / $coverage->[$_] : 0 } 0 .. $#{$coverage};
+            $discardPos{$id}->{$_} = 1 for (grep { $_ < $minRate || $_ > $maxRate } @mutRate);
 
         }
 
@@ -421,25 +438,15 @@ elsif ($command eq "torc") {
 
     foreach my $id (sort($mmIO->ids())) {
 
-        my ($sequence, $nReads, $rc, @counts, 
-            @coverage);
+        my ($sequence, $nReads, $rc, $counts, 
+            $coverage);
         $sequence = $mmIO->sequence($id);
-        @counts = (0) x $mmIO->length($id);
-        @coverage = @counts;
-
-        while (my @read = $mmIO->readStream($id)) {
-
-            $nReads++;
-            
-            $coverage[$_]++ for ($read[0] .. $read[1]);
-            $counts[$_]++ for (@{$read[2]});
-
-        }
+        ($nReads, $counts, $coverage) = _countsAndCovFromReads($mmIO, $id);
 
         $rc = RF::Data::RC->new( id         => $id,
                                  sequence   => $sequence,
-                                 counts     => \@counts,
-                                 coverage   => \@coverage,
+                                 counts     => $counts,
+                                 coverage   => $coverage,
                                  readscount => $nReads );
         $rcIO->write($rc);
         $totReads += $nReads;
@@ -690,6 +697,28 @@ elsif ($command eq "split") {
 
 }
 
+sub _countsAndCovFromReads {
+
+    my ($mmIO, $id) = @_;
+
+    my ($nReads, @counts, @coverage);
+    $nReads = 0;
+    @counts = (0) x $mmIO->length($id);
+    @coverage = @counts;
+
+    while (my @read = $mmIO->readStream($id)) {
+
+        $nReads++;
+        
+        $coverage[$_]++ for ($read[0] .. $read[1]);
+        $counts[$_]++ for (@{$read[2]});
+
+    }
+
+    return($nReads, \@counts, \@coverage);
+
+}
+
 sub help {
 
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -796,6 +825,8 @@ HELP
                                                  BED intervals will be retained and subjected to the other filtering steps
  -wl  or --whitelist          <string>     Path to a file containing a list (one per line) of transcripts to be extracted 
                                            from the MM file
+ -nr  or --minRate            <string>     Positions with mutation rate < this value are discarded (0-1, Default: 0 [no cutoff])
+ -xr  or --maxRate            <string>     Positions with mutation rate > this value are discarded (0-1, Default: 1 [no cutoff])
  -dp  or --discardPositions   <string>     Path to a blacklist file containing a list of transcript positions to be filtered
                                            out of the output file (mutations occurring on these positions will be discarded)
 

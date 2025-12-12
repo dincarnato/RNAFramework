@@ -78,7 +78,7 @@ help() if ($help);
 # Default
 $threads ||= 1;
 $negSamplings ||= 20;
-$kmer ||= 5;
+$kmer ||= 4;
 $surround //= 0;
 $window ||= 50;
 $consTollerance //= 0.2;
@@ -100,7 +100,7 @@ die "\n  [!] Error: Provided negative peaks BED file doesn't exist\n\n" if (defi
 die "\n  [!] Error: Number of shufflings must be greater than 0\n\n" if ($negSamplings < 1);
 die "\n  [!] Error: Number of motifs must be greater than 0\n\n" if ($nmotifs < 1);
 die "\n  [!] Error: Window size must be greater than 3\n\n" if ($window < 3);
-die "\n  [!] Error: k-mer size must be >= 3\n\n" if ($kmer < 4);
+die "\n  [!] Error: k-mer size must be >= 4\n\n" if ($kmer < 4);
 die "\n  [!] Error: Consensus tollerance must be comprised between 0 and 1\n\n" if (!isnumeric($consTollerance) || !inrange($consTollerance, [0, 1]));
 die "\n  [!] Error: p-value must be comprised between 0 and 1\n\n" if (!isnumeric($pcutoff) || !inrange($pcutoff, [0, 1]));
 die "\n  [!] Error: No output folder specified\n\n" if (!defined $output);
@@ -302,7 +302,7 @@ while(@discovered < $nmotifs) {
 
     }
 
-    print CLRRET . "[+] Calculating significant enrichments [Iteration #" . $iter . "]";
+    print CLRRET . "[+] Calculating significant enrichments [Iteration #$iter]";
 
     $matches{$_}->{pvalue} = fisher($matches{$_}->{pos} || 0, $matches{$_}->{neg} || 0,
                                     $totseqs{pos} - $matches{$_}->{pos}, $totseqs{neg} - $matches{$_}->{neg}) for (keys %matches);
@@ -323,7 +323,7 @@ while(@discovered < $nmotifs) {
 
     last if (!@significant);
 
-    print CLRRET . "[+] Clustering similar motifs [Iteration #" . $iter . "]";
+    print CLRRET . "[+] Clustering similar motifs [Iteration #$iter]";
 
     foreach my $motif1 (@significant) {
 
@@ -332,7 +332,7 @@ while(@discovered < $nmotifs) {
         foreach my $motif2 (@significant) {
 
             next if ($motif1 eq $motif2);
-            next if (hd($motif1, $motif2) > 1);
+            next if (hamming($motif1, $motif2) > 1);
 
             push(@neighbors, $motif2);
 
@@ -352,7 +352,7 @@ while(@discovered < $nmotifs) {
 
     }
 
-    print CLRRET . "[+] Building motif for best cluster [Iteration #" . $iter . "]";
+    print CLRRET . "[+] Building motif for best cluster [Iteration #$iter]";
 
     $match = (sort {$matches{$a}->{clusterPvalue} <=> $matches{$b}->{clusterPvalue} ||
                     $matches{$b}->{meanEnrichment} <=> $matches{$a}->{meanEnrichment}} keys %matches)[0];
@@ -380,7 +380,7 @@ while(@discovered < $nmotifs) {
 
     }
 
-    print CLRRET . "[+] Calculating final p-value [Iteration #" . $iter . "]";
+    print CLRRET . "[+] Calculating final p-value [Iteration #$iter]";
 
     $matchData = { totalPos       => 0,
                    totalNeg       => 0,
@@ -396,7 +396,7 @@ while(@discovered < $nmotifs) {
 
     $matchData->{matrix} = seqs2matrix(\@aligned, \%matches);
     $extCoreMotif = matrix2consensus($matchData->{matrix});
-    $regex = join("|", map { $_ =~ s/-//g; $_ } @aligned);
+    $regex = join("|", map { my $k = $_; $k =~ s/-//g; $k } @aligned);
 
     # Mask motifs in peaks
     for (@peaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
@@ -430,7 +430,7 @@ while(@discovered < $nmotifs) {
 
         for (@erasedRealPeaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
 
-        print CLRRET . "[+] Calculating erased p-value [Iteration #" . $iter . "]";
+        print CLRRET . "[+] Calculating erased p-value [Iteration #$iter]";
 
         @erasedNegPeaks = shufflePeaks(@erasedRealPeaks);
 
@@ -526,8 +526,6 @@ else {
 }
 
 print "\n[+] All done.\n\n";
-
-sub hd { return ($_[0] ^ $_[1]) =~ tr/\001-\255//; }
 
 sub shufflePeaks {
 
@@ -790,7 +788,7 @@ sub help {
                                              Note: default is to sample -ns (or --neg-samplings) random windows from the
                                                    reference transcripts, for each peak in the dataset
  -ns  or --nuc-shuffling                     Performs random shuffling of nucleotides without preserving dinucleotide frequencies
- -k   or --kmer              <int>           K-mer size (>=4, Default: 5)
+ -k   or --kmer              <int>           K-mer size (>=4, Default: 4)
  -v   or --pvalue            <float>         P-value threshold to consider an enrichment significant (0-1, Default: 1e-3)
  -nm  or --n-motifs          <int>           Maximum number of motifs to report (>=1, Default: 3)
  -ops or --one-per-seq                       K-mers are counted only once per peak

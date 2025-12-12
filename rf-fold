@@ -271,7 +271,7 @@ if ($method == 1) { # ViennaRNA
 
     my $ret = `$viennarna --version`;
 
-    if ($ret =~ m/RNAfold (\d+)\.(\d+)/) {
+    if ($ret =~ /RNAfold (\d+)\.(\d+)/) {
 
         my ($v1, $v2) = ($1, $2);
 
@@ -286,17 +286,32 @@ else { # RNAstructure
     if (!defined $data) { die "\n\n  [!] Error: Environment variable DATAPATH is not set\n\n"; }
     elsif (!-d $data) { die "\n\n  [!] Error: Provided DATAPATH directory doesn't exist\n\n"; }
 
-    if (!defined $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold is not in PATH\n\n"; }
-    elsif (!-e $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold doesn't exist\n\n"; }
-    elsif (!-x $rnastructure) { die "\n\n  [!] Error: RNAstructure Fold is not executable\n\n"; }
+    foreach my $prog (["Fold", $rnastructure], ["partition", $partition], ["ProbabilityPlot", $probplot]) {
 
-    if (!defined $partition) { die "\n\n  [!] Error: RNAstructure partition is not in PATH\n\n"; }
-    elsif (!-e $partition) { die "\n\n  [!] Error: RNAstructure partition doesn't exist\n\n"; }
-    elsif (!-x $partition) { die "\n\n  [!] Error: RNAstructure partition is not executable\n\n"; }
+        if (!defined $prog->[1]) { die "\n\n  [!] Error: RNAstructure $prog->[0] is not in PATH\n\n"; }
+        elsif (!-e $prog->[1]) { die "\n\n  [!] Error: RNAstructure $prog->[0] does not exist\n\n"; }
+        elsif (!-x $prog->[1]) { die "\n\n  [!] Error: RNAstructure $prog->[0] is not executable\n\n"; }
+        else {
 
-    if (!defined $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not in PATH\n\n"; }
-    elsif (!-e $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot doesn't exist\n\n"; }
-    elsif (!-x $probplot) { die "\n\n  [!] Error: RNAstructure ProbabilityPlot is not executable\n\n"; }
+            my $ret = `$prog->[1] --version`;
+            
+            if ($ret =~ /Mathews Lab/i) {
+
+                if ($ret =~ /Version (\d+)\.(\d+)/) {         
+                    
+                    my ($v1, $v2) = ($1, $2);
+
+                    die "\n\n  [!] Error: RF Fold requires RNAstructure $prog->[0] v6.5 or greater (Detected: v" . $v1 . "." . $v2 . ")\n\n" if ($v1 < 6 || ($v1 == 6 && $v2 < 5));
+
+                }
+                else { warn "\n\n  [!] Warning: Unable to detect RNAstructure $prog->[0] version\n"; }
+
+            }
+            else { warn "\n\n  [!] Warning: $prog->[0] (path: $prog->[1]) does not look like an RNAstructure tool\n"; }
+
+        }
+
+    }
 
     $ENV{DATAPATH} = $data;
 
@@ -596,8 +611,13 @@ sub fold {
 
             eval { $xmlref = RF::Data::IO::XML->new(file => $xml); };
 
-            if ($@) { return({ id       => $xml, 
-                               parseErr => 1 }); } 
+            if ($@) { 
+
+                _logError($@, $xml);
+
+                return({ parseErr => 1 }); 
+                
+            } 
             
         };
 
@@ -610,9 +630,14 @@ sub fold {
         }
         else { 
 
-            return({ id      => $xml, 
-                     diffSeq => 1 }) if (($sequence ne $xmlref->sequence() && !$ignoreSeq) ||
-                                         ($length != $xmlref->length() && $ignoreSeq));
+            if (($sequence ne $xmlref->sequence() && !$ignoreSeq) ||
+                ($length != $xmlref->length() && $ignoreSeq)) {
+
+                _logError("Sequence mismatch between input XML files", $id);
+
+                return({ diffSeq => 1 });
+
+            }
 
         }
 
@@ -624,8 +649,13 @@ sub fold {
     @meanReact = map { isnumeric(@$_) ? mean(@$_) : "NaN" } @meanReact;
     $constraint = exists $constraints{$id} ? $constraints{$id} : "." x $length;
 
-    return({ id        => $id, 
-             diffConst => 1 }) if (length($constraint) != $length);
+    if (length($constraint) != $length) {
+
+        _logError("Constraint length != sequence length", $id);
+
+        return({ diffConst => 1 });
+
+    }
 
     ######### Partition function block ##########
 
@@ -702,8 +732,7 @@ sub fold {
 
                     unlink(glob($tmpfile . "*")) unless($keeptmp);
 
-                    return({ id      => $id,
-                             foldErr => 1 });
+                    return({ foldErr => 1 });
 
                 }
 
@@ -775,7 +804,7 @@ sub fold {
 
     if ($dp) {
 
-        open(my $wh, ">", $output . "dotplot/" . $id . ".dp") or next;
+        open(my $wh, ">", $output . "dotplot/" . $id . ".dp") or _logError("Unable to write output dotplot file ($!)", $id) and next;
         select((select($wh), $|=1)[0]);
         print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
         print $wh join("\t", $_->[0] + 1, $_->[1] + 1, -logarithm($_->[2], 10)) . "\n" for (@dotplot);
@@ -856,8 +885,7 @@ sub fold {
 
                 unlink(glob($tmpfile . "*")) unless($keeptmp);
 
-                return({ id      => $id,
-                         foldErr => 1 });
+                return({ foldErr => 1 });
 
             }
 
@@ -964,8 +992,7 @@ sub fold {
 
                     unlink(glob($tmpfile . "*")) unless($keeptmp);
 
-                    return({ id    => $id,
-                            pkErr => 1 });
+                    return({ pkErr => 1 });
 
                 }
 
@@ -1036,8 +1063,9 @@ sub fold {
 
     if ($@) {
 
-        return({ id      => $id,
-                 foldErr => 1 });
+        _logError($@, $id);
+
+        return({ foldErr => 1 });
 
         next;
 
@@ -1046,21 +1074,11 @@ sub fold {
     $io->write($entry);
     $io->close();
 
-    if ($dp) {
-
-        open(my $wh, ">", $output . "dotplot/" . $id . ".dp") or next;
-        select((select($wh), $|=1)[0]);
-        print $wh length($sequence) . "\ni\tj\t-log10(Probability)\n";
-        print $wh join("\t", $_->[0] + 1, $_->[1] + 1, -logarithm($_->[2], 10)) . "\n" for (@dotplot);
-        close($wh);
-
-    }
-
     if ($sh) {
 
         my $i = 0;
 
-        open(my $wh, ">", $output . "shannon/" . $id . ".wig") or next;
+        open(my $wh, ">", $output . "shannon/" . $id . ".wig") or _logError("Unable to write Shannon entropy WIG file ($!)", $id) and next;
         select((select($wh), $|=1)[0]);
 
         print $wh "track type=wiggle_0 name=\"" . $id . " Shannon entropy\"\n" .
@@ -1492,7 +1510,13 @@ sub pkdetect {
         #$cmd .= " -C '" . $parameters{file} . ".constraint'" if ($hc); # ShapeKnots takes -C parameter, but it is ignored
         $ret = `$shapeknots $cmd $skparams 2>&1`;
 
-        return if ($ret !~ m/#+\s+DONE\s+#+/m);
+        if ($ret !~ m/#+\s+DONE\s+#+/m) {
+
+            _logError("Exception in RNAstructure ShapeKnots\n\n$ret", $parameters{file});
+
+            return;
+
+        }
 
         # If the sequence is all single-stranded, ShapeKnots may return an empty CT file
         if (-s $parameters{file} . ".ct") {
@@ -1501,7 +1525,13 @@ sub pkdetect {
                                                   pseudoknots => 1,
                                                   lonelypairs => $nlp ? 0 : 1 ); };
 
-            if ($@) { return; }
+            if ($@) { 
+
+                _logError($@, $parameters{file});
+
+                return; 
+                
+            }
 
             if (my $entry = $io->read()) {
 
@@ -1509,7 +1539,13 @@ sub pkdetect {
                 @basepairs = $entry->basepairs();
 
             }
-            else { return; }
+            else { 
+
+                _logError("ShapeKnots returned an empty structure", $parameters{file});
+
+                return; 
+                
+            }
 
         }
 
@@ -1526,9 +1562,7 @@ sub pkdetect {
 
     @pkreact = grep { !isnan($_) } @{$parameters{reactivity}}[sort {$a <=> $b} map {@$_} @pkpairs];
 
-    if ($ignore ||
-        !@pkreact ||
-        mean(@pkreact) <= $pkcutoff) {
+    if ($ignore || !@pkreact || mean(@pkreact) <= $pkcutoff) {
 
         $pkpairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@pkpairs);
         $basepairs{($_->[0] + $parameters{pos}) . "-" . ($_->[1] + $parameters{pos})} = 1 for (@basepairs);
@@ -1593,14 +1627,26 @@ sub winfold {
 
         $ret = `$cmd $rsfoldparams 2>&1`;
 
-        return if ($ret !~ m/Single strand folding complete\./);
+        if ($ret !~ m/Single strand folding complete\./) {
+
+            _logError("Exception in RNAstructure Fold\n\n$ret", $parameters{file});
+
+            return;
+
+        }
 
     }
 
     eval { $io = Data::IO::Sequence->new( file        =>  $method == 1 ? (-e $parameters{file} . ".fold_" . $parameters{file} . ".fold" ? $parameters{file} . ".fold_" . $parameters{file} . ".fold" : $parameters{file} . ".fold") : $parameters{file} . ".ct",
                                           lonelypairs => $nlp ? 0 : 1 ); };
 
-    if ($@) { return; }
+    if ($@) { 
+
+        _logError($@, $parameters{file});
+
+        return; 
+        
+    }
 
     if (my $entry = $io->read()) {
 
@@ -1612,7 +1658,13 @@ sub winfold {
         }
 
     }
-    else { return; }
+    else { 
+
+        _logError("Fold returned an empty structure", $parameters{file});
+
+        return; 
+        
+    }
 
     unlink(glob($parameters{file} . "*")) unless($keeptmp);
 
@@ -1655,15 +1707,14 @@ sub partition {
 
         $ret = `$cmd $vrfoldparams --noPS 2>/dev/null`;
 
-        open(my $fh, "<", $parameters{file} . "_dp.ps") or return;
+        open(my $fh, "<", $parameters{file} . "_dp.ps") or _logError("Unable to read RNAfold dotplot file ($!)", $parameters{file}) and return;
         while(<$fh>) {
 
             if ($_ =~ m/^(\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
 
                 my ($i, $j, $p) = ($1, $2, $3);
 
-                next if ($i <= $parameters{trim5} ||
-                         $j >= length($parameters{sequence}) - $parameters{trim3});
+                next if ($i <= $parameters{trim5} || $j >= length($parameters{sequence}) - $parameters{trim3});
 
                 $i += $parameters{pos} - 1;         # Base numbering is 1-based
                 $j += $parameters{pos} - 1;
@@ -1687,22 +1738,33 @@ sub partition {
 
         $ret = `$cmd $rsfoldparams 2>&1`;
 
-        return if ($ret !~ m/Single strand partition function complete\./);
+        if ($ret !~ /Single strand partition function complete\./) {
+
+            _logError("Exception in RNAstructure partition\n\n$ret", $parameters{file});
+
+            return;
+
+        }
 
         $cmd = $probplot . " -t '" . $parameters{file} . ".pfs' '" . $parameters{file} . ".pfs.txt'";
         $ret = `$cmd 2>&1`;
 
-        return if ($ret !~ m/Probability dot plot complete\./);
+        if ($ret !~ /Probability dot plot complete\./) {
 
-        open(my $fh, "<", $parameters{file} . ".pfs.txt") or return;
+            _logError("Exception in RNAstructure ProbabilityPlot\n\n$ret", $parameters{file});
+
+            return;
+
+        }
+
+        open(my $fh, "<", $parameters{file} . ".pfs.txt") or _logError("Unable to read from temporary PFS file ($!)", $parameters{file}) and return;
         while(<$fh>) {
 
             if ($_ =~ m/^(\d+)\t(\d+)\t([\d\.]+(?:e-\d+)?)$/) {
 
                 my ($i, $j, $p) = ($1, $2, $3);
 
-                next if ($i <= $parameters{trim5} ||
-                         $j >= length($parameters{sequence}) - $parameters{trim3});
+                next if ($i <= $parameters{trim5} || $j >= length($parameters{sequence}) - $parameters{trim3});
 
                 $i += $parameters{pos} - 1;         # Base numbering is 1-based
                 $j += $parameters{pos} - 1;
@@ -1733,7 +1795,7 @@ sub xml2shape {
 
     my $i = 0;
 
-    open(my $wh, ">", $file . ".shape") or return();
+    open(my $wh, ">", $file . ".shape") or _logError("Unable to write temporary SHAPE file ($!)") and return();
     select((select($wh), $|=1)[0]);
     for (@{$reactivity}) {
 
@@ -1763,7 +1825,7 @@ sub applyhardconstraint {
         $constraint[$_] = "x" for (@{$hardbases});
 
         # Appends constraint to FASTA file
-        open(my $wh, ">>", $file . ".fa") or return;
+        open(my $wh, ">>", $file . ".fa") or _logError("Unable to append constraint to temporary FASTA file ($!)") and return;
         print $wh join("", @constraint);
         close($wh);
 
@@ -1772,7 +1834,7 @@ sub applyhardconstraint {
     }
     else { # RNAstructure
 
-        open(my $wh, ">", $file . ".constraint") or return();
+        open(my $wh, ">", $file . ".constraint") or _logError("Unable to write temporary constraint file ($!)") and return();
         select((select($wh), $|=1)[0]);
 
         print $wh "DS:\n-1\nSS:\n";
@@ -1828,7 +1890,13 @@ sub seq2fasta {
 
     };
 
-    if ($@) { return(); }
+    if ($@) { 
+
+        _logError($@, $id);
+
+        return(); 
+        
+    }
 
     return(1);
 
@@ -1893,6 +1961,17 @@ sub pseudodG {
     }
 
     return($dG);
+
+}
+
+sub _logError {
+
+    my ($error, $transcript) = @_;
+    my $caller = (caller(1))[3];
+    $caller =~ s/^main:://;
+    $error =~ s/^/    /gm;
+
+    print STDERR "[!] Exception in $caller()" . ($transcript ? ", transcript/file $transcript:" : ":") . "\n$error\n"; 
 
 }
 

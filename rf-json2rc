@@ -114,8 +114,8 @@ $output ||= "rf_json2rc/";
 $minConf //= 2;
 $maxConf ||= 1e9;
 $ignoreTerm //= 0.05;
-$medianPreCov //= 1000;
-$medianCov //= 5000;
+$medianPreCov //= 2000;
+$medianCov //= 0;
 $minOverlapReps ||= 0.75;
 $minCorrMatch //= 0.7;
 $minOverlapMerge ||= 0.75;
@@ -865,9 +865,9 @@ sub help {
  -rci or --rc-index               <string>        A comma-separated list of RCI index files
                                                   Note: the RCI indexes must follow the same order of the RC files. If a single
                                                         RCI index is provided, it will be used for all the RC files.
- -ep  or --median-pre-cov         <int>           Windows with median preCoverage below this threshold, will be discarded (Default: 1000)
+ -ep  or --median-pre-cov         <int>           Windows with median preCoverage below this threshold, will be discarded (Default: 2000)
  -ec  or --median-cov             <int>           Windows with a mediam cumulative coverage (the sum of the coverage across all the
-                                                  conformations for that window) below this threshold, will be discarded (Default: 5000)
+                                                  conformations for that window) below this threshold, will be discarded (Default: 0)
  -sz  or --skip-zero-cluster-wins                 Skips windows for which DRACO failed to identify the number of conformations
  -nc  or --min-confs              <int>           Windows forming less than this number of conformations will be discarded (Default: 2)
  -xc  or --max-confs              <int>           Windows forming more than this number of conformations will be discarded (Default: no limit)

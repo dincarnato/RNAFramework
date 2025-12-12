@@ -1,3 +1,26 @@
+## [2.9.5] - 2025-12-12
+### Added
+- Added -bnf (--bowtie-nofw) parameter to rf-map, to force mapping to the antisense strand only
+- Added -wl (--whitelist) parameter to rf-rctools extract, to be used as an alternative to -a (--annotation) to allow extracting only specific transcripts
+- Added extensive error logging to rf-fold, to enable tracing issues with failed transcripts
+- Added -nr (--minRate) and -xr (--maxRate) parameters to rf-mmtools extract, to allow masking/discarding positions whose mutation frequencies are lower/higher than a user-specified threshold
+- Added paired-end read support to rf-count. This is a major change. Several novel parameters have been implemented:
+	- -mp (--max-clipped), controls the maximum number of clipped bases on either side of the read to be allowed to be included in coverage calculation when -ic (--include-clipped) is enabled
+	- -sbn (--sort-by-read-name), which enables pre-sorting large paired-end BAM files by read name to minimize memory footprint
+	- -pam (--paired-end-all-mutations), which enables counting all mutations present in overlapping paired-end reads, whether or not they are supported by both mates
+	- -fsr (--force-single-read), which forces the two mates in a pair to be treated as independent single reads
+	- -msp (--mm-split-paired-end), which, in case of non-overlapping paired-end reads, controls whether they should be reported as separate reads, or as a single long read spanning from the start of R1 to the end of R2, on the basis of the distance between the end of R1 and the start of R2 
+
+### Changed
+- Bumped up minimum requirement for RNAstructure version (v6.5)
+- Fixed a small issue in the dump of reads/clusters in rf-duplex
+- Changed default values for rf-json2rc -ep (--median-pre-cov) and -ec (--median-cov) to 2000 and 0 respectively
+- Changed default value for rf-count -mq (--map-quality) to 0
+- Changed default value for rf-motifdiscovery -k (--kmer) to 4
+
+### API changes
+- Implemented the _timeoutRecv() method in Net::DB::MySQL to prevent hanging in case the server does not respond within a maximum timeout
+
 ## [2.9.4] - 2025-10-13
 ### Added
 - Added generation of statistics plots to rf-count and rf-count-genome via the -g (or --img) parameter

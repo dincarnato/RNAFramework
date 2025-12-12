@@ -1,6 +1,7 @@
 package Net::DB::MySQL;
 
 use strict;
+use IO::Select;
 use IO::Socket;
 use Digest::SHA;
 
@@ -63,7 +64,7 @@ sub connect {
     }
 
     $socket->autoflush(1);
-    $socket->recv($msg, 1460, 0);
+    $msg = $self->_timeoutRecv($socket, 1460);
     
     $i = 0;
     $length = ord(substr($msg, 0, 1));
@@ -92,7 +93,7 @@ sub connect {
 
     undef($msg);
 
-    $socket->recv($msg, 1460, 0);
+    $msg = $self->_timeoutRecv($socket, 1460);
 
     if (my ($errCode, $errMsg) = $self->_isSQLError($msg)) {
 
@@ -331,7 +332,7 @@ sub _send {
     $socket = $self->{_socket};
     $msg = pack("V", length($query) + 1) . $command . $query;
     $socket->send($msg, 0);
-    $socket->recv($response, 1460, 0);
+    $response = $self->_timeoutRecv($socket, 1460);
 
     if (my ($errCode, $errMsg) = $self->_isSQLError($response)) {
 
@@ -349,7 +350,7 @@ sub _send {
             while (substr($response, -5) ne "\xFE\x00\x00\x22\x00") {
 
                 my ($nextResponse);
-                $socket->recv($nextResponse, 1460, 0);
+                $nextResponse = $self->_timeoutRecv($socket, 1460);
                 $response .= $nextResponse;
 
             }
@@ -373,6 +374,39 @@ sub close {
 
         $socket->send(chr(1) . "\x00\x00\x00\x01", 0);
         $socket->close();
+
+    }
+
+}
+
+sub _timeoutRecv {
+
+    my $self = shift;
+    my ($socket, $buffSize) = @_;
+
+    my $sel = IO::Select->new($socket);
+
+    if ($sel->can_read($self->{timeout})) {
+
+        my ($buffer, $recv);
+        $recv = $socket->recv($buffer, $buffSize, 0);
+
+        if (!defined $recv || !length $buffer) {
+
+            $self->{_error} = "Socket error (no data received)";
+
+            return;
+        
+        }
+
+        return($buffer);
+
+    } 
+    else {
+
+        $self->{_error} = "Socket read timed out after $self->{timeout}s";
+
+        return;
 
     }
 

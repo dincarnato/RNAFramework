@@ -132,7 +132,7 @@ if ($scoreMethod !~ /^[24]$/) {
 
     $fileMap{$treatFiles[$_]} = { "ctrl" => $ctrlFiles[$_] } for (0 .. $#treatFiles);
 
-    if ($scoreMethod == 3) { 
+    if ($scoreMethod == 3 && @denatFiles) { 
         
         @denatFiles = ($denatFiles[0]) x @treatFiles if (@denatFiles == 1); 
         $fileMap{$treatFiles[$_]}->{"denat"} = $denatFiles[$_] for (0 .. $#treatFiles);
@@ -293,7 +293,7 @@ sub runNorm {
 
     my ($cmd, $ret, $outDir);
     $outDir = (fileparse($file, ".rc"))[0];
-    $cmd = "$rfnorm -sm $scoreMethod -nm $normMethod -n $minCov -ec $medianCoverage -t $file -rb $reactiveBases -nf $normFactor -ow";
+    $cmd = "$rfnorm -p $threads -sm $scoreMethod -nm $normMethod -n $minCov -ec $medianCoverage -t $file -rb $reactiveBases -nf $normFactor -ow";
 
     if (exists $fileMap{$file}->{"ctrl"}) { 
 
