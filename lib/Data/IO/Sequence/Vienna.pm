@@ -174,7 +174,8 @@ sub read {
     # Index building at runtime
 
     $self->throw("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
-                                                                                                                         $self->{_index}->{$id} != $offset);
+                                                                                                                         $self->{_index}->{$id} != $offset &&
+                                                                                                                         $self->{checkDuplicateIds});
 
     if (exists $self->{_index}->{$id}) {
 

@@ -910,7 +910,30 @@ sub count {
 
         if (open(my $fh, "-|", $countCmd)) {
 
-            my (%ref, %lastRead); 
+            my (%ref, %lastRead);
+
+            if ($fast) { 
+                            
+                $ref{sequence} = $transcripts{$id}; 
+                $ref{length} = length($ref{sequence}); 
+
+            }
+            else {
+
+                my $entry = $seqio->read($id);
+                $entry->unmask();
+                $ref{sequence} = $entry->sequence();
+                $ref{length} = $transcripts{$id};
+
+            }
+
+            $readsCount = 0;
+            $readsToMaxCov = $ref{length} < $sample->{medianReadLen} ? $maxcov : round(($ref{length} * $maxcov / $sample->{medianReadLen}) / ($ref{length} - $sample->{medianReadLen} + 1)) if ($maxcov);
+            @counts = (0) x $ref{length};
+            @coverage = (0) x $ref{length};
+            %rawCounts = map { $_ => [ (0) x $ref{length} ] } @mutClasses if ($outRawCounts);
+
+            $mmIO->append_transcript($id, $ref{sequence}) if ($mutmap);
 
             while (!eof($fh)) {
 
@@ -955,33 +978,6 @@ sub count {
                 
                 next if ($clip5 && !$mutcount && !$covonly && 
                          (!$includeclip || ($includeclip && $maxClipped && $clip5 > $maxClipped))); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
- 
-                if (!exists $ref{sequence}) {
-
-                    if ($fast) { 
-                            
-                        $ref{sequence} = $transcripts{$id}; 
-                        $ref{length} = length($ref{sequence}); 
-
-                    }
-                    else {
-
-                        my $entry = $seqio->read($row[2]);
-                        $entry->unmask();
-                        $ref{sequence} = $entry->sequence();
-                        $ref{length} = $transcripts{$id};
-
-                    }
-
-                    $readsCount = 0;
-                    $readsToMaxCov = $ref{length} < $sample->{medianReadLen} ? $maxcov : round(($ref{length} * $maxcov / $sample->{medianReadLen}) / ($ref{length} - $sample->{medianReadLen} + 1)) if ($maxcov);
-                    @counts = (0) x $ref{length};
-                    @coverage = (0) x $ref{length};
-                    %rawCounts = map { $_ => [ (0) x $ref{length} ] } @mutClasses if ($outRawCounts);
-
-                    $mmIO->append_transcript($id, $ref{sequence}) if ($mutmap);
-
-                }
 
                 if ($mutcount || $covonly) {  # Mutations count / Coverage only modes
 
