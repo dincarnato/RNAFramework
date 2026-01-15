@@ -969,6 +969,7 @@ sub help {
  -r  or --raw                                       Reports raw reactivities (skips normalization)
  -rm or --remap-reactivities                        Remaps reactivities to values ranging from 0 to 1 according to Zarringhalam et al., 2012
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
+                                                    Note: IUPAC codes are allowed
  -ni or --norm-independent                          Each reactive base will be normalized independently
  -nw or --norm-window         <int>                 Window for signal normalization (>=3, Default: whole transcript (1e9) [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])

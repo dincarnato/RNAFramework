@@ -813,7 +813,8 @@ HELP
  Options                                   Description
  -o   or --output             <string>     Output MM file (Default: <input>.extracted.mm)
  -ow  or --overwrite                       Overwrites output MM file (if the specified file already exists)
- -kb  or --keepBases          <string>     Only retains mutations on specified bases (Default: N)
+ -kb  or --keepBases          <string>     Only retains mutations on specified bases (Default: all)
+                                           Note: IUPAC codes are allowed
  -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (>=0, Default: 1)
  -mrl or --minReadLen         <int>        Reads shorter than this length are discarded (>0, Default: 1)
  -rs  or --randSubsample      <int>        Randomly subsamples this fraction of reads (Default: keep all reads)

@@ -569,6 +569,7 @@ sub help {
                                                                                                           [3] Box-plot
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
+                                                    Note: IUPAC codes are allowed
  -mc or --min-coverage        <int>                 Discards any base with coverage below this threshold (>=1, Default: 10)
  -ec or --median-coverage     <float>               Discards transcripts having median coverage below this threshold (>=0, Default: 0)
  -rn or --run-norm                                  Automatically runs rf-norm with the derived normalization factors on the input files

@@ -18,6 +18,7 @@ sub new {
                    dataPointShape  => undef,
                    stdev           => undef,
                    errorBarWidth   => 0.05,
+                   lineWidth       => 0.25,
                    dataPointSize   => 2,
                    colorDataPoints => 1,
                    colorLines      => 1,
@@ -35,6 +36,8 @@ sub _validate {
     my $self = shift;
 
     for (qw(lineType dataPointShape stdev)) { $self->throw("Data label \"" . $self->{$_} . "\" does not exist") if (defined $self->{$_} && !exists $self->{dataLabels}->{$self->{$_}});}
+
+    $self->throw("lineWidth must be a positive number") if (!ispositive($self->{lineWidth}));
 
     $self->SUPER::_validate();
 
@@ -67,8 +70,8 @@ sub _generateRcode {
         push(@aes, "colour=" . $self->{fill}) if ($self->{colorLines});
         push(@aes, "linetype=" . $self->{lineType}) if ($self->{lineType});
 
-        $Rcode .= " + geom_line(";
-        $Rcode .= "aes(" . join(", ", @aes) . ")" if (@aes);
+        $Rcode .= " + geom_line(linewidth=" . $self->{lineWidth};
+        $Rcode .= ", aes(" . join(", ", @aes) . ")" if (@aes);
         $Rcode .= ")";
 
     }

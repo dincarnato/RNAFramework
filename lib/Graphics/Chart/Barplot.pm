@@ -60,15 +60,32 @@ sub _generateRcode {
     $Rcode .= "df_$id\$data<-as.numeric(df_$id\$data);\n";
     $Rcode .= "df_$id\$$_<-factor(df_$id\$$_, levels=c('" . join("', '", @{$self->{dataLabelSort}->{$_}}) . "'));\n" for (keys %{$self->{dataLabelSort}});
 
+    if ($self->{stdev} && $self->{groupMethod} eq "stack") {
+            
+        $Rcode .= "df_$id <- df_$id\[order(df_$id\$" . $self->{fill} . ", decreasing=TRUE), ];\n";
+        $Rcode .= "df_$id\$cum_top <- ave(df_$id\$data, df_$id\$" . $self->{x} . ", FUN=cumsum);\n";
+
+    }
+
     $Rcode .= "plot_$id<-ggplot(df_$id, aes(x=" . (defined $self->{x} ? $self->{x} : "seq(from=1, to=nrow(df_$id))") .
               ", y=data, fill=" . $self->{fill} . ")) + geom_bar(stat='identity'";
     $Rcode .= ", position=" . ($self->{groupMethod} eq "dodge" ? "position_dodge(width=0.9)" : "'stack'") . ")";
 
-    if ($self->{stdev} && $self->{groupMethod} ne "stack") {
+    if ($self->{stdev}) {
 
-        $Rcode .= " + geom_errorbar(aes(ymin=data-as.numeric(" . $self->{stdev} . "), ymax=data+as.numeric(" . $self->{stdev} . "))" .
-                  ", width=" . $self->{errorBarWidth} . ", position=position_dodge(width=0.9))";
+        if ($self->{groupMethod} eq "stack") {
 
+            $Rcode .= " + geom_errorbar(aes(ymin=cum_top - as.numeric(" . $self->{stdev} . "), ymax=cum_top + as.numeric(" . $self->{stdev} . ")), " .
+                      "width=" . $self->{errorBarWidth} . ", color='black')";
+
+        }
+        else {
+            
+            $Rcode .= " + geom_errorbar(aes(ymin=data-as.numeric(" . $self->{stdev} . "), ymax=data+as.numeric(" . $self->{stdev} . ")), " .
+                      "width=" . $self->{errorBarWidth} . ", position=position_dodge(width=0.9))";
+        
+        }
+        
     }
 
     if ($self->{plotValues}) {
