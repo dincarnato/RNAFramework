@@ -17,7 +17,6 @@
 
 use strict;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
@@ -42,8 +41,8 @@ $|++;
 
 my ($input, $reference, $help, $relaxed, 
     $kp, $kl, $img, $threads, $output, 
-    $overwrite, $ignoreseq, $error, $nRefs,
-    $R, $tmpDir, @pool);
+    $overwrite, $ignoreseq, $nRefs, $R, 
+    $tmpDir, @pool);
 my $progressBar : shared;
 my @files : shared;
 my @results : shared;
@@ -113,12 +112,8 @@ if (-e $output) {
     
 }
 
-mkpath($tmpDir, { mode  => 0755,
-                  error => \$error });
-mkpath($output . "plots/", { mode  => 0755,
-                             error => \$error }) if ($img);
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+if (my $error = mktree($tmpDir, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
+mktree($output . "plots/", "755") if ($img);
 
 $progressBar = shared_clone(Term::Progress->new( max     => 1,
                                                  width   => 50,

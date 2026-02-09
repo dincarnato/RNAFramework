@@ -19,9 +19,6 @@ For updates, please visit: <http://www.rnaframework.com>
 
 For support requests, please post your questions/issues to: <https://github.com/dincarnato/RNAFramework/issues>  
 
-For news, and walkthrough examples, please visit our blog:
-<http://www.rnaframework.com/blog>
-
 
 ## Author
 

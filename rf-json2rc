@@ -19,7 +19,6 @@
 use strict;
 use Config;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
@@ -68,13 +67,14 @@ die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
 my ($help, $output, $overwrite, $rcin, $needRC,
-    $jsonin, $medianPreCov, $medianCov, $error,
-    $data, $minConf, $maxConf, $extend, $corrByMajority,
+    $jsonin, $medianPreCov, $medianCov, $data, 
+    $minConf, $maxConf, $extend, $corrByMajority,
     $corrAll, $surroundToRC, $ignoreTerm, $minOverlapReps,
     $rcindex, $spearman, $minCorrMatch, $acOnly,
-    $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, $success,
-    $skipZeroClusterWins, $capMutFreqs, $keepIgnored, @rcin, @jsonin,
-    @jsonData, @rcindex, @rcout, @filenames, %allWins, %commonWins, %files);
+    $noMergeOverlapping, $minOverlapMerge, $minCorrMerge, 
+    $success, $skipZeroClusterWins, $capMutFreqs, $keepIgnored, 
+    @rcin, @jsonin, @jsonData, @rcout, @filenames, 
+    %allWins, %commonWins, %files, %params);
 
 do {
 
@@ -126,7 +126,6 @@ $success = 0;
 $output =~ s/\/?$/\//;
 @rcin = split(/,/, $rcin);
 @jsonin = split(/,/, $jsonin);
-@rcindex = split(/,/, $rcindex);
 
 $needRC = $minConf < 2 || $surroundToRC ? 1 : 0;
 
@@ -134,7 +133,7 @@ die "\n  [!] Error: No input JSON file provided\n\n" if (!@jsonin);
 for (@jsonin) { die "\n  [!] Error: Provided JSON file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_); }
 die "\n  [!] Error: No input RC file provided\n\n" if ($needRC && !@rcin);
 for (@rcin) { die "\n  [!] Error: Provided RC file \"$_\" doesn't exist\n\n" if (!-e $_); }
-die "\n  [!] Error: Unexpected number of RCI index files\n\n" if ($needRC && defined $rcindex && @rcindex != 1 && @rcindex != @rcin);
+die "\n  [!] Error: Provided RCI index file does not exist\n\n" if ($needRC && defined $rcindex && !-e $rcindex);
 die "\n  [!] Error: Fewer RC files than JSON files provided\n\n" if ($needRC && @rcin < @jsonin);
 die "\n  [!] Error: Median cumulative coverage must be a positive int\n\n" if (!ispositive($medianCov) || !isint($medianCov));
 die "\n  [!] Error: Median preCoverage must be a positive int\n\n" if (!ispositive($medianPreCov) || !isint($medianPreCov));
@@ -162,18 +161,17 @@ if (-e $output) {
 
 }
 
-mkpath($output, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+if (my $error = mktree($output, "755")) { die "\n\n  [!] Error: Unable to create temporary directory ($error)\n\n"; }
 
 if ($needRC) {
 
 print "\n[+] Opening RC file(s)...";
 
     # Replaces the RC file with an IO object pointing to that file
-    $rcin[$_] = RF::Data::IO::RC->new( file  => $rcin[$_],
-                                       index => @rcindex > 1 ? $rcindex[$_] : $rcindex ) for (0 .. $#rcin);
+    @rcin = map { my $i = $rcindex ? $rcindex : (-e "$_.rci" ? "$_.rci" : undef);
+                  RF::Data::IO::RC->new( file       => $_,
+                                         index      => $i,
+                                         buildindex => $i ? 0 : 1 ) } @rcin;
 
 }
 
@@ -182,20 +180,37 @@ print "\n[+] Importing JSON file(s) [0 imported]";
 for my $jsonIdx (0 .. $#jsonin) {
 
     my ($data, $file, $fixed, $lastid, 
-        $nFiles, $legacy);
+        $nFiles, $legacy, $filenames);
     $file = $jsonin[$jsonIdx];
     ($data, $fixed) = fixJson($file);
     $data = decode_json($data);
-    $legacy = 1 if (exists $data->{filename});
-    push(@filenames, $legacy ? $data->{filename} : @{$data->{filenames}});
-    $nFiles = $legacy ? 1 : scalar(@{$data->{filenames}});
+
+    if (exists $data->{filename}) {
+
+        $legacy = 1;
+        $filenames = $data->{filename};
+
+    }
+    else { $filenames = exists $data->{params} ? $data->{params}->{mm} : $data->{filenames}; }
+
+    # To check params agreement 
+    if (exists $data->{params}) {
+
+        # The $data->{params}->{$_} + 0 is needed to convert JSON::PP::Bolean objects into values
+        push(@{$params{$_}}, blessed($data->{params}->{$_}) ? 
+                             ($data->{params}->{$_} + 0 ? "true" : "false") : $data->{params}->{$_}) for (grep { $_ !~ /^(?:mm|output|processors|whitelist|outputRawNClusters|log-level|assignmentsDumpDir)$/ } keys %{$data->{params}});
+
+    }
+
+    push(@filenames, $legacy ? $filenames : @$filenames);
+    $nFiles = $legacy ? 1 : scalar(@$filenames);
 
     die "\n\n  [!] Error: Fewer RC files than processed MM files provided (provided: " . scalar(@rcin) . 
         ", expected so far: " . scalar(@filenames) . ")\n\n" if ($needRC && @rcin < @filenames);
 
     foreach my $fileIdx (0 .. $nFiles - 1) {
 
-        $file = $legacy ? $data->{filename} : $data->{filenames}->[$fileIdx];
+        $file = $legacy ? $filenames : $filenames->[$fileIdx];
         push(@jsonData, {}); # Initializing storage of JSON data
 
         foreach my $transcript (@{$data->{transcripts}}) {
@@ -207,7 +222,7 @@ for my $jsonIdx (0 .. $#jsonin) {
 
             if ($needRC && !$rcin[$jsonIdx + $fileIdx]->read($id)) {
 
-                print CLRRET . "[!] Warning: transcript \"$id\" is missing in RC file, and it will be skipped...\n";
+                print CLRRET . "[!] Warning: transcript \"$id\" is missing in RC file \"" . $rcin[$jsonIdx + $fileIdx]->file() . "\", and it will be skipped...\n";
 
                 next;
 
@@ -273,8 +288,21 @@ for my $jsonIdx (0 .. $#jsonin) {
 
 die "\n\n  [!] Error: No window passed the provided filters\n\n" unless (scalar(keys %allWins));
 
-print "\n\n[i] Order of input files (must be matched by RC files):" .
+print "\n[i] Order of input files (must be matched by RC files):" .
       "\n    " . join(", ", @filenames) . "\n" if ($needRC);
+
+# Checks param agreement only if all JSONs have the params field
+if (keys %params && scalar(@{$params{(keys %params)[0]}}) == @jsonin) {
+
+    if (my @disagree = grep { scalar(uniq(@{$params{$_}})) != 1 } keys %params) {
+
+        print "\n[!] Warning: Parameter mismatch across DRACO runs, results might be inconsistent\n";
+        print "\n    [*] $_: " . join(", ", uniq(@{$params{$_}})) for (@disagree);
+        print "\n";
+
+    }
+
+}
 
 if (!$noMergeOverlapping) {
 
@@ -703,34 +731,29 @@ sub sortConformations {
 
     for my $i (0 .. $#{$refCounts}) {
 
-        # To each profile (mut / cov) the index of the specific profile is appended (will be stripped for correlation calculation
-        push(@refProfiles, [ (map { $refCoverage->[$i]->[$_] ? $refCounts->[$i]->[$_] / $refCoverage->[$i]->[$_] : 0 } 0 .. $#{$refCounts->[$i]}), $i ]);
-        push(@profiles, [ (map { $coverage->[$i]->[$_] ? $counts->[$i]->[$_] / $coverage->[$i]->[$_] : 0 } 0 .. $#{$counts->[$i]}), $i ]);
+        push(@refProfiles, [ map { $refCoverage->[$i]->[$_] ? $refCounts->[$i]->[$_] / $refCoverage->[$i]->[$_] : 0 } 0 .. $#{$refCounts->[$i]} ]);
+        push(@profiles, [ map { $coverage->[$i]->[$_] ? $counts->[$i]->[$_] / $coverage->[$i]->[$_] : 0 } 0 .. $#{$counts->[$i]} ]);
 
     }
 
-    @combinations = calcCombinations(\@refProfiles, \@profiles);
+    @combinations = map { my $i = $_; map { [[$refProfiles[$i], $profiles[$_] ], $i, $_] } 0 .. $#profiles } 0 .. $#refProfiles;
 
     # For each combination, we calculate the correlation and we replace the arrays with the correlation coefficient + index of the conformations
     foreach my $comb (@combinations) {
 
         my ($r, @i);
-        @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]} - 1;
-        $r = (_correlate([@{$comb->[0]}[@i]], [@{$comb->[1]}[@i]], { cap => $capMutFreqs }))[0];
+        @i = grep { ($acOnly && substr($winSeq, $_, 1) =~ m/^[AC]$/) || !$acOnly } 0 .. $#{$comb->[0]->[0]};
+        $r = (_correlate([@{$comb->[0]->[0]}[@i]], [@{$comb->[0]->[1]}[@i]], { cap => $capMutFreqs }))[0];
 
         # This handles those cases in which the stdev of the values in one of the arrays is 0 and the correlation is NaN
         return() if (isnan($r));
 
-        $comb = [$r, $comb->[0]->[-1], $comb->[1]->[-1]];
+        $comb->[0] = $r;
 
     }
+    
+    foreach my $set (calcCombinations(@combinations)) {
 
-    foreach my $set (calcCombinations(map { \@combinations } 0 .. $#{$refCounts})) {
-
-        next if (uniq(map { $set->[$_]->[1] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
-        next if (uniq(map { $set->[$_]->[2] } 0 .. $#{$refCounts}) != scalar(@{$refCounts}));
-
-        # Uncomment this line to check all conformations against the cutoff, otherwise, only the average is checked
         if ($corrAll) { next if (sum(map { $set->[$_]->[0] >= $corrCutoff ? 1 : 0 } 0 .. $#{$refCounts}) < ($corrByMajority ? $#{$refCounts} : @{$refCounts})); }
 
         my $avgCorr = mean(map { $set->[$_]->[0] } 0 .. $#{$refCounts});
@@ -749,7 +772,7 @@ sub sortConformations {
     return() if (!$bestSet);
 
     # Returns the indices of the windows with respect to the reference set
-    return(map { $_->[2] } @{$bestSet});
+    return(map { $_->[2] } sort { $a->[1] <=> $b->[1] } @{$bestSet});
 
 }
 
@@ -757,17 +780,50 @@ sub _correlate { return($spearman ? spearman(@_) : pearson(@_)); }
 
 sub calcCombinations {
 
-    my @list = @_;
+    my @data = @_;
 
-    my @sets = ([]);
+    my ($n, $search, @matrix, @combinations);
 
-    foreach my $array (@list) {
+    for my $row (@data) { # Build correlation matrix
 
-        @sets = map { my @prev = @$_; map clonearrayref([ @prev, clonearrayref($_) ]), @$array } @sets;
+        my ($corr, $i, $j) = @$row;
+        $matrix[$i][$j] = $corr;
 
     }
 
-    return(@sets);
+    $n = @matrix;
+
+    $search = sub {
+
+        my ($i, $used, $current) = @_;
+
+        # One full non-overlapping set built
+        if ($i == $n) {
+
+            push(@combinations, [ @$current ]);
+            return;
+        
+        }
+
+        for my $j (0 .. $n - 1) {
+
+            next if ($used->{$j});
+
+            $used->{$j} = 1;
+            push(@$current, [$matrix[$i][$j], $i, $j]);
+
+            $search->($i + 1, $used, $current);
+
+            pop(@$current);
+            delete($used->{$j});
+
+        }
+
+    };
+
+    $search->(0, {}, []);
+
+    return(@combinations);
 
 }
 
@@ -862,9 +918,12 @@ sub help {
  -j   or --json                   <string>        A comma-separated list of DRACO JSON files from replicate experiments
  -r   or --rc                     <string>        A comma-separated list of RC files from replicate experiments
                                                   Note: the RC files must follow the same order of the JSON files
- -rci or --rc-index               <string>        A comma-separated list of RCI index files
-                                                  Note: the RCI indexes must follow the same order of the RC files. If a single
-                                                        RCI index is provided, it will be used for all the RC files.
+ -rci or --rc-index               <string>        An RCI index file to be used for all input RC files
+                                                  Note: If no RCI index is provided, RF JSON2RC will look for files with .rci
+                                                        extension in the same input folder as the RC files, named after the RC
+                                                        files (e.g., Sample.rc will look for Sample.rc.rci).
+                                                        If no RCI file is found, it will be created at runtime, and stored in
+                                                        the same folder of the input RC files.
  -ep  or --median-pre-cov         <int>           Windows with median preCoverage below this threshold, will be discarded (Default: 2000)
  -ec  or --median-cov             <int>           Windows with a mediam cumulative coverage (the sum of the coverage across all the
                                                   conformations for that window) below this threshold, will be discarded (Default: 0)

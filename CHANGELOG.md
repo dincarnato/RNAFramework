@@ -1,3 +1,31 @@
+## [2.9.6] - 2025-02-09
+### Added
+- Added rf-correlate support for comparing more than just 2 samples. This is a major change. Several novel parameters have been implemented:
+	- -g (--img), enables the generation of correlation heatmaps (requires R)
+	- -R (--R-path), allows specifying the path to the R executable (if not in PATH)
+	- -i (--index), allows providing a single RCI index file for all input RC files
+	- bs (--block-size), allows specifying a maximum chunk size to read large (genome-level) RC files, such as those generated using rf-count-genome
+- Added read number statistics to rf-mmtools
+- Added sample labeling support to rf-map and rf-count
+
+### Changed
+- Removed the -s (--skip-overall) and -mc (--median-coverage) parameters of rf-correlate
+- The -i (--ignore-sequence) parameter of rf-correlate has been changed to -I
+- Improved rf-count pre-sorting by read name for efficient analysis of paired-end experiments
+- Fixed a bug in rf-count and rf-count-genome causing certain SAM flags to be ignored
+- Fixed two bugs introduced in the last release in rf-count:
+	- raw mutations not being reported with -orm
+	- certain transcripts would not be updated in the RC file (thanks to @coffeebond for reporting this)
+- Fixed a bug in rf-json2rc causing certain overlapping windows to be erroneously discarded in some edge cases
+- Improved rf-json2rc matching of corresponding conformations (dramatic speed-up)
+
+### API changes
+- Dropped File::Path::mkpath() from all programs, and migrated to Core::Utils::mktree()
+- Added restoration of STDOUT and STDERR to Core::Process, before calling onexit() sub
+- Added Core::Statistics functions calcPearsonPartials() and pearsonFromPartials() to allow speeding up the calculation of correlations on very large datasets, without having to load in memory the entire set
+- Added Core::Statistics function distribution() to get all distribution parameters at once (min, 25th percentile, median, 75th percentile, max)
+- Implemented Core::Statistics Wilcoxon test via wilcoxonTest() (and accessory function erf())
+
 ## [2.9.5] - 2025-12-12
 ### Added
 - Added -bnf (--bowtie-nofw) parameter to rf-map, to force mapping to the antisense strand only

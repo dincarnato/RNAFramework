@@ -20,7 +20,6 @@ use strict;
 use Config;
 use Cwd;
 use File::Basename;
-use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
@@ -56,11 +55,10 @@ my ($output, $ct, $method, $installed, $maxdist,
     $threads, $img, $t, $noshapevrfoldparams,
     $cutoff, $nlp, $ngu, $rnastructure, $R,
     $viennarna, $data, $slope, $intercept,
-    $overwrite, $error, $help, $tmpdir,
-    $ignore, $hc, $progressBar, $processManager,
-    $windowed, $cwd, $partition, $probplot,
-    $partwin, $partstep, $wintrim, $foldwin,
-    $foldstep, $dp, $sh, $pk, $suboptDeltaEnergy,
+    $overwrite, $help, $tmpdir, $ignore, $hc, 
+    $progressBar, $processManager, $windowed, $cwd, 
+    $partition, $probplot, $partwin, $partstep, $wintrim, 
+    $foldwin, $foldstep, $dp, $sh, $pk, $suboptDeltaEnergy,
     $pkwin, $pkstep, $p1, $p2, $dotplotOnly,
     $pkcutoff, $rnasubopt, $pkmax, $pksubopt,
     $shapeknots, $pkmethod, $keeptmp, $constraintDir, 
@@ -262,8 +260,8 @@ if ($pk) {
 
 }
 
-die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
-    "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless($installed);
+die "\n  [!] Error: ViennaRNA package's Perl bindings are required." .
+    "\n             Please ensure that ViennaRNA package v2.7.0 (or greater) is installed and try again\n\n" unless($installed);
 
 print "\n[+] Checking method's requirements...";
 
@@ -415,31 +413,23 @@ if (-e $output) {
 
 }
 
-mkpath($tmpdir, { mode  => 0755,
-                  error => \$error });
+if (my $error = mktree($tmpdir, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
 if (!$dotplotOnly) {
 
-    mkpath($output . "structures", { mode  => 0755,
-                                     error => \$error });
-    mkpath($output . "shannon", { mode  => 0755,
-                                  error => \$error }) if ($sh);
+    mktree($output . "structures", "755");
+    mktree($output . "shannon", "755") if ($sh);
 
 }
 
 if ($img) {
 
-    mkpath($output . "plots/summaries", { mode  => 0755,
-                                          error => \$error });
-    mkpath($output . "plots/structures", { mode  => 0755,
-                                           error => \$error }) if ($rnaplot);                                     
+    mktree($output . "plots/summaries", "755");
+    mktree($output . "plots/structures", "755") if ($rnaplot);                                     
 
 }
 
-mkpath($output . "dotplot", { mode  => 0755,
-                              error => \$error }) if ($dp);
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+mktree($output . "dotplot", "755") if ($dp);
 
 # Sets all paths to absolute, before changing working directory to temp dir
 $output = File::Spec->rel2abs($output) . "/";

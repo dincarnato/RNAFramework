@@ -107,8 +107,7 @@ sub read {
 
         if (!defined $header) {
 
-            $header = $line;
-            $header =~ s/^>//;
+            $header = substr($line, 0, 1) eq ">" ? substr($line, 1) : $line;
 
             next;
 
@@ -172,11 +171,15 @@ sub read {
                               !isdbbalanced($structure));
 
     # Index building at runtime
+    if (exists $self->{_index}->{$id} && $self->{_index}->{$id} != $offset) {
 
-    $self->throw("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
-                                                                                                                         $self->{_index}->{$id} != $offset &&
-                                                                                                                         $self->{checkDuplicateIds});
+        my $error = "Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")";
 
+        if ($self->{checkDuplicateIds}) { $self->throw($error); }
+        else { $self->warn($error); }
+
+    }
+    
     if (exists $self->{_index}->{$id}) {
 
         my @offsets = map { $self->{_index}->{$_} } sort {$self->{_index}->{$a} <=> $self->{_index}->{$b}} keys %{$self->{_index}};

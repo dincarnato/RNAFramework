@@ -19,7 +19,6 @@ use strict;
 use Config;
 use File::Basename;
 use File::Copy;
-use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
@@ -31,30 +30,28 @@ use Core::Mathematics qw(:all);
 use Core::Process::Queue;
 use Data::Sequence::Utils;
 use Term::Table;
+use Term::Progress;
 
 $|++;
 
 my ($tmp, $tmpdir, $output, $trim3,
     $trim5, $bv, $bn, $ba,
     $wt, $bi, $bc, $bD, $bN,
-    $bR, $bmp, $bdp, $bs,
+    $bR, $bmp, $bdp, $bs, $progressBar,
     $bma, $bnr, $bdg, $bfg, $ca5, $ca3,
     $cl, $bowtie, $bowtie2, $cutadapt,
     $samtools, $sam, $clipped, $help,
-    $overwrite, $bm, $nobam, $error,
-    $threads, $bseed, $processmanager, $madetmp,
-    $table, $bk, $cm, $mp, $bnf,
-    $mo, $logdir, $keeplogs, $cq5,
-    $cq3, $cqo, $bd, $haspaired,
-    $trimN, $maxN, @tmp, %spacer,
-    %files);
+    $overwrite, $bm, $nobam, $threads, 
+    $bseed, $processmanager, $table, $bk, 
+    $cm, $mp, $bnf, $mo, $logdir, $keeplogs, 
+    $cq5, $cq3, $cqo, $bd, $haspaired,
+    $trimN, $maxN, @tmp, %files);
 
 do {
 
     local $SIG{__WARN__} = sub { };
 
     GetOptions( "h|help"                    => \$help,
-                "t|tmp-dir=s"               => \$tmpdir,
                 "o|output-dir=s"            => \$output,
                 "ow|overwrite"              => \$overwrite,
                 "nb|no-bam"                 => \$nobam,
@@ -105,10 +102,8 @@ do {
 help() if ($help);
 
 # Default values
-$madetmp = 0;
 $tmp //= randalphanum(0xf);
 $output //= "rf_map/";
-$tmpdir //= $output . "/tmp/";
 $wt ||= 1;
 $threads ||= 1;
 $bowtie //= $bowtie2 ? which("bowtie2") : which("bowtie");
@@ -133,11 +128,10 @@ $bdg //= "5,3";
 $bfg //= "5,3";
 $bdp //= 15;
 $bma //= 2;
-$tmpdir =~ s/\/?$/\//;
 $output =~ s/\/?$/\//;
 $bc = 2147483647 if ($bc > 2147483647);
-$maxN = round($maxN) if (isnumeric($maxN) &&
-                         $maxN > 1);
+$maxN = round($maxN) if (isnumeric($maxN) && $maxN > 1);
+$tmpdir = $output . "tmp/";
 $logdir = $output . "logs/";
 
 if (isdna(join("", split(/,/, $ca5)))) {
@@ -245,22 +239,7 @@ if (-e $output) {
 
 }
 
-mkpath($logdir, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-
-if (!-e $tmpdir) {
-
-    mkpath($tmpdir, { mode  => 0755,
-                      error => \$error });
-
-    die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-
-    $madetmp = 1;
-
-}
-else { die "\n\n  [!] Error: The path to the specified temporary folder is not a directory\n\n" if (!-d $tmpdir); }
+for ($tmpdir, $logdir) { if (my $error = mktree($_, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; } }
 
 ##
 # Prepare files
@@ -274,13 +253,25 @@ print "\n[+] Validating FastQ files:\n\n";
 foreach my $sample (uniq(@ARGV)) {
 
     my ($basename, @sample);
-    @sample = split(/,/, $sample);
-    $basename = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
-    $basename =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
+    @sample = split(/:/, $sample);
+
+    if (@sample == 2) {
+
+        $basename = shift(@sample);
+        @sample = split(/,/, $sample[0]);
+
+    }
+    else {
+
+        @sample = split(/,/, $sample);
+        $basename = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
+        $basename =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
+
+    }
 
     if (uniq(@sample) != @sample) {
 
-        warn "  [!] Warning: Duplicate mate file provided for sample \"" . $basename . "\".\n" .
+        warn "  [!] Warning: Duplicate mate file provided for sample \"$basename\".\n" .
              "               Falling back to single read mode.\n\n";
 
     }
@@ -290,13 +281,13 @@ foreach my $sample (uniq(@ARGV)) {
 
     for (@sample) {
 
-        die "  [!] Error: Specified sample file \"" . $_ . "\" doesn't exist\n\n" if (!-e $_);
-        die "  [!] Error: Sample file \"" . $_ . "\" is not a valid FastQ file\n\n" unless(checkfq($_));
+        die "  [!] Error: Specified sample file \"$_\" does not exist\n\n" if (!-e $_);
+        die "  [!] Error: Sample file \"$_\" is not a valid FastQ file\n\n" unless(checkfq($_));
 
     }
 
     push(@tmp, { path   => $sample[0],
-                 id     => $basename,
+                 id     => exists $files{$basename} ? "${basename}_" . $files{$basename} : $basename,
                  file   => (fileparse($sample[0], qr/\.[^.]*/))[0],
                  paired => @sample == 2 ? 1 : 0,
                  path2  => @sample == 2 ? $sample[1] : undef,
@@ -304,20 +295,17 @@ foreach my $sample (uniq(@ARGV)) {
                  gzip   => $sample[0] =~ m/\.gz$/ ? 1 : 0 });
 
     # Error on mixed R1/R2 gzipped/uncompressed files
-    die "  [!] Error: Mixed compressed/uncompressed files for sample \"" . $basename . "\"\n\n"if ($tmp[-1]->{paired} &&
-                                                                                                   (($tmp[-1]->{gzip} && $sample[1] !~ m/\.gz$/) ||
-                                                                                                    (!$tmp[-1]->{gzip} && $sample[1] =~ m/\.gz$/)));
+    die "  [!] Error: Mixed compressed/uncompressed files for sample \"$basename\"\n\n"if ($tmp[-1]->{paired} &&
+                                                                                           (($tmp[-1]->{gzip} && $sample[1] !~ /\.gz$/) ||
+                                                                                           (!$tmp[-1]->{gzip} && $sample[1] =~ /\.gz$/)));
 
-    $files{$basename} = $#tmp;
-    $spacer{$basename} = length($basename);
+    $files{$basename}++;
 
     $table->row($basename,
                 @sample == 2 ? "Paired-end" : "Single-read",
                 @sample == 2 ? join(",", ($tmp[-1]->{file}, $tmp[-1]->{file2}) ): $tmp[-1]->{file});
 
 }
-
-%spacer = map { $_ => 1 + max(values %spacer) - $spacer{$_} } (keys %spacer);
 
 $table->print();
 
@@ -338,7 +326,7 @@ if (defined $bi) {
 
     $ret = `$bowtie --version 2>&1`;
 
-    if ($ret =~ m/version (.+)$/m) {
+    if ($ret =~ /version (.+)$/m) {
 
         my $v = $1;
 
@@ -367,10 +355,7 @@ if (defined $bi) {
 else { die "\n  [!] Error: No Bowtie index provided\n\n"; }
 
 # We are processing paired-end data, and we have performed 5'-end quality trimming
-if ($haspaired &&
-    (($cq5 &&
-     !$clipped) ||
-     $trim5)) {
+if ($haspaired && (($cq5 && !$clipped) || $trim5)) {
 
     if (!$bowtie2) {
 
@@ -392,20 +377,15 @@ if ($haspaired &&
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-                                             stderr     => "/dev/null",
-                                             verbosity  => -1 );
+                                             verbosity  => 1 );
 
 ##
 # FastQ processing
 ##
 
-print "\n[+] Processing FastQ files...";
+print "\n";
 
 if (!$clipped) {
-
-    print "\n[+] Clipping adapter sequences/low quality bases from sequencing reads...\n";
-
-    $processmanager->onstart(sub { print "\n  [-] Processing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
 
     my $qualfilter = $cq5 ? $cq5 . "," . $cq3 : $cq3;
     $cutadapt .= " -j " . $wt;
@@ -425,18 +405,28 @@ if (!$clipped) {
 
     }
 
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Clipping adapters");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to perform adapter clipping on sample \"$_[0]\"." .
+            "\n             Please check input file's format/quality and try again.\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
+
     $processmanager->start();
     $processmanager->waitall();
-
-    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform adapter clipping on sample \"" . $sample->id() . "\"." .
-                                                          "\n             Please check input file's format/quality and try again.\n\n" if ($sample->exitcode()->[0]); }
 
     print "\n";
 
 }
 else {
 
-    print "\n[+] Input FastQ files are already clipped. Skipping adapter clipping...";
+    print "[+] Input FastQ files are already clipped. Skipping adapter clipping...\n\n";
 
     foreach my $sample (@tmp) {
 
@@ -465,15 +455,7 @@ else {
 # Reads mapping
 ##
 
-print "\n[+] Mapping reads to transcriptome...\n";
-
-$processmanager->onstart(sub { print "\n  [-] Mapping sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-
 foreach my $sample (@tmp) {
-
-    # In the future BWA support will be added:
-    # bwa mem -t 40 bwa/index/reference.fa NT.fastq | samtools view -@6 -Sub - | tee >(samtools flagstat - > stats.out) > aln.sam
-    # This allows generating mapping statistics while mapping reads
 
     my ($pre, $command, $file1, $file2);
     $command = $bowtie . " -p " . $wt;
@@ -524,19 +506,30 @@ foreach my $sample (@tmp) {
     $command .= " " . $mp if (defined $mp);
     $command .= $sample->{paired} ? " -1 \"" . $file1 . "\" -2 \"" . $file2 . "\"" : " \"" . $file1 . "\"";
     $command .= " | grep -v '4\t\\*\t0\t0' > \"" . $tmpdir . $tmp . "_" . $sample->{id} . ".sam\"" if (!$bowtie2); # Unmapped reads filtering for Bowtie v1
-    ;
+    
     $processmanager->enqueue( command => $command,
                               id      => $sample->{id},
                               stderr  => $logdir . $sample->{id} . "_mapping.log" );
 
 }
 
+$progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                    colored => 1 );
+$progressBar->init("Mapping reads");
+
+$processmanager->parentOnExit(sub { 
+    
+    die "\n\n  [!] Error: An error has occurred while mapping sample \"$_[0]\".\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+    $progressBar->update(1); 
+    
+});
+
 $processmanager->start();
 $processmanager->waitall();
 
-while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: An error has occurred while mapping sample \"" . $sample->id() . "\" reads to transcriptome\n\n" if ($sample->exitcode()->[0]); }
-
-print "\n\n[+] Mapping statistics:\n";
+$table = Term::Table->new(indent => 2);
+$table->head("Sample", "\% Mapped", "\% Failed", $bowtie2 ? "\% Multiple" : "\% Suppressed");
 
 for (my $i = 0; $i < @tmp; $i++) {
 
@@ -545,12 +538,11 @@ for (my $i = 0; $i < @tmp; $i++) {
     @stats = bowtie_log($logdir . $sample->{id} . "_mapping.log", $sample->{paired});
     $total = sum(@stats[0..2]);
 
-    die "\n  [!] Bowtie log processing failed." .
+    die "\n\n  [!] Bowtie log processing failed." .
         "\n      Please ensure that your Bowtie installation works properly and try again.\n\n" if (!$total);
 
     @stats = map { sprintf("%.2f", $_ / $total * 100) . "\%" } @stats;
-
-    print "\n  [*] Sample \"" . $sample->{id} . "\"" . (" " x $spacer{$sample->{id}}) . "[Mapped: " . $stats[0] . "; Failed: " . $stats[1] . ($bowtie2 ? "; Multiple: " . $stats[2] . "]" : "; Suppressed: " . $stats[2] . "]");
+    $table->row($sample->{id}, @stats[0..2]);
 
     if ($stats[3] == 0) {
 
@@ -572,15 +564,15 @@ if (!@tmp) {
 
 }
 
-print "\n\n[+] Sorting " . ($nobam ? "SAM" : "BAM") . " files...\n";
-
-$processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . ($nobam ? ".sam" : ".bam") . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
+print "\n\n[+] Mapping statistics:\n\n";
+$table->print();
+print "\n\n";
 
 foreach my $sample (@tmp) {
 
     my $path = $output . $sample->{id} . ($nobam ? ".sam" : ".bam");
 
-    $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "sam" : "bam") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{id} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
+    $processmanager->enqueue( command => $samtools . " sort --threads " . $wt . " -O " . ($nobam ? "SAM" : "BAM") . " -T \"" . $tmpdir . $tmp . "_" . $sample->{id} . "\" -o \"" . $path . "\" \"" . $sample->{path} . "\"",
                               id      => $sample->{id},
                               stderr  => $logdir . $sample->{id} . "_samtools.log");
 
@@ -588,10 +580,20 @@ foreach my $sample (@tmp) {
 
 }
 
+$progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                    colored => 1 );
+$progressBar->init("Sorting alignments");
+
+$processmanager->parentOnExit(sub { 
+    
+    die "\n\n  [!] Error: Unable to perform sorting on sample \"$_[0]\".\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+    $progressBar->update(1); 
+    
+});
+
 $processmanager->start();
 $processmanager->waitall();
-
-while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to perform sorting on sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
 
 cleanup();
 
@@ -599,14 +601,7 @@ rmtree($logdir) if (!$keeplogs);
 
 print "\n\n[+] All done.\n\n";
 
-sub cleanup {
-
-    unlink(glob($tmpdir . $tmp . "*"));
-
-    rmtree($tmpdir) if ($madetmp &&
-                        isdirempty($tmpdir));
-
-}
+sub cleanup { rmtree($tmpdir); }
 
 sub bowtie_log {
 
@@ -698,6 +693,7 @@ sub help {
  Summary: Performs reads pre-processing and mapping
 
  Usage:   rf-map [Options] Sample1_R1.fastq[,Sample1_R2.fastq] ... Samplen_R1.fastq[,Samplen_R2.fastq]
+          rf-map [Options] Sample1_R1.fastq[,Sample1_R2.fastq] ... Samplen_R1.fastq[,Samplen_R2.fastq]      # With sample labels
 
  Options                                      Description
  -b2 or --bowtie2                             Uses Bowtie v2 for reads mapping (Default: Bowtie v1)

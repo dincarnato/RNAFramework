@@ -124,4 +124,12 @@ sub _table {
 
 }
 
+sub nRows {
+
+    my $self = shift;
+
+    return(scalar(grep { $_->[0] eq "Row" } @{$self->{_table}}));
+
+}
+
 1;

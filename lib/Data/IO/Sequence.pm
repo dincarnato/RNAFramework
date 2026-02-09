@@ -32,7 +32,7 @@ sub new {
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ format            => "AUTO",
                    nrows             => 100,
-                   checkDuplicateIds => 1,
+                   checkDuplicateIds => 0,
                    maskIUPAC         => 0,
                    _offsets          => [],
                    _pack             => undef,

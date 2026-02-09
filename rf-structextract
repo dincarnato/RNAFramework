@@ -18,7 +18,6 @@
 use strict;
 use Config;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use POSIX qw(ceil);
@@ -45,8 +44,8 @@ my ($help, $output, $overwrite, $minPairedFrac,
     $minMotifLen, $maxMotifLen, $multiwayOnly, $maxLoopSize,
     $winSize, $rffoldOut, $xmlFolder, $threads, $onePerFile,
     $minValueFrac, $ignoreReact, $ignoreShannon, $isViennaInstalled,
-    $minTranscriptLen, $minBelowMedian, $error, $evalEnergy,
-    $pvalue, $nShufflings, $dinuclShuffle, $truncateMotif, @pool);
+    $minTranscriptLen, $minBelowMedian, $evalEnergy, $pvalue, 
+    $nShufflings, $dinuclShuffle, $truncateMotif, @pool);
 
 $isViennaInstalled = eval { require RNA; 1; };
 
@@ -141,10 +140,7 @@ if (-e $output) {
 
 }
 
-mkpath($output, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create temporary directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+if (my $error = mktree($output, "755")) { die "\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
 print "\n[+] Importing transcripts...";
 

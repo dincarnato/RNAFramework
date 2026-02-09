@@ -84,22 +84,22 @@ sub start {
 
             $|++;
 
-            my ($exitcode);
+            my ($exitcode, $stdout, $stderr);
 
             $self->{onstart}->($self->{id}, $$) if (defined $self->{onstart});
 
-            if ($self->{stdout} &&
-                $self->{stdout} !~ m/^STDOUT$/i) {
+            if ($self->{stdout} && $self->{stdout} !~ /^STDOUT$/i) {
 
-                open(STDOUT, ">>", $self->{stdout}) or $self->throw("Unable to tee STDOUT to \"" . $self->{stdout} . "\" (" . $! . ")");
+                open($stdout, ">&", \*STDOUT) or $self->throw("Unable to duplicate STDOUT ($!)");
+                open(STDOUT, ">>", $self->{stdout}) or $self->throw("Unable to tee STDOUT to \"" . $self->{stdout} . "\" ($!)");
                 select((select(STDOUT), $|=1)[0]);
 
             }
 
-            if ($self->{stderr} &&
-                $self->{stderr} !~ m/^STDERR$/i) {
+            if ($self->{stderr} && $self->{stderr} !~ /^STDERR$/i) {
 
-                open(STDERR, ">>", $self->{stderr}) or $self->throw("Unable to tee STDERR to \"" . $self->{stderr} . "\" (" . $! . ")");
+                open($stderr, ">&", \*STDERR) or $self->throw("Unable to duplicate STDERR ($!)");
+                open(STDERR, ">>", $self->{stderr}) or $self->throw("Unable to tee STDERR to \"" . $self->{stderr} . "\" ($!)");
                 select((select(STDERR), $|=1)[0]);
 
             }
@@ -111,6 +111,9 @@ sub start {
 
             $self->{_tmpDataFile} .= "." . $$ . ".tmp";
             lock_store($exitcode, $self->{_tmpDataFile});
+
+            if (defined $stdout) { open(STDOUT, ">&", $stdout) or $self->throw("Unable to restore STDOUT ($!)"); }
+            if (defined $stderr) { open(STDERR, ">&", $stderr) or $self->throw("Unable to restore STDERR ($!)"); }
 
             $self->{onexit}->($self->{id}, $$, $exitcode) if (defined $self->{onexit});
 

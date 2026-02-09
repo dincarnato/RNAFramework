@@ -71,13 +71,13 @@ sub read {
 
     foreach my $line (split(/\n/, $stream)) {
 
-        next if ($line =~ m/^\s*$/ || $line =~ m/^#/);
+        next if ($line =~ /^#?\s*$/);
 
         if (!defined $header) {
 
-            $header = $line;
-            $header =~ s/^>//;
-            $header = striptags($header);
+            # Remove the leading >
+            $header = substr($line, 0, 1) eq ">" ? substr($line, 1) : $line;
+            $header = striptags($header) if ($self->{_remote});
 
             next;
 
@@ -95,7 +95,7 @@ sub read {
     }
     else { $id = $header; }
 
-    $sequence = striptags($sequence);
+    $sequence = striptags($sequence) if ($self->{_remote});
     $sequence =~ s/[\s\r>]//g;
 
     return($self->read()) if (!defined $sequence || !isseq($sequence, "-"));
@@ -103,9 +103,14 @@ sub read {
     if ($self->{maskIUPAC}) { $sequence =~ tr/BDHKMNRSVWYbdhkmnrsvwy/NNNNNNNNNNNnnnnnnnnnnn/; }
 
     # Index building at runtime
-    $self->warn("Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")") if (exists $self->{_index}->{$id} &&
-                                                                                                                        $self->{_index}->{$id} != $offset &&
-                                                                                                                        $self->{checkDuplicateIds});
+    if (exists $self->{_index}->{$id} && $self->{_index}->{$id} != $offset) {
+
+        my $error = "Duplicate sequence ID \"" . $id . "\" (Offsets: " . $self->{_index}->{$id} . ", " . $offset . ")";
+
+        if ($self->{checkDuplicateIds}) { $self->throw($error); }
+        else { $self->warn($error); }
+
+    }
 
     if (exists $self->{_index}->{$id}) {
 

@@ -19,12 +19,10 @@ use strict;
 use Config;
 use Cwd;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use List::Util;
 use POSIX qw(floor);
-use RNA;
 use threads;
 use threads::shared;
 
@@ -49,10 +47,10 @@ my ($help, $output, $overwrite, $orffile,
     $motiffile, $mindist, $maxiter, $maxeval,
     $tolerance, $maxresults, $threads, $autoorf,
     $startalt, $startany, $input, $minorf,
-    $error, $tmpdir, $imported, $cwd,
-    $norescue, $gencode, $nmutations, $rnafold,
-    $noensprob, $exclcodons, $targetFile, $maxDistToTarget,
-    @pool, %ncmutable, %cmutable, %targetStructs);
+    $tmpdir, $imported, $cwd, $norescue, $gencode, 
+    $nmutations, $rnafold, $noensprob, $exclcodons, $targetFile, 
+    $maxDistToTarget, $installed, @pool, %ncmutable, %cmutable, 
+    %targetStructs);
 
 my @ids : shared;
 my %input : shared;
@@ -114,7 +112,7 @@ $output =~ s/\/?$/\//;
 $tmpdir = $output . "tmp/";
 $imported = 0;
 $cwd = cwd();
-$RNA::noLonelyPairs = 1;
+$installed = eval { require RNA; 1; };
 %ncmutable = ( A => [ qw(C U) ],
                C => [ qw(A G) ],
                G => [ qw(C U) ],
@@ -132,7 +130,11 @@ die "\n  [!] Error: No path to the ViennaRNA RNAfold executable provided\n\n" if
 die "\n  [!] Error: Parameters -als (or --alt-start) and -ans (or --any-start) are mutually exclusive\n\n" if ($startalt && $startany);
 die "\n  [!] Error: Maximum results must be a positive integer > 0\n\n" if (defined $maxresults && (!ispositive($maxresults) || !isint($maxresults)));
 
+die "\n  [!] Error: ViennaRNA package's Perl bindings are required." .
+    "\n             Please ensure that ViennaRNA package v2.7.0 (or greater) is installed and try again\n\n" unless($installed);
+
 checkvienna();
+$RNA::noLonelyPairs = 1;
 
 if (defined $orffile ||
     $autoorf) {
@@ -195,10 +197,7 @@ if (-e $output) {
 
 }
 
-mkpath($tmpdir, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+if (my $error = mktree($tmpdir, "755")) { die "\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
 # Sets all paths to absolute, before changing working directory to temp dir
 $output = File::Spec->rel2abs($output) . "/";
@@ -221,10 +220,8 @@ while(my $line = <$mh>) {
 
         $line[$i] =~ s/\s//g;
 
-        if ((isdotbracket($line[$i]) &&
-             isdbbalanced($line[$i])) ||
-            (isint($line[$i]) &&
-             ispositive($line[$i]))) {
+        if ((isdotbracket($line[$i]) && isdbbalanced($line[$i])) ||
+            (isint($line[$i]) && ispositive($line[$i]))) {
 
             $input{$line[0]} //= shared_clone({ file   => undef,
                                                 motifs => shared_clone([]),
@@ -408,11 +405,12 @@ sub mutate {
 
         last unless($id);
 
-        eval { $entry = Data::IO::Sequence->new( file        => $input->{file},
-                                                 lonelypairs => 1 )->read(); };
+        my $eval = do { local $@;
+                        eval { $entry = Data::IO::Sequence->new( file        => $input->{file},
+                                                                 lonelypairs => 1 )->read(); };
+                        $@; };
 
-        if ($@ || !$entry ||
-            ($entry && !$entry->can("structure"))) {
+        if ($eval || !$entry || ($entry && !$entry->can("structure"))) {
 
             lock(%results);
             $results{parseerr}++;
@@ -777,8 +775,7 @@ sub mutate {
                 }
 
                 # Report results
-                mkpath($output . $entry->id(), { mode  => 0755,
-                                                 error => \$error }) if (!-d $output . $entry->id());
+                mktree($output . $entry->id(), "755") if (!-d $output . $entry->id());
 
                 $xmlio = Data::IO->new( file      => $output . $entry->id() . "/motif_" . join("-", $motif, $motifEnd) . ".xml",
                                         mode      => "w",

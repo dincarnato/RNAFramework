@@ -47,6 +47,17 @@ sub _validate {
 
 }
 
+sub stderr {
+
+    my $self = shift;
+    my $stderr = shift;
+
+    $self->{stderr} = $stderr if (defined $stderr);
+
+    return($self->{stderr});
+
+}
+
 # Enqueue:
 # $queue->enqueue(command => $command, arguments => \@args, id => $processuniqueid, stdout => /dev/null, stdin => /dev/null)
 

@@ -24,11 +24,10 @@ use POSIX;
 
 use base qw(Exporter);
 
-our @EXPORT = qw(pearson spearman dhyper phyper
-                 fisher percentile quantile padjust
-                 pchisq qnorm pnorm pcombine
-                 gini ttest chisq fact
-                 binomialTest);
+our @EXPORT = qw(pearson spearman pearsonFromPartials calcPearsonPartials
+                 dhyper phyper fisher percentile quantile padjust pchisq 
+                 qnorm pnorm dnorm pcombine gini ttest chisq fact
+                 binomialTest wilcoxonTest values2ranks distribution);
 
 use constant EPS   => 3e-7;
 use constant FPMIN => 1e-30;
@@ -37,84 +36,147 @@ use constant ITMAX => 100;
 my $tolerance = 1;
 $tolerance /= 2 while ((1 + $tolerance / 2) > 1);
 
-sub pearson {
+sub calcPearsonPartials {
 
-    my @data = @_[0..1];
-    my $rm = checkparameters({ rmNaN      => 0,
-                               rmOutliers => 0,
-                               cap        => 0 }, $_[2] || {});
+    my @data = _checkCorrInput(@_);
+    
+    my ($N, $sumX, $sumY, $sumXX, 
+        $sumYY, $sumXY) = (0, 0, 0, 0, 0, 0);
 
-    @data = _fixCorrData(@data, $rm);
+    for my $i (0 .. $#{$data[0]}) {
 
-    my ($avgx, $avgy, $stdevx, $stdevy,
-        $n, $r, $t, $p, $size);
+        my ($x, $y);
+        $x = $data[0]->[$i];
+        $y = $data[1]->[$i];
 
-    for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
-
-    Core::Utils::throw("Insufficient parameters") if (@data < 2);
-    Core::Utils::throw("Pearson correlation calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
-    Core::Utils::throw("Values ARRAY references are empty") if (@{$data[0]} <= 1);
-
-    $size = scalar(@{$data[0]});
-    $avgx = mean(@{$data[0]});
-    $avgy = mean(@{$data[1]});
-    $stdevx = stdev(@{$data[0]});
-    $stdevy = stdev(@{$data[1]});
-
-    if (!$stdevx ||
-	    !$stdevy) {
-
-		Core::Utils::warn("Standard deviation is 0");
-
-		return("NaN", 1);
+        $N++;
+        $sumX  += $x;
+        $sumY  += $y;
+        $sumXX += $x*$x;
+        $sumYY += $y*$y;
+        $sumXY += $x*$y;
 
     }
 
-    $n += (($data[0]->[$_] - $avgx) * ($data[1]->[$_] - $avgy)) for (0 .. $size - 1);
-    $r = $n / (($size - 1) * $stdevx * $stdevy);
-    $p = _pcorr($r, $size);
-
-    return(wantarray() ? ($r, $p) : $r);
+    return([$N, $sumX, $sumY, $sumXX, $sumYY, $sumXY]);
 
 }
 
-sub spearman {
+sub pearsonFromPartials {
 
-    my @data = @_[0..1];
-    my $rm = checkparameters({ rmNaN      => 0,
-                               rmOutliers => 0,
-                               cap        => 0 }, $_[2] || {});
+    my @partials = @_;
 
-    @data = _fixCorrData(@data, $rm);
+    for (@partials) { 
+        
+        Core::Utils::throw("Partials must be ARRAY references") if (ref($_) ne "ARRAY");
+        Core::Utils::throw("Partial ARRAY references must contain 6 values") if (@$_ != 6);
+        
+    }
 
-    my ($squareddiff, $n, $rho, $t,
-        $p, @rank1, @rank2);
-    $squareddiff = 0;
+    my ($N, $sumX, $sumY, $sumXX, 
+        $sumYY, $sumXY, $meanX, $meanY,
+        $covXY, $varX, $varY, $r, $p);
+    ($N, $sumX, $sumY, $sumXX, 
+     $sumYY, $sumXY) = map { my $i = $_; my $sum = 0; $sum += $_->[$i] for (@partials); $sum; } 0 .. 5;
 
-    for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
-
-    Core::Utils::throw("Insufficient parameters") if (@data < 2);
-    Core::Utils::throw("Spearman correlation calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
-    Core::Utils::throw("Values ARRAY references are empty") if (@{$data[0]} <= 1);
-
-    if (!stdev(@{$data[0]}) ||
-       	!stdev(@{$data[1]})) {
-
-        Core::Utils::warn("Standard deviation is 0");
+    if ($N <= 2) {
+ 
+        Core::Utils::warn("N < 3");
 
         return("NaN", 1);
 
     }
 
-    @rank1 = _values2ranks(@{$data[0]});
-    @rank2 = _values2ranks(@{$data[1]});
+    $meanX = $sumX / $N;
+    $meanY = $sumY / $N;
+    $covXY = $sumXY - $N * $meanX * $meanY;
+    $varX  = $sumXX - $N * $meanX**2;
+    $varY  = $sumYY - $N * $meanY**2;
 
-    $n = @rank1;
-    $squareddiff += ($rank1[$_] - $rank2[$_]) ** 2 for (0 .. $n - 1);
-    $rho = 1 - (6 * $squareddiff / ($n * (($n ** 2) - 1)));
-    $p = _pcorr($rho, scalar(@{$data[0]}));
+    if ($varX == 0 || $varY == 0) {
 
-    return(wantarray() ? ($rho, $p) : $rho);
+        Core::Utils::warn("Standard deviation is 0");
+
+		return("NaN", 1);
+
+    }
+
+    $r = $covXY / sqrt($varX * $varY);
+    $p = _pcorr($r, $N);
+
+    return($r, $p);
+
+}
+
+sub pearson {
+
+    my ($partial, $r, $p);
+    $partial = calcPearsonPartials(@_);
+    ($r, $p) = pearsonFromPartials($partial);
+
+    return(wantarray ? ($r, $p) : $r);
+
+}
+
+sub spearman {
+
+    my ($rho, $p, $partial, @data, @rank1, @rank2);
+    @data = _checkCorrInput(@_);
+    @rank1 = values2ranks($_[0]);
+    @rank2 = values2ranks($_[1]);
+    $partial = calcPearsonPartials(\@rank1, \@rank2);
+    ($rho, $p) = pearsonFromPartials($partial);
+
+    return(wantarray ? ($rho, $p) : $rho);
+
+}
+
+sub _checkCorrInput {
+
+    my @data = @_[0..1];
+    my $rm = checkparameters({ rmNaN      => 0,
+                               rmOutliers => 0,
+                               cap        => 0 }, $_[2] || {});
+
+    @data = _fixCorrData(@data, $rm);
+
+    for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
+
+    Core::Utils::throw("Insufficient arguments") if (@data < 2);
+    Core::Utils::throw("Pearson correlation calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
+    
+    if (@{$data[0]} <= 2) {
+
+        Core::Utils::warn("Values ARRAY references contain < 3 values");
+
+        return("NaN", 1);
+
+    }
+
+    return(@data);
+
+}
+
+sub values2ranks {
+
+    my ($values, $signed) = @_;
+
+    my ($i, %sorted);
+    $i = 1;
+
+    for my $value (sort {$a <=> $b} @$values) {
+
+        if ($signed && !$value) { next; }
+        else {
+                
+            push(@{$sorted{$value}}, $i);
+            $i++;
+
+        }
+
+    }
+
+    return(map { mean(@{$sorted{$_}}) } grep { exists $sorted{$_} } @$values);
 
 }
 
@@ -177,26 +239,6 @@ sub _pcorr {
     else { $p = 0; }
 
     return($p);
-
-}
-
-sub _values2ranks {
-
-    my @values = @_;
-
-    my ($i, @ranks, %sorted);
-    $i = 0;
-
-    for (sort {$a <=> $b} @values) {
-
-        push(@{$sorted{$_}}, $i);
-        $i++;
-
-    }
-
-    push(@ranks, mean(@{$sorted{$_}})) for (@values);
-
-    return(@ranks);
 
 }
 
@@ -555,9 +597,26 @@ sub gini {
 
 }
 
+sub distribution {
+
+    my @values = @_;
+
+    @values = sort { $a <=> $b } @values;
+
+    my ($perc25, $perc75, $min, $max, $median);
+    $perc25 = percentile(\@values, 0.25, 1);
+    $perc75 = percentile(\@values, 0.75, 1);
+    $median = @values % 2 ? $values[int(@values / 2)] : mean($values[(@values / 2) - 1], $values[(@values / 2)]);
+    $min = $values[0];
+    $max = $values[-1];
+
+    return($min, $perc25, $median, $perc75, $max);
+
+}
+
 sub quantile {
 
-    my ($values, $quantile) = @_;
+    my ($values, $quantile, $sorted) = @_;
 
     $quantile //= 0;
 
@@ -570,7 +629,7 @@ sub quantile {
     my ($total, $k, $f, $ak,
         @data);
     $total = @{$values};
-    @data = sort {$a <=> $b} @{$values};
+    @data = $sorted ? @{$values} : sort {$a <=> $b} @{$values};
 
     return($data[0]) unless($quantile);
     return($data[-1]) if ($quantile == 4);
@@ -590,12 +649,11 @@ sub quantile {
 
 sub percentile {
 
-    my ($values, $percentile) = @_;
+    my ($values, $percentile, $sorted) = @_;
 
-    Core::Utils::throw("Percentile value must be comprised between 0 and 1") if ($percentile < 0 ||
-                                                                                 $percentile > 1);
+    Core::Utils::throw("Percentile value must be comprised between 0 and 1") if ($percentile < 0 || $percentile > 1);
 
-    return(quantile($values, $percentile * 4));
+    return(quantile($values, $percentile * 4, $sorted));
 
 }
 
@@ -797,6 +855,65 @@ sub gcf {
 
 }
 
+sub erf {
+
+    my $x = shift;
+
+    my ($j, $isNeg, $d, $dd, 
+        $t, $ty, $tmp, $res, @coef);
+    @coef = ( -1.3026537197817094, 6.4196979235649026e-1, 1.9476473204185836e-2,
+              -9.561514786808631e-3, -9.46595344482036e-4, 3.66839497852761e-4,
+              4.2523324806907e-5, -2.0278578112534e-5, -1.624290004647e-6,
+              1.303655835580e-6, 1.5626441722e-8, -8.5238095915e-8,
+              6.529054439e-9, 5.059343495e-9, -9.91364156e-10, -2.27365122e-10,
+              9.6467911e-11, 2.394038e-12, -6.886027e-12, 8.94487e-13,
+              3.13092e-13, -1.12708e-13, 3.81e-16, 7.106e-15, -1.523e-15,
+              -9.4e-17, 1.21e-16, -2.8e-17);
+    $j = @coef - 1;
+    $isNeg = $d = $dd = 0;
+
+    if ($x < 0) {
+        $x = -$x;
+        $isNeg = 1;
+    }
+
+    $t = 2 / (2 + $x);
+    $ty = 4 * $t - 2;
+
+    for (; $j > 0; $j--) {
+
+        $tmp = $d;
+        $d = $ty * $d - $dd + $coef[$j];
+        $dd = $tmp;
+
+    }
+
+    $res = $t * exp(-$x * $x + 0.5 * ($coef[0] + $ty * $d) - $dd);
+
+    return($isNeg ? $res - 1 : 1 - $res);
+
+}
+
+sub pnorm {
+
+    # If mean and std are not provided, x is treated as a Z-score
+    my ($x, $mean, $std) = @_;
+
+    if (!defined $mean && !defined $std) { return(0.5 * (1 + erf($x / sqrt(2)))); }
+    else { return 0.5 * (1 + erf(($x - $mean) / (sqrt(2) * $std))); }
+
+}
+
+sub dnorm {
+
+    # If mean and std are not provided, x is treated as a Z-score
+    my ($x, $mean, $std) = @_;
+
+    if (!defined $mean && !defined $std) { return (1 / sqrt(2 * 3.141592653589793)) * exp(-0.5 * $x * $x); }
+    else { return(0.5 * (1 + erf(($x - $mean) / sqrt(2 * $std * $std)))); }
+
+}
+
 sub qnorm {
 
     # http://rangevoting.org/NHack.html
@@ -849,52 +966,9 @@ sub qnorm {
 
 }
 
-sub pnorm {
-
-    # http://rangevoting.org/NHack.html
-
-    my $z = shift;
-    my $lowertail = shift;
-
-    my ($ltone, $utzero, $con, $alnorm,
-        @a, @b);
-    $ltone = 7;
-    $utzero = 18.66;
-    $con = 1.28;
-    @a = (0.398942280444, 0.399903438504, 5.75885480458, 29.8213557808,
-          2.62433121679, 48.6959930692, 5.92885724438);
-    @b = (0.398942280385, 3.8052e-8, 1.00000615302, 3.98064794e-4,
-          1.986153813664, 0.151679116635, 5.29330324926, 4.8385912808,
-          15.1508972451, 0.742380924027, 30.789933034, 3.99019417011);
-
-    if ($z < 0) {
-
-        $lowertail = 0;
-        $z *= -1;
-
-    }
-
-    if ($z <= $ltone ||
-        !$lowertail &&
-        $z <= $utzero) {
-
-        my $y = 0.5 * ($z ** 2);
-
-        if ($z > $con ) { $alnorm = $b[0] * exp(-$y) / ($z - $b[1] + $b[2] / ($z + $b[3] + $b[4] / ($z - $b[5] + $b[6] / ($z + $b[7] - $b[8] / ($z + $b[9] + $b[10] / ($z + $b[11])))))); }
-        else { $alnorm = 0.5 - $z * ($a[0] - $a[1] * $y / ($y + $a[2] - $a[3] / ($y + $a[4] + $a[5] / ($y + $a[6]))));}
-
-    }
-    else { $alnorm = 0; }
-
-    return($lowertail ? 1 - $alnorm : $alnorm);
-
-}
-
-
 sub pcombine {
 
     my ($pvalues, $method) = @_;
-
 
     Core::Utils::throw("P-values must be provided as an ARRAY reference") if (ref($pvalues) ne "ARRAY");
     Core::Utils::throw("P-values array is empty") if (!@{$pvalues});
@@ -927,7 +1001,7 @@ sub _pcombine_stouffer {
     my ($p);
     $p += qnorm($_) / sqrt($n) for (@{$pvalues});
 
-    return(pnorm($p, 1));
+    return(pnorm($p));
 
 }
 
@@ -1004,6 +1078,146 @@ sub betacf {
     }
 
     return($h);
+
+}
+
+sub wilcoxonTest {
+
+    my ($data1, $data2) = @_[0, 1];
+    my $params = checkparameters({ paired  => 0,
+                                   correct => 0,
+                                   type    => "two.sided",
+                                   rmNaN   => 0 }, $_[2] || {});
+
+    my (@data1, @data2);
+
+    if ($params->{rmNaN}) {
+
+        if ($params->{paired}) {
+
+            my @i = grep { isnumeric($data1->[$_], $data2->[$_]) } 0 .. $#{$data1};
+            @data1 = @$data1[@i];
+            @data2 = @$data2[@i];
+
+        }
+        else {
+
+            @data1 = grep { isnumeric($_) } @$data1;
+            @data2 = grep { isnumeric($_) } @$data2;
+
+        }
+
+    }
+    else {
+
+        Core::Utils::throw("Values must be numeric") if (!isnumeric(@$data1, @$data2));
+
+        @data1 = @$data1;
+        @data2 = @$data2;
+
+    }
+
+    Core::Utils::throw("Empty value array") if (!@data1 || !@data2);
+
+    if ($params->{paired}) {
+        
+        my ($Wpos, $Wneg, $W, $n, $zeroes,
+            $p, $meanW, $stdW, $corr, $ties, $z,
+            @differences, @ranks, %repeats);
+        @differences = map { $data1[$_] - $data2[$_] } (0 .. $#data1);
+        @ranks = values2ranks([ map {abs($_)} @differences ], 1);
+        $Wpos = sum(grep { isnumeric($_) } (0, map { $ranks[$_] if ($differences[$_] > 0) } 0 .. $#differences));
+        $Wneg = sum(grep { isnumeric($_) } (0, map { $ranks[$_] if ($differences[$_] < 0) } 0 .. $#differences));
+
+        $W = $params->{type} eq "two.sided" ? min($Wpos, $Wneg) : $Wpos; 
+        $n = grep { $_ } @differences;
+        $zeroes = grep { !$_ } @differences;
+        $corr = $ties = 0;
+        $meanW = $n * ($n + 1) / 4;
+        $stdW = $n * ($n + 1) * (2 * $n + 1);
+
+        # Correction for repeat values
+        $repeats{$_}++ for @ranks; 
+        $ties = sum(grep { isnumeric($_) } (0, map { $_ ** 3 - $_ } grep { $_ > 1 } values %repeats)); 
+        
+        $stdW = sqrt($stdW / 24 - $ties / 48);
+
+        return("NaN") if (!$stdW);
+
+        if ($params->{correct}) {
+
+            if ($params->{type} eq "two.sided") { $corr = 0.5 * ($W <=> $meanW); }
+            elsif ($params->{type} eq "less") { $corr = -0.5; }
+            else { $corr = 0.5; }
+
+        }
+
+        $z = ($W - $corr - $meanW) / $stdW;
+
+        if ($params->{type} eq "two.sided") { $p = 2 * min(pnorm($z), (1-pnorm($z))); }
+        elsif ($params->{type} eq "less") { $p = pnorm($z); }
+        else { $p = 1 - pnorm($z); }
+
+        return($Wpos, $p);
+
+    }
+    else {
+        
+        my ($n1, $n2, $n, $rankSum, 
+            $U1, $U2, $U, $meanU, 
+            $stdU, $i, $nt, $t, 
+            $tcf, $z, $p, @combined, 
+            @ranks);
+        $n1 = @data1;
+        $n2 = @data2;
+        $n = $n1 + $n2;
+        @combined = (@data1, @data2);
+        @ranks = values2ranks(\@combined, 0);
+        $rankSum = sum(@ranks[0 .. $n1 - 1]);
+        @ranks = sort {$a <=> $b} @ranks;
+        $i = $t = $tcf = 0;
+        $nt = 1;
+        
+        while($i < $n) {
+
+            if ($i > 0) {
+
+                if ($ranks[$i] == $ranks[$i-1]) { $nt++; }
+                else { 
+                    
+                    if ($nt > 1) { 
+                        
+                        $t += $nt ** 3 - $nt; 
+                        $nt = 1;
+                        
+                    }
+
+                }
+
+            }
+
+            $i++;
+
+        }
+       
+        $tcf = 1 - ($t / ($n ** 3 - $n));
+        
+        $U1 = $n1 * $n2 + ($n1 * ($n1 + 1) / 2) - $rankSum;
+        $U2 = $n1 * $n2 - $U1;
+        $U = $params->{type} eq "less" ? $U1 : ($params->{type} eq "greater" ? $U2 : max($U1, $U2));
+
+        $meanU = $params->{correct} ? ($n1 * $n2 / 2) + 0.5 : ($n1 * $n2 / 2); 
+        $stdU = sqrt($tcf * $n1 * $n2 * ($n1 + $n2 + 1) / 12);
+
+        return("NaN") if (!$stdU);
+
+        $z = ($U - $meanU) / $stdU;
+        $p = pnorm(-$z);
+        $p *= 2 if ($params->{type} eq "two.sided");
+
+        return($U2, $p);
+
+    }
 
 }
 

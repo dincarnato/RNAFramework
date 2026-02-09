@@ -188,6 +188,7 @@ sub appendText {
             else { print CLRRET; }
 
             $self->{_progresses}->{$set}->appendText($text);
+            setCursorPos($self->{_lastRow}, $self->{_termSize}->[1]) if (-t STDOUT);
             
         }
         else { $self->warn("Set \"$set\" does not exist or has not yet been initialized"); }

@@ -119,6 +119,22 @@ sub update {
 
 }
 
+sub setValue {
+
+    my $self = shift;
+    my $value = shift;
+    my $status = shift;
+
+    return if ($self->{_complete} || !$value);
+
+    my $toAdd = $value - ($self->{max} - $self->{_residual});
+    
+    return if ($toAdd < 0);
+
+    $self->update($toAdd, $status);
+
+}
+
 sub complete {
 
     my $self = shift;
@@ -155,7 +171,7 @@ sub appendText {
     my $self = shift;
     my $text = shift;
 
-    print "  " . $text if (defined $text);
+    print " " . $text if (defined $text);
 
 }
 

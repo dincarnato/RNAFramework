@@ -16,7 +16,7 @@ use threads::shared;
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.9.4";
+$VERSION = "2.9.6";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
@@ -44,14 +44,19 @@ BEGIN {
 
 sub uniq {
 
-    return unless(@_);
+    return if (!@_);
 
     my ($reftype, %seen);
-    $reftype = ref($_[0]);
+    %seen = map { my $t = ref($_); $t => ++$seen{$t} } @_;
+
+    throw("Mixed reference types in array") if (scalar(keys %seen) > 1);
+
+    $reftype = (keys %seen)[0];
 
     if (!$reftype) { return(grep { !$seen{$_}++ } @_); }
     elsif ($reftype eq "ARRAY") { return(grep { !$seen{ join($;, @{$_}) }++ } @_); }
-    else { throw("Unable to handle variables of type " . $reftype); }
+    elsif ($reftype eq "HASH") { return(grep { my $r = $_; my $k = join $;, map { $_, $r->{$_} } sort keys %$r; !$seen{$k}++; } @_); }
+    else { throw("Unable to handle variables of type $reftype"); }
 
 }
 
@@ -252,7 +257,7 @@ sub _mergeArray {
 
     my $merge = [];
 
-    if (@$array1 == @$array2) {  push(@$merge, mergeDataStructs($array1->[$_], $array2->[$_])) for (0 .. $#{$array1}); }
+    if (@$array1 == @$array2) { push(@$merge, mergeDataStructs($array1->[$_], $array2->[$_])) for (0 .. $#{$array1}); }
     else { push(@$merge, @$array1, @$array2); }
 
     return($merge);
@@ -400,9 +405,9 @@ sub isdirempty {
 sub mktree {
 
     my $path = shift;
-    my $mode = shift || 0777;
+    my $mode = shift // "777";
 
-    return("Invalid directory mode \"" . $mode . "\"") if ($mode !~ m/^[0-7]{3}$/);
+    return("Invalid directory mode \"$mode\"") if ($mode !~ m/^[0-7]{3}$/);
 
     my ($last, @path);
     @path = split(/\//, $path);
@@ -419,7 +424,7 @@ sub mktree {
         }
 
         if (-e $last) { return("A file with the same name already exists (" . $last . ")") if (!-d $last); }
-        else { mkdir($last, $mode) or return("Unable to create directory (" . $! . ")"); }
+        else { mkdir($last, oct($mode)) or return("Unable to create directory (" . $! . ")"); }
 
     }
 
@@ -437,8 +442,8 @@ sub rmtree {
         no_chdir  => 1,
         wanted    => sub {
 
-            if (!-l && -d _) { rmdir($_) or ($error = "Unable to delete folder \"" . $_ . "\" (" . $! . ")" and return()); }
-            else { unlink($_) or ($error = "Unable to delete file \"" . $_ . "\" (" . $! . ")" and return()); }
+            if (!-l && -d _) { rmdir($_) or ($error = "Unable to delete folder \"$_\" ($!)" and return()); }
+            else { unlink($_) or ($error = "Unable to delete file \"$_\" ($!)" and return()); }
         }
     } => $path;
 

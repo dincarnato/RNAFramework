@@ -18,7 +18,6 @@
 use strict;
 use Config;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use threads;
@@ -48,7 +47,7 @@ my ($help, $output, $overwrite, $configfile,
     $scoremethod, $normmethod, $normwin, $winoffset,
     $reactive, $independent, $pseudocount, $maxscore,
     $meancov, $mediancov, $untreated, $treated,
-    $index, $config, $error, $threads, $R,
+    $index, $config, $threads, $R,
     $rc, $hasctrl, $decimals, $nan, $image,
     $remap, $raw, $suffix, $maxumut, $tmpDir,
     $denatured, $dynwin, $maxmutrate, $normfactor,
@@ -219,12 +218,9 @@ if (-e $output) {
 
 }
 
-mkpath($tmpDir, { mode  => 0755,
-                  error => \$error });
-mkpath("${output}plots/", { mode  => 0755,
-                            error => \$error }) if ($image);
+if (my $error = mktree($tmpDir, "755")) { die "\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+mktree("${output}plots/", "755") if ($image);
 
 # In case no index has been provided, we rebuild the index before generating the working threads
 # The new index will be generated in the same path of the rc file, with extension .rci

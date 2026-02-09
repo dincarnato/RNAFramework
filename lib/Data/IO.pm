@@ -26,7 +26,8 @@ sub new {
                    iseparator => "\n",
                    _prev      => [],
                    _fh        => undef,
-                   _binary    => 0 }, \%parameters);
+                   _binary    => 0,
+                   _remote    => 0 }, \%parameters);
 
     $self->_checkfile();
     $self->flush($self->{flush});
@@ -92,6 +93,8 @@ sub _checkfile {
         else {
 
             if ($file =~ /^(https?|ftp):\/\//) {
+
+                $self->{_remote} = 1;
 
                 for (1 .. $self->{retries}) {
 

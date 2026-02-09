@@ -29,7 +29,7 @@ sub _makeTmpDir {
 
     if (defined $self->{tmpdir} && !-e $self->{tmpdir}) {
 
-        my $error = mktree($self->{tmpdir});
+        my $error = mktree($self->{tmpdir}, "755");
 
         $self->throw("Unable to create temporary directory (" . $error . ")") if (defined $error);
 

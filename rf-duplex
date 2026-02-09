@@ -2,7 +2,6 @@
 
 use strict;
 use File::Basename;
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use List::Util qw(shuffle);
@@ -36,7 +35,7 @@ my ($output, $overwrite, $minOverlapFrac, $minGap,
     $makeClustersSam, $reference, $minPairedFrac, $makeConstraint,
     $minHalfLen, $minSampleSize, $maxReads, $requireBpSupport,
     $refIO, $help, $samtools, $table, $evalOnly, $heatmapOnly,
-    $threads, $tmpDir, $logDir, $error, $R, $heatmap, $logHeatmap,
+    $threads, $tmpDir, $logDir, $R, $heatmap, $logHeatmap,
     $whitelist, $suffix, $singleTranscript, $constraintThresh,
     $colorScale, $minChimeraFrac, $maxIter, $evalStructures,
     $dumpChimaeras, $dumpChimaerasOnly, $makeDotPlot, @colorScale, 
@@ -188,7 +187,7 @@ foreach my $sample (@input) {
 
     my ($basename, @sample, @files);
     @sample = split(":", $sample);
-    @files = sort split(",", @sample == 1 ? $sample : $sample[1]);
+    @files = sort split(",", $sample[-1]);
     $basename = @sample == 1 ? (fileparse($files[0], qr/((\.[^.\s]+)+)$/))[0] : $sample[0];
 
     if (exists $samples{$basename}) {
@@ -233,12 +232,8 @@ if (-e $output) {
 
 }
 
-mkpath($tmpDir, { mode  => 0755,
-                  error => \$error });
-mkpath($logDir, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+if (my $error = mktree($tmpDir, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
+mktree($logDir, "755");
 
 print "\n[+] Importing transcripts from FASTA reference... ";
 
@@ -282,22 +277,13 @@ foreach my $sample (sort keys %samples) {
 
     print "\n[+] Processing sample \"" . $sample . "\"\n";
 
-    mkpath($output . $sample . "/dotplot/", { mode  => 0755,
-                                              error => \$error }) if ($makeDotPlot);
-    mkpath($output . $sample . "/clustered/", { mode  => 0755,
-                                                error => \$error }) if ($makeClustersSam);
-    mkpath($output . $sample . "/plots/", { mode  => 0755,
-                                            error => \$error }) if ($makeImage);
-    mkpath($output . $sample . "/constraints/", { mode  => 0755,
-                                                  error => \$error }) if ($makeConstraint);
-    mkpath($output . $sample . "/bpcounts/", { mode  => 0755,
-                                               error => \$error }) if ($evalStructures);
-    mkpath($output . $sample . "/chimaeras/", { mode  => 0755,
-                                                error => \$error }) if ($dumpChimaeras);
-    mkpath($output . $sample . "/heatmaps/", { mode  => 0755,
-                                               error => \$error }) if ($heatmap);
-
-    die "\n\n  [!] Error: Unable to create output directory for sample \"" . $sample . "\" (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+    mktree($output . $sample . "/dotplot/", "755") if ($makeDotPlot);
+    mktree($output . $sample . "/clustered/", "755") if ($makeClustersSam);
+    mktree($output . $sample . "/plots/", "755") if ($makeImage);
+    mktree($output . $sample . "/constraints/", "755") if ($makeConstraint);
+    mktree($output . $sample . "/bpcounts/", "755") if ($evalStructures);
+    mktree($output . $sample . "/chimaeras/", "755") if ($dumpChimaeras);
+    mktree($output . $sample . "/heatmaps/", "755") if ($heatmap);
 
     if (exists $samples{$sample}->{SAM} ||
         (exists $samples{$sample}->{BAM} && !$samples{$sample}->{BAM}->{sorted})) {
@@ -431,13 +417,13 @@ sub processTranscript {
               my $initial = substr($id, 0, 1);
               $initials{"${sample}_$initial"} = 1;
 
-              mkpath($output . $sample . "/dotplot/$initial", { mode  => 0755 }) if ($makeDotPlot);
-              mkpath($output . $sample . "/clustered/$initial", { mode  => 0755 }) if ($makeClustersSam);
-              mkpath($output . $sample . "/plots/$initial", { mode  => 0755 }) if ($makeImage);
-              mkpath($output . $sample . "/constraints/$initial", { mode  => 0755 }) if ($makeConstraint);
-              mkpath($output . $sample . "/bpcounts/$initial", { mode  => 0755 }) if ($evalStructures);
-              mkpath($output . $sample . "/chimaeras/$initial", { mode  => 0755 }) if ($dumpChimaeras);
-              mkpath($output . $sample . "/heatmaps/$initial", { mode  => 0755 }) if ($heatmap);
+              mktree($output . $sample . "/dotplot/$initial", "755") if ($makeDotPlot);
+              mktree($output . $sample . "/clustered/$initial", "755") if ($makeClustersSam);
+              mktree($output . $sample . "/plots/$initial", "755") if ($makeImage);
+              mktree($output . $sample . "/constraints/$initial", "755") if ($makeConstraint);
+              mktree($output . $sample . "/bpcounts/$initial", "755") if ($evalStructures);
+              mktree($output . $sample . "/chimaeras/$initial", "755") if ($dumpChimaeras);
+              mktree($output . $sample . "/heatmaps/$initial", "755") if ($heatmap);
 
           } }
 
@@ -1682,7 +1668,8 @@ sub help {
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Analyzes direct RNA-RNA interaction capture experiments
 
- Usage:   rf-duplex [Options] Experiment_1:Sample1.bam,Chimeric1.out.junction ... Experiment_n:Samplen.bam,Chimericn.out.junction
+ Usage:   rf-duplex [Options] Sample1.bam,Chimeric1.out.junction ... SampleN.bam,ChimericN.out.junction
+          rf-duplex [Options] sample1:Sample1.bam,Chimeric1.out.junction ... sampleN:SampleN.bam,ChimericN.out.junction   # With sample labels
 
  Options                                        Description
  -p  or --processors             <int>          Number of processors to use (Default: 1)

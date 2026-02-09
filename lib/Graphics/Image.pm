@@ -48,7 +48,7 @@ sub _validate {
     }
 
     my $format = $self->{format};
-    $self->{file} .= "." . $format if ($self->{file} !~ /\.$format$/);
+    $self->{file} .= ".$format" if ($self->{file} !~ /\.$format$/);
 
 }
 

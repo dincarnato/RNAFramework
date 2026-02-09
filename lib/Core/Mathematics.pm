@@ -552,7 +552,7 @@ sub inrange {
 sub euclideandist {
 
     my @data = @_[0..1];
-    my $rmnan = $_[2] if (@_ == 3);
+    my $rmnan = $_[2] || 0;
 
     if ($rmnan) {
 
@@ -577,7 +577,7 @@ sub euclideandist {
 sub normeuclideandist {
 
     my @data = @_[0..1];
-    my $rmnan = $_[2] if (@_ == 3);
+    my $rmnan = $_[2] || 0;
 
     if ($rmnan) {
 

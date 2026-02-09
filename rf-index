@@ -17,7 +17,6 @@
 
 use strict;
 use Digest::MD5 qw(md5_hex);
-use File::Path qw(mkpath);
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
 use HTTP::Tiny;
@@ -37,7 +36,7 @@ $|++;
 my ($dbh, $sth, $assembly, $annotation,
     $reference, $output, $bb, $bt,
     $prefix, $timeout, $help, $ret,
-    $overwrite, $error, $bowtie2, $name,
+    $overwrite, $bowtie2, $name,
     $list, $prebuilt, $codonly, $nconly,
     $sed, $listanno, $host, $port,
     $threads, $unspliced, $nchromosomes,
@@ -155,10 +154,7 @@ if ($list || $prebuilt) {
 
         }
 
-        mkpath($output . "logs/", { mode  => 0755,
-                                    error => \$error });
-
-        die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        if (my $error = mktree($output . "logs/", "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
         print "\n[+] Downloading " . $indexes{$prebuilt}->{name} . " prebuilt index";
 
@@ -344,10 +340,7 @@ else {
 
         print "\n[+] Making output directory...";
 
-        mkpath($output . "logs/", { mode  => 0755,
-                                    error => \$error });
-
-        die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
+        if (my $error = mktree($output . "logs/", "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
 
         print "\n[+] Downloading annotation data. Please wait...";
 
@@ -556,10 +549,10 @@ sub help {
  -H   or --host             <string>     UCSC server hostname (Default: genome-mysql.cse.ucsc.edu)
  -P   or --port             <int>        UCSC server port (Default: 3306)
  -g   or --genome-assembly  <string>     Genome assembly for the species of interest (Default: mm9)
+ -a   or --annotation       <string>     Name of the UCSC table containing the gene annotation (Default: refFlat)
+ -la  or --list-annotations              Lists available gene annotation UCSC tables 
  -rco or --ref-chr-only                  Chromosome patches ("_fix" and "_alt") and unassigned genomic chunks ("_random" and "chrUn")
                                          will be ignored
- -la  or --list-annotations              Lists available gene annotation UCSC tables
- -a   or --annotation       <string>     Name of the UCSC table containing the gene annotation (Default: refFlat)
  -n   or --gene-name                     If available, gene name/symbol will be used ("name2"/"geneName" columns)
  -co  or --coding-only                   Builds reference index using only protein-coding transcripts
  -no  or --noncoding-only                Builds reference index using only non-coding transcripts

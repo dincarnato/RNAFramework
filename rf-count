@@ -3,7 +3,6 @@
 use strict;
 use File::Basename;
 use File::Copy;
-use File::Path qw(mkpath);
 use File::Spec;
 use FindBin qw($Bin);
 use Fcntl qw(:flock SEEK_SET SEEK_END);
@@ -44,8 +43,8 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $whitelist, $onlyMut, $noCovLowQual, $outRawCounts, 
     $fast, $multiBar, $image, $R, $forceSingleRead, $peAllMuts, 
     @mutClasses, @bam_trim5, @ids, @qcounter, @stats, %transcripts, 
-    %spacer, %files, %masks, %realid, %onlyMut, %allStats, 
-    %allFreqs);
+    %files, %masks, %realid, %onlyMut, %allStats, %allFreqs, 
+    %inHeaders);
 
 do {
 
@@ -174,7 +173,7 @@ if ($mutcount && $onlyMut) {
     $noins = 1;
 
     %onlyMut = map { my $i = $_; map { $i . $_ => { count => 0,
-                                                    take  => 0 } } qw(A C G T) } qw(A C G T);
+                                                    take  => 0 } } grep { $i ne $_ } qw(A C G T) } qw(A C G T);
 
     foreach my $mutation (split(/[,;]/, $onlyMut)) {
 
@@ -185,7 +184,7 @@ if ($mutcount && $onlyMut) {
 
         foreach my $base1 (split //, (iupac2nt($bases[0]))[0]) {
 
-            foreach my $base2 (split //, (iupac2nt($bases[1]))[0]) { $onlyMut{$base1 . $base2}->{take} = 1; }
+            foreach my $base2 (grep { $base1 ne $_ } split //, (iupac2nt($bases[1]))[0]) { $onlyMut{$base1 . $base2}->{take} = 1; }
 
         }
 
@@ -218,11 +217,9 @@ else {
     push(@noFlags, "DUP") if (!$nodiscarddup);
 
     $samtoolsParams = "-f " . join(",", uniq(@yesFlags)) . " " if (@yesFlags);
-    $samtoolsParams = "-F " . join(",", uniq(@noFlags)) . " -q $mapqual";
+    $samtoolsParams .= "-F " . join(",", uniq(@noFlags)) . " -q $mapqual";
 
 }
-
-#$SIG{__DIE__} = \&cleanup;
 
 print "\n[+] Making output directory...";
 
@@ -240,25 +237,16 @@ if (-e $output) {
 
 }
 
-mkpath($tmpdir, { mode  => 0755,
-                  error => \$error });
-
-die "\n\n  [!] Error: Unable to create output directory (" . $error->[0]->{each(%{$error->[0]})} . ")\n\n" if (@{$error});
-
-mkpath($output . "whitelists/", { mode  => 0755,
-                                  error => \$error }) if ($whitelist);
+if (my $error = mktree($tmpdir, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
+mktree("${output}whitelists/", "755") if ($whitelist);
+mktree("${output}plots/", "755") if ($image);
 
 if ($mutcount) {
 
-    mkpath($output . "frequencies/", { mode  => 0755,
-                                    error => \$error }) if ($onlyMut);
-    mkpath($output . "raw_counts/", { mode  => 0755,
-                                    error => \$error }) if ($outRawCounts);
+    mktree("${output}frequencies/", "755") if ($onlyMut);
+    mktree("${output}raw_counts/", "755") if ($outRawCounts);
 
 }
-
-mkpath($output . "plots/", { mode  => 0755,
-                             error => \$error }) if ($image);
 
 ##
 # Prepare files
@@ -277,36 +265,35 @@ print "\n[+] Checking files:\n\n";
 
 foreach my $sample (uniq(@ARGV)) {
 
-    die "  [!] Error: Specified sample file \"$sample\" doesn't exist\n\n" if (!-e $sample);
+    my ($format, $sorted, $missingMD, @sample);
+    @sample = split /:/, $sample;
+    unshift(@sample, (fileparse($sample, qr/\.[^.]*/))[0]) if (@sample == 1 || $sample[0] eq "");
 
-    my ($file, $path, $extension, $format,
-        $sorted);
-    ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
-    ($format, $sorted) = guessTypeAndSorting($sample);
+    die "  [!] Error: Specified sample file \"" . $sample[1] . "\" doesn't exist\n\n" if (!-e $sample[1]);
 
-    push(@qcounter, { path      => $sample,
-                      file      => $file,
+    ($format, $sorted, $missingMD) = guessTypeAndSorting($sample[1]);
+
+    push(@qcounter, { path      => $sample[1],
+                      file      => exists $files{$sample[0]} ? $sample[0] . "_" . $files{$sample[0]} : $sample[0],
                       type      => $format,
                       sorted    => $sorted,
-                      indexed   => -e "$sample.bai" ? 1 : 0,
-                      trim5     => 0 });
+                      indexed   => -e $sample[1] . ".bai" || -e $sample[1] . ".csi" ? 1 : 0,
+                      trim5     => 0,
+                      missingMD => $missingMD });
 
-    $files{$file} = $#qcounter;
-    $spacer{$file} = length($file);
+    $files{$sample[0]}++;
 
     # If only one value for 5' trimming in SAM/BAM files has been specified, this is applied to all the passed SAM/BAM files
     $qcounter[-1]->{trim5} = isint($bam_trim5) && ispositive($bam_trim5) ? $bam_trim5 : shift(@bam_trim5);
 
     die "  [!] Error: Fewer 5'-end trimming values in -t5 list than provided SAM/BAM files\n\n" if (!defined $qcounter[-1]->{trim5});
-    die "  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($qcounter[-1]->{trim5}) ||
-                                                                                !isint($qcounter[-1]->{trim5}));
+    die "  [!] Error: 5'-end trimming value must be a positive integer\n\n" if (!ispositive($qcounter[-1]->{trim5}) || !isint($qcounter[-1]->{trim5}));
 
     $table->row($qcounter[-1]->{file}, $qcounter[-1]->{type}, $sorted ? "Yes" : "No", 
                 $qcounter[-1]->{indexed} ? "Yes" : "No", ($mutcount || $covonly) ? "Ignored" : $qcounter[-1]->{trim5} . " nt");
 
 }
 
-%spacer = map { $_ => 1 + max(values %spacer) - $spacer{$_} } (keys %spacer);
 $multiBar = 0 if ($multiBar && @qcounter > (termsize())[0]);
 
 die "  [!] Error: More 5'-end trimming values in -t5 list than provided BAM files\n\n" if (@bam_trim5);
@@ -317,7 +304,7 @@ print "\n";
 
 # Starts the process manager
 $processmanager = Core::Process::Queue->new( processors => $threads,
-                                             stderr     => $output . "error.out",
+                                             stderr     => $output . "samtools.log",
                                              tmpDir     => $tmpdir,
                                              verbosity  => 1 );
 
@@ -327,8 +314,9 @@ $processmanager = Core::Process::Queue->new( processors => $threads,
 
 print "\n[+] Getting transcripts from reference, and building count table base structure...";
 
-$seqio = Data::IO::Sequence->new( file      => $multifasta,
-                                  maskIUPAC => 1 );
+$seqio = Data::IO::Sequence->new( file              => $multifasta,
+                                  maskIUPAC         => 1,
+                                  checkDuplicateIds => 1 );
 $rcio = RF::Data::IO::RC->new( file       => $tmpdir . "base.rc",
                                index      => $output . "index.rci",
                                buildindex => 1,
@@ -340,7 +328,7 @@ while (my $entry = $seqio->read()) {
 
     my ($id, $rentry, $offset);
     $id = $entry->id();
-    $id =~ s/[^\w\.-]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
+    $id =~ s/[^\w\.-:]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
 
     $rentry = RF::Data::RC->new( id       => $id,
                                  sequence => $entry->sequence(),
@@ -356,14 +344,11 @@ while (my $entry = $seqio->read()) {
 
 $rcio->close();
 
-@ids = sort keys %transcripts;
-$tsPerJob = max(1, round(@ids / 500));
-
 ##
 # SAM/BAM Header validation
 ##
 
-print "\n[+] Inspecting SAM/BAM file headers...\n";
+print "\n[+] Inspecting SAM/BAM file headers...";
 
 foreach my $sample (@qcounter) {
 
@@ -378,31 +363,38 @@ foreach my $sample (@qcounter) {
         if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)/) {
 
             my ($id, $length) = ($1, $2);
-            $id =~ s/\//_/g;
+            $id =~ s/[^\w\.-:]/_/g;
 
             if (exists $transcripts{$id}) {
 
                 my $trueLen = $fast ? length($transcripts{$id}) : $transcripts{$id};
 
-                die "\n  [!] Error: Transcript \"$id\" length from sample \"" . $sample->{file} . "\" header ($length nt) differs from reference ($trueLen nt)." .
+                die "\n\n  [!] Error: Transcript \"$id\" length from sample \"" . $sample->{file} . "\" header ($length nt) differs from reference ($trueLen nt)." .
                     "\n             Please re-map your dataset using the same reference, and try again.\n\n" if ($trueLen != $length);
 
                 $inheader++;
 
             }
 
+            $inHeaders{$id} = 1;
+
         }
 
     }
     close($fh);
 
-    die "\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
+    die "\n\n  [!] Error: All transcripts in sample \"" . $sample->{file} . "\" header are absent in reference." .
         "\n             Please re-map your dataset using the same reference, or provide a different reference by the -f (or --fasta) parameter.\n\n" if (!$inheader);
 
-    warn "\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
+    warn "\n\n  [!] Warning: Only " . $inheader . "/" . keys(%transcripts) . " reference transcripts are present in sample \"" . $sample->{file} . "\" header." .
          "\n               All transcripts absent in reference will be skipped.\n" if ($inheader != keys(%transcripts));
 
 }
+
+for (keys %transcripts) { delete($transcripts{$_}) if (!exists $inHeaders{$_}); }
+
+@ids = sort keys %transcripts;
+$tsPerJob = max(1, round(@ids / 500));
 
 ##
 # Estimate read length (if maxcov is specified)
@@ -416,7 +408,7 @@ if (($maxcov || $discardshorter eq "MEDIAN") && $mutcount) {
 
         my @lengths;
 
-        open(my $fh, "-|", "$samtools view $samtoolsParams " . $sample->{path} . " 2>&1") or die "  [!] Error: Unable to read SAM/BAM file for sample \"" . $sample->{file} . "\" (" . $! . ")\n\n";
+        open(my $fh, "-|", "$samtools view --no-PG $samtoolsParams " . $sample->{path} . " 2>&1") or die "  [!] Error: Unable to read SAM/BAM file for sample \"" . $sample->{file} . "\" (" . $! . ")\n\n";
         while (my $row = <$fh>) {
 
             chomp($row);
@@ -438,7 +430,13 @@ if (($maxcov || $discardshorter eq "MEDIAN") && $mutcount) {
     $table->row($_->{file}, $_->{medianReadLen} . " nt") for (@qcounter);
     $table->print();
 
-    print "\n";
+    print "\n\n";
+
+}
+else { 
+    
+    print "\n"; 
+    print "\n" if ((grep { !$_->{sorted} || $_->{type} eq "SAM" || $_->{missingMD} || !$_->{indexed} } @qcounter) || $sortByReadName);
 
 }
 
@@ -448,15 +446,11 @@ if (($maxcov || $discardshorter eq "MEDIAN") && $mutcount) {
 
 if (my @unsorted = grep { !$_->{sorted} } @qcounter) { 
 
-    print "\n[+] Sorting " . scalar(@unsorted) . " unsorted SAM/BAM file(s)...\n";
-
-    $processmanager->onstart(sub { print "\n  [-] Sorting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-
     foreach my $sample (@unsorted) {
 
         my $path = $tmpdir . $sample->{file} . "_sorted.bam";
 
-        $processmanager->enqueue( command => "$samtools sort -@ $wt -m $samtoolsMem -O BAM -T \"" . $tmpdir . $sample->{file} . "\" -o \"$path\" \"" . $sample->{path} . "\"",
+        $processmanager->enqueue( command => "$samtools sort --no-PG -@ $wt -m $samtoolsMem -O BAM -T \"" . $tmpdir . $sample->{file} . "\" -o \"$path\" \"" . $sample->{path} . "\"",
                                   id      => $sample->{file} );
 
         $sample->{path} = $path;
@@ -464,10 +458,19 @@ if (my @unsorted = grep { !$_->{sorted} } @qcounter) {
 
     }
 
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Sorting " . scalar(@unsorted) . " unsorted SAM/BAM file(s)");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to index sample \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
     $processmanager->start();
     $processmanager->waitall();
-
-    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to sort sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
 
     print "\n";
 
@@ -479,15 +482,11 @@ if (my @unsorted = grep { !$_->{sorted} } @qcounter) {
 
 if (my @sam = grep { $_->{type} eq "SAM" } @qcounter) { 
 
-    print "\n[+] Converting " . scalar(@sam) . " sorted SAM file(s) to BAM format...\n";
-
-    $processmanager->onstart(sub { print "\n  [-] Converting sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-
     foreach my $sample (@sam) {
 
         my $path = $tmpdir . $sample->{file} . ".bam";
 
-        $processmanager->enqueue( command => "$samtools view -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\"",
+        $processmanager->enqueue( command => "$samtools view --no-PG -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\"",
                                   id      => $sample->{file} );
 
         $sample->{path} = $path;
@@ -495,10 +494,54 @@ if (my @sam = grep { $_->{type} eq "SAM" } @qcounter) {
 
     }
 
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Converting " . scalar(@sam) . " sorted SAM file(s) to BAM format");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to index sample \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
     $processmanager->start();
     $processmanager->waitall();
 
-    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to convert sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
+    print "\n";
+
+}
+
+##
+# Computing MD tag (if needed)
+##
+
+if (my @missingMD = grep { $_->{missingMD} } @qcounter) { 
+
+    foreach my $sample (@missingMD) {
+
+        my $path = $tmpdir . $sample->{file} . ".withMD.bam";
+
+        $processmanager->enqueue( command => "$samtools calmd --no-PG -@ $wt -b \"" . $sample->{path} . "\" \"$multifasta\" > \"$path\"",
+                                  id      => $sample->{file} );
+
+        $sample->{path} = $path;
+
+    }
+
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Computing missing MD tag for " . scalar(@missingMD) . " files");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to compute MD tag for sample \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
+    $processmanager->start();
+    $processmanager->waitall();
 
     print "\n";
 
@@ -510,10 +553,6 @@ if (my @sam = grep { $_->{type} eq "SAM" } @qcounter) {
 
 if (my @toIndex = grep { !$_->{indexed} } @qcounter) { 
 
-    print "\n[+] Indexing " . scalar(@toIndex) . " BAM file(s)...\n";
-
-    $processmanager->onstart(sub { print "\n  [-] Indexing sample \"" . $_[0] . "\"" . (" " x $spacer{$_[0]}) . "(PID: " . $_[1] . ")"; });
-
     foreach my $sample (@toIndex) {
 
         $processmanager->enqueue( command => "$samtools index -@ $wt \"" . $sample->{path} . "\"",
@@ -523,10 +562,81 @@ if (my @toIndex = grep { !$_->{indexed} } @qcounter) {
 
     }
 
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Indexing " . scalar(@toIndex) . " BAM file(s)");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to index sample \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
     $processmanager->start();
     $processmanager->waitall();
 
-    while (my $sample = $processmanager->dequeue()) { die "\n\n  [!] Error: Unable to index sample \"" . $sample->id() . "\"\n\n" if ($sample->exitcode()->[0]); }
+    print "\n";
+
+}
+
+if ($sortByReadName) {
+
+    foreach my $sample (@qcounter) {
+
+        foreach my $id (@ids) {
+
+            my $path = $tmpdir . ".$id." . $sample->{file} . ".bam";
+
+            $processmanager->enqueue( command => "$samtools view --no-PG -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\" \"$id\"",
+                                      id      => "$id." . $sample->{file} );
+
+        }
+
+    }
+
+    $progressBar = Term::Progress->new( max     => $processmanager->queueSize(),
+                                        colored => 1 );
+    $progressBar->init("Splitting BAM files by reference");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to extract \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
+    $processmanager->start();
+    $processmanager->waitall();
+
+    foreach my $sample (@qcounter) {
+
+        foreach my $id (@ids) {
+
+            my ($path1, $path2);
+            $path1 = $tmpdir . ".$id." . $sample->{file} . ".bam";
+            $path2 = $tmpdir . ".$id.readSorted." . $sample->{file} . ".bam";
+
+            $processmanager->enqueue( command => "$samtools sort -n --no-PG -@ $wt -O BAM -o \"$path2\" \"$path1\" && rm \"$path1\"",
+                                      id      => "$id." . $sample->{file} );
+
+        }
+
+    }
+
+    print "\n";
+    $progressBar->reset();
+    $progressBar->init("Sorting splits by read name");
+
+    $processmanager->parentOnExit(sub { 
+        
+        die "\n\n  [!] Error: Unable to sort \"$_[0]\"\n\n" if ($processmanager->dequeue($_[2])->exitcode()->[0]);
+
+        $progressBar->update(1); 
+        
+    });
+    $processmanager->start();
+    $processmanager->waitall();
 
     print "\n";
 
@@ -594,31 +704,52 @@ if (-e $mbfile) {
 
 }
 
-print "\n[+] Copying RC base structure...";
-
-foreach my $sample (@qcounter) {
-
-    die "\n\n  [!] Error: Unable to copy counts table structure for sample \"" . $sample->{file} . "\" (" . $! . ")" unless (copy($tmpdir . "base.rc", $output . $sample->{file} . ".rc"));
-
-}
-
 print "\n[+] Queuing jobs...";
 
-for (my $i = 0; $i < @ids; $i += $tsPerJob) {
+for(my $i = 0; $i < @qcounter; $i++) {
 
-    my ($last, @ts);
-    $last = min($#ids, $i + $tsPerJob - 1);
-    @ts = @ids[$i .. $last]; 
+    my ($sample, @sampleIds);
+    $sample = $qcounter[$i];
 
-    foreach my $sample (@qcounter) {
+    open(my $fh, "-|", "$samtools idxstats -@ " . ($threads * $wt) . " " . $sample->{path}) or die "\n\n  [!] Error: Unable to get IDs of covered transcripts ($!)\n\n";
+    while(<$fh>) {
+
+        chomp;
+        my @entry = split /\t/;
+        $entry[0] =~ s/[^\w\.-:]/_/g;
+        push(@sampleIds, $entry[0]) if ($entry[2] && exists $transcripts{$entry[0]}); # Only take IDs with alignments
+
+    }
+    close($fh);
+
+    if (!@sampleIds) {
+    splice(@qcounter, $i, 1);
+    $i--;
+    }
+
+    for (my $i = 0; $i < @sampleIds; $i += $tsPerJob) {
+
+        my ($last, @ts);
+        $last = min($#sampleIds, $i + $tsPerJob - 1);
+        @ts = @sampleIds[$i .. $last]; 
 
         $processmanager->enqueue( command   => \&count,
                                   arguments => [ $sample, \@ts ],
                                   id        => $sample->{file} );
 
+        last if ($last == $#sampleIds);
+
     }
 
-    last if ($last == $#ids);
+}
+
+die "\n\n  [!] Error: All sample files are empty (no alignments). Nothing to be processed.\n\n" if (!$processmanager->queueSize());
+
+print "\n[+] Copying RC base structure...";
+
+foreach my $sample (@qcounter) {
+
+    die "\n\n  [!] Error: Unable to copy counts table structure for sample \"" . $sample->{file} . "\" (" . $! . ")" unless (copy($tmpdir . "base.rc", $output . $sample->{file} . ".rc"));
 
 }
 
@@ -640,8 +771,7 @@ else {
 }
 
 $processmanager->processors(min(ncores(), $threads * $wt));
-$processmanager->onstart(sub {});
-$processmanager->onexit(sub {});
+$processmanager->stderr($output . "error.out");
 $processmanager->parentOnExit(sub { 
 
     # Here we retrieve the partials from each process and combine them
@@ -651,12 +781,14 @@ $processmanager->parentOnExit(sub {
     
     if (ref($stats) eq "HASH") {
 
-        $progressBar->update($multiBar ? $sample : 1) if (!defined $stats->{error});
+        my $errMsg = $stats->{error} || $stats->{warning};
 
-        if (defined $stats->{error} || defined $stats->{warning}) { 
+        if ($multiBar) { $progressBar->update($sample); }
+        else { $progressBar->update($errMsg ? (1, "$sample: $errMsg") : 1); }
+
+        if (defined $stats->{error} || (defined $stats->{warning} && !$stats->{total})) { 
             
-            my $errMsg = $stats->{error} || $stats->{warning};
-            $progressBar->appendText($multiBar ? ($sample, $errMsg) : $errMsg);
+            $progressBar->appendText($sample, $errMsg) if ($multiBar);
             
             if (defined $stats->{error}) {
 
@@ -668,6 +800,8 @@ $processmanager->parentOnExit(sub {
 
         }
         else {
+
+            $progressBar->appendText($sample, $errMsg) if ($multiBar && $errMsg);
 
             $allStats{$sample}->{$_} += $stats->{$_} for (qw(A C G T mutated total totalPrimary));
             $allStats{$sample}->{covered} += scalar(@{$stats->{ids}});
@@ -709,13 +843,13 @@ $processmanager->waitall();
 
 print "\n";
 
-if ($mutmap) {
+if ($mutmap && (my @samples = grep { !defined $allStats{$_}->{error} } keys %allStats)) {
 
     print "\n[+] Re-assembling partial MM files...";
 
     $processmanager->parentOnExit(sub {});
 
-    foreach my $sample (keys %allStats) {
+    foreach my $sample (@samples) {
 
         $processmanager->enqueue( command      => \&reassembleMM,
                                   arguments    => [ $sample ],
@@ -728,7 +862,7 @@ if ($mutmap) {
 
     print "\n[+] Indexing MM files...";
 
-    foreach my $sample (keys %allStats) {
+    foreach my $sample (@samples) {
 
         $processmanager->enqueue( command      => \&indexMM,
                                   arguments    => [ $sample ],
@@ -741,57 +875,87 @@ if ($mutmap) {
 
 }
 
-print "\n[+] Statistics:\n";
+$table = Term::Table->new(indent => 2);
 
-foreach my $sample (sort keys %allStats) {
+if ($covonly) { $table->head("Sample", "Covered"); }
+elsif ($mutcount) { $table->head("Sample", "Covered", "Mutated alignments", "\%A muts", "\%C muts", "\%G muts", "\%U muts"); }
+else { $table->head("Sample", "Covered", "\%A stops", "\%C stops", "\%G stops", "\%U stops"); }
 
-    my ($stats);
+foreach my $sample (grep { !defined $allStats{$_}->{error} } sort keys %allStats) {
 
-    if (exists $allStats{$sample}->{error}) { $stats = "  [!] Processing failed for sample \"$sample\" (" . $allStats{$sample}->{error} . ")"; }
-    else {
+    my @row = ($sample, $allStats{$sample}->{covered} || 0);
 
-        $stats = "  [*] Sample \"$sample\":" . (" " x $spacer{$sample}) . ($allStats{$sample}->{covered} || 0) . " transcripts covered";
+    if (!$covonly && $allStats{$sample}->{covered}) {
 
-        if (!$covonly) {
+        my ($total, $mutReads, @bases);
+        $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
+        $mutReads = 0;
 
-            my ($total, $mutReads, %bases);
-            $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
-            $mutReads = sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100) if ($mutcount && $allStats{$sample}->{total});
-            %bases = map { $_ => sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T);
-            $stats .= " [" . join("; ", map { "$_: " . $bases{$_} } qw(A C G T)) . "]" if ($total);
-            $stats .= " - " . $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . " ($mutReads\%) mutated alignments" if ($mutcount && $allStats{$sample}->{total});
+        if ($mutcount) {
 
-            push(@stats, [ $sample, (map { $bases{$_} } qw(A C G T)), $mutReads ]);
+            if ($allStats{$sample}->{total}) {
 
-        }
+                $mutReads = sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100);
+                push(@row, $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . " ($mutReads\%)");
 
-        # Updates the read count in the RC file
-        $rcio = RF::Data::IO::RC->new( file           => $output . $sample . ".rc",
-                                       mode           => "w+",
-                                       noPreloadIndex => 1 );
-        $rcio->mappedreads($allStats{$sample}->{totalPrimary});
-        $rcio->close();
-
-        if ($mutcount && $onlyMut) {
-
-            my ($totMuts, $freqIO);
-            $totMuts = sum(map { $allFreqs{$sample}->{$_}->{count} } keys %{$allFreqs{$sample}});
-            $freqIO = Data::IO->new( file  => $output . "frequencies/" . $sample . ".txt",
-                                     mode  => "w+",
-                                     flush => 1 );
-            $freqIO->write(join("\n", map { join("\t", $_, $totMuts ? sprintf("%.6f", $allFreqs{$sample}->{$_}->{count} / $totMuts) : "NaN") } sort keys %{$allFreqs{$sample}}) . "\n");
+            }
+            else { push(@row, "-"); }
 
         }
+
+        if ($total) {
+
+            @bases = map { sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T);
+            push(@row, @bases);
+
+        }
+        else { push(@row, ("-") x 4); }
+
+        push(@stats, [ $sample, @bases, $mutReads ]);
+
 
     }
 
-    print "\n$stats";
+    # Updates the read count in the RC file
+    $rcio = RF::Data::IO::RC->new( file           => $output . $sample . ".rc",
+                                   mode           => "w+",
+                                   noPreloadIndex => 1 );
+    $rcio->mappedreads($allStats{$sample}->{totalPrimary});
+    $rcio->close();
+
+    if ($mutcount && $onlyMut) {
+
+        my ($totMuts, $freqIO);
+        $totMuts = sum(map { $allFreqs{$sample}->{$_}->{count} } keys %{$allFreqs{$sample}});
+        $freqIO = Data::IO->new( file  => $output . "frequencies/" . $sample . ".txt",
+                                 mode  => "w+",
+                                 flush => 1 );
+        $freqIO->write(join("\n", map { join("\t", $_, $totMuts ? sprintf("%.6f", $allFreqs{$sample}->{$_}->{count} / $totMuts) : "NaN") } sort keys %{$allFreqs{$sample}}) . "\n");
+
+    }
+
+    $table->row(@row);
+
+}
+
+if ($table->nRows()) {
+
+    print "\n[+] Statistics:\n\n";
+    $table->print();
+    print "\n";
+
+}
+
+if (my @failed = grep { defined $allStats{$_}->{error} } sort keys %allStats) {
+
+    print "\n  [!] Processing failed for sample \"$_\" (" . $allStats{$_}->{error} . ")" for (@failed);
+    print "\n";
 
 }
 
 if ($image && @stats) {
 
-    print "\n\n[+] Generating plots...";
+    print "\n[+] Generating plots...";
 
     my ($img, $plot);
     $img = Graphics::Image->new( file   => $output . "plots/base_stats.pdf",
@@ -817,7 +981,7 @@ if ($image && @stats) {
                                            labelTextSize => 8 );
     $img->plot([$plot]);
 
-    if ($mutcount) {
+    if ($mutcount && sum(map { $_->[-1] } @stats)) {
 
         $img->file($output . "plots/read_mutation_stats.pdf");
         $plot = Graphics::Chart::Barplot->new( x             => "sample",
@@ -836,7 +1000,7 @@ if ($image && @stats) {
 
 }
 
-print "\n\n[+] Cleaning up temporary files...";
+print "\n[+] Cleaning up temporary files...";
 
 cleanup();
 
@@ -874,10 +1038,10 @@ sub count {
 
     my ($sample, $ids) = @_;
 
+    undef($processmanager); # Frees unnecessary memory
     $seqio->forceReopenFh(); # On fork() filehandle is cloned. With this we close it and reopen it for all children.
 
-    my ($stats, $readsCount, $mmIO, $rcIO, 
-        %stats, %rawCounts);
+    my ($stats, $mmIO, $rcIO, %stats);
     %stats = ( ids          => [],
                A            => 0,
                C            => 0,
@@ -889,28 +1053,28 @@ sub count {
                medianCov    => [],
                rawCounts    => [],
                onlyMut      => undef,
-               warning      => undef );
-
+               warning      => undef,
+               error        => undef );
+ 
     $rcIO = RF::Data::IO::RC->new( file  => $output . $sample->{file} . ".rc",
                                    index => $output . "index.rci",
                                    mode  => "w+" );
 
-    $mmIO = RF::Data::IO::MM->new( file       => $tmpdir . $sample->{file} . ".$$.mm",
+    # Including the first ID in the temp file name ensures no clashes between consecutive processes due to PID recycling
+    $mmIO = RF::Data::IO::MM->new( file       => $tmpdir . $sample->{file} . "." . $ids->[0] . "." . $$ . ".mm", 
                                    appendable => 1,
                                    mode       => "w" ) if ($mutmap);
 
     foreach my $id (@$ids) {
 
-        my ($countCmd, $rcEntry, $readsToMaxCov, @readStarts, 
-            @counts, @coverage);
-        $id =~ s/[^\w\.-]/_/g;
+        my ($countCmd, $rcEntry, $readsCount, $readsToMaxCov, 
+            @readStarts, @counts, @coverage, %rawCounts);
 
-        $countCmd = $sortByReadName ? "$samtools view -h $samtoolsParams " . $sample->{path} . " 2>&1 | $samtools sort -n -@ $wt -m $samtoolsMem -T \"" . $tmpdir . $sample->{file} . ".readsort\" 2>&1 | $samtools view 2>&1" :
-                                      "$samtools view $samtoolsParams " . $sample->{path} . " $id 2>&1";
+        $countCmd = "$samtools view $samtoolsParams " . ($sortByReadName ? $tmpdir . ".$id.readSorted." . $sample->{file} . ".bam" : $sample->{path} . " " . $realid{$id});
 
-        if (open(my $fh, "-|", $countCmd)) {
+        if (open(my $fh, "-|", "$countCmd 2>&1")) {
 
-            my (%ref, %lastRead);
+            my ($firstRead, %ref, %lastRead);
 
             if ($fast) { 
                             
@@ -927,13 +1091,12 @@ sub count {
 
             }
 
+            $firstRead = 1;
             $readsCount = 0;
             $readsToMaxCov = $ref{length} < $sample->{medianReadLen} ? $maxcov : round(($ref{length} * $maxcov / $sample->{medianReadLen}) / ($ref{length} - $sample->{medianReadLen} + 1)) if ($maxcov);
             @counts = (0) x $ref{length};
             @coverage = (0) x $ref{length};
             %rawCounts = map { $_ => [ (0) x $ref{length} ] } @mutClasses if ($outRawCounts);
-
-            $mmIO->append_transcript($id, $ref{sequence}) if ($mutmap);
 
             while (!eof($fh)) {
 
@@ -943,7 +1106,7 @@ sub count {
                 chomp($row);
 
                 if ($row =~ /Could not retrieve index file/) { return({ error => "Error: Missing BAM index" }); }
-                elsif ($row =~ /\[main_samview\] (.+)$/) { 
+                elsif ($row =~ /\[.+?\] (.+)$/) { 
                     
                     $stats{"warning"} = "Warning: $1";
                     
@@ -965,7 +1128,7 @@ sub count {
                 @$ins = map { $_ + $row[3] - 1 } @$ins; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @$ins; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
 
-                if ($mutcount && ($truelen < ($discardshorter eq "MEDIAN" ? $sample->{medianReadLen} : $discardshorter) ||
+                if ($mutcount && ($cov < ($discardshorter eq "MEDIAN" ? $sample->{medianReadLen} : $discardshorter) ||
                                   $editdist / $cov > $maxmut ||
                                   median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual)) { # Check median read's quality
 
@@ -1023,7 +1186,7 @@ sub count {
 
                         push(@{$lastRead{$row[0]}->{start}}, $start);
                         push(@{$lastRead{$row[0]}->{end}}, $end);
-                        push(@{$lastRead{$row[0]}->{covered}}, \@covered);
+                        push(@{$lastRead{$row[0]}->{covered}}, clonearrayref(\@covered));
 
                     }
 
@@ -1085,6 +1248,14 @@ sub count {
                                 $stats{mutated} += @{$lastRead{$row[0]}->{start}};
 
                                 if ($mutmap) {
+
+                                    # This ensures transcripts with no reads are not added to the MM file
+                                    if ($firstRead) {
+
+                                        $firstRead = 0;
+                                        $mmIO->append_transcript($id, $ref{sequence});
+
+                                    }
 
                                     if (@{$lastRead{$row[0]}->{start}} == 2 && 
                                         ((!$lastRead{$row[0]}->{overlapping} && $mmSplitPairedEnd && $lastRead{$row[0]}->{gap} > $mmSplitPairedEnd) || ($lastRead{$row[0]}->{overlapping} && $forceSingleRead))) {
@@ -1176,6 +1347,14 @@ sub count {
 
                     if ($mutmap) {
 
+                        # This ensures transcripts with no reads are not added to the MM file
+                        if ($firstRead) {
+
+                            $firstRead = 0;
+                            $mmIO->append_transcript($id, $ref{sequence});
+
+                        }
+
                         if (@{$lastRead{$readId}->{start}} == 2 && 
                             ((!$lastRead{$readId}->{overlapping} && $mmSplitPairedEnd && $lastRead{$readId}->{gap} > $mmSplitPairedEnd) || ($lastRead{$readId}->{overlapping} && $forceSingleRead))) {
 
@@ -1190,8 +1369,6 @@ sub count {
                         else { $mmIO->append_read($pairStart, $pairEnd, scalar(@{$lastRead{$readId}->{muts}}), $lastRead{$readId}->{muts}); } 
 
                     }
-
-                    $mmIO->append_read($pairStart, $pairEnd, scalar(@{$lastRead{$readId}->{muts}}), $lastRead{$readId}->{muts}) if ($mutmap);
 
                 }
 
@@ -1213,7 +1390,7 @@ sub count {
 
             }
 
-            my $rcEntry = RF::Data::RC->new( id        => $id,
+            my $rcEntry = RF::Data::RC->new( id         => $id,
                                              sequence   => $ref{sequence},
                                              counts     => \@counts,
                                              coverage   => \@coverage,
@@ -1221,19 +1398,25 @@ sub count {
 
             $rcIO->write($rcEntry);
 
-            push(@{$stats{ids}}, $id);
-            push(@{$stats{medianCov}}, median(@coverage));
-            push(@{$stats{rawCounts}}, \%rawCounts) if ($outRawCounts);
-            
-            $rcIO->close();
-            $mmIO->close() if ($mutmap);
+            if (sum(@coverage)) {
 
-            $stats{onlyMut} = \%onlyMut;
+                push(@{$stats{ids}}, $id);
+                push(@{$stats{medianCov}}, median(@coverage));
+                push(@{$stats{rawCounts}}, clonehashref(\%rawCounts)) if ($outRawCounts);
+
+            }
 
         }
         else { return({ error => "Error: Unable to read file \"" . $sample->{file} . "\"" }); }
 
+        unlink($tmpdir . ".$id.readSorted." . $sample->{file} . ".bam") if ($sortByReadName);
+
     }
+
+    $stats{onlyMut} = \%onlyMut;
+
+    $rcIO->close();
+    $mmIO->close() if ($mutmap);
 
     return(\%stats);
 
@@ -1273,13 +1456,12 @@ sub processMutReads {
                 @{$lastRead->{end}} = @{$lastRead->{end}}[@i];
 
             }
-
-            my ($overlapStart, $overlapEnd);
-            $overlapStart = $lastRead->{start}->[1];
-            $overlapEnd = min(@{$lastRead->{end}}); # Handles the case of dovetail reads
             
-            if ($lastRead->{start}->[1] < $lastRead->{end}->[0]) {
+            if ($lastRead->{start}->[1] <= $lastRead->{end}->[0]) {
 
+                my ($overlapStart, $overlapEnd);
+                $overlapStart = $lastRead->{start}->[1];
+                $overlapEnd = min(@{$lastRead->{end}}); # Handles the case of dovetail reads
                 $lastRead->{overlapping} = 1;
                 $lastRead->{gap} = 0;
 
@@ -1327,8 +1509,6 @@ sub processMutReads {
 
 sub cleanup {
 
-    unlink(glob($tmpdir . "*"));
-    
     if (!-s $output . "error.out") { unlink($output . "error.out"); }
     else { print "\n\n  [!] Warning: Execution completed with error(s)/warning(s). Please check the \"${output}error.out\" file\n"; }
 
@@ -1341,13 +1521,15 @@ sub guessTypeAndSorting {
     my $file = shift;
 
     my ($type, $header, $eof, $sorted, 
-        $i, $h, @data, %header);
-    $i = $h = 0;
+        $i, $h, $missingMD, @data, %header);
+    $i = $h = $missingMD = 0;
     $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
     $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
-    open(my $fh, "-|", "$samtools view -h $samtoolsParams $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
+    open(my $fh, "-|", "$samtools view -h --no-PG $samtoolsParams $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
     while (<$fh>) {
+
+        next if (/PG line/);
 
         if (substr($_, 0, 1) eq "@") {
 
@@ -1369,6 +1551,8 @@ sub guessTypeAndSorting {
 
         }
         else {
+
+            if ($mutcount) { $missingMD = 1 unless (/\tMD:Z:/); }
 
             $i++;
             my @row = split "\t";
@@ -1409,7 +1593,7 @@ sub guessTypeAndSorting {
     if ($data[0] eq $header && $data[1] eq $eof) { $type = "BAM"; }
     else { $type = "SAM"; }
 
-    return($type, $sorted);
+    return($type, $sorted, $missingMD);
 
 }
 
@@ -1715,6 +1899,7 @@ sub help {
  Summary: Calculates per-base RT-stops/mutations and coverage
 
  Usage:   rf-count [Options] Sample1.sam Sample2.bam ... Samplen.sam
+          rf-count [Options] sample1:Sample1.sam ... sampleN:Samplen.sam      # With sample labels
 
  Options                                          Description
  -p   or --processors              <int>          Number of files to process in parallel (Default: 1)
@@ -1768,7 +1953,8 @@ sub help {
  |
  +- Mutation count mode options
     -sbn or --sort-by-read-name                    If processing large paired-end experiments, reads will be pre-sorted by read name, so
-                                                   that paired-end reads will be processed consecutively, significantly reducing the memory footprint
+                                                   that paired-end reads will be processed consecutively, significantly reducing the memory
+                                                   footprint (but to the cost of increased disk usage)
     -pam or --paired-end-all-mutations             When processing paired-end reads, if they overlap and mutations are only present in one
                                                    of the two mates, these will be retained
                                                    Note: the default behavior is to discard mutations in overlapping regions that are not 
@@ -1787,7 +1973,8 @@ sub help {
                                                          a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
                                                          separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
                                                          and deletion count
-    -ds  or --discard-shorter         <int>        Discards reads shorter than this length (excluding clipped bases, Default: 1)
+    -ds  or --discard-shorter         <int>        Discards reads spanning less than this number of bases, excluding clipped bases (unless -ic is specified)
+                                                   (Default: 1)
                                                    Note: when set to "MEDIAN" (case-insensitive), the median read length will be used
     -q   or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
     -ncl or --no-cov-low-qual                      If a mutated base (or one of the surrounding bases, if -es is specified) does not exceed the -mq minimum

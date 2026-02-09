@@ -29,8 +29,11 @@ use Core::Mathematics qw(:all);
 use Core::Statistics;
 use Core::Utils;
 use Data::Sequence::Utils;
+use Graphics::Chart::Heatmap;
+use Graphics::Image;
 use RF::Data::IO::RC;
 use RF::Data::IO::XML;
+use RF::Utils;
 use Term::Constants qw(:screen);
 use Term::Progress;
 use Term::Table;
@@ -41,23 +44,20 @@ die "\n  [!] Error: This program requires ithreads." .
 $|++;
 
 my ($output, $overwrite, $help, $minvalues,
-    $threads, $table, $skipoverall, $spearman,
-    $ignoreseq, $singlefile, $isRC, $keepbases,
-    $coverage, $ratio, $minCov, $maxReact,
-    $capReact, $medianCov, @pool, @files, 
-    @overall, %files);
+    $threads, $spearman, $ignoreseq, $singlefile, 
+    $isRC, $keepbases, $coverage, $ratio, $minCov, 
+    $maxReact, $capReact, $blockSize, $index, $image,
+    $R, $labelFontSize, $valueFontSize, $decimals, 
+    @pool, @input, @io, %files, %seen);
 
 my $progressBar : shared;
 my @ids : shared;
-my @results : shared;
-my @allreactivities1 : shared;
-my @allreactivities2 : shared;
 my %results : shared;
+my %comparisons : shared;
 %results = ( diffseq     => 0,
              nominvalues => 0,
              failed      => 0,
-             correlated  => 0,
-             missing     => 0 );
+             correlated  => 0 );
 
 do {
 
@@ -68,61 +68,76 @@ do {
                 "ow|overwrite"         => \$overwrite,
                 "m|min-values=s"       => \$minvalues,
                 "p|processors=i"       => \$threads,
-                "s|skip-overall"       => \$skipoverall,
                 "S|spearman"           => \$spearman,
                 "kb|keep-bases=s"      => \$keepbases,
-                "i|ignore-sequence"    => \$ignoreseq,
+                "I|ignore-sequence"    => \$ignoreseq,
                 "c|coverage"           => \$coverage,
                 "r|ratio"              => \$ratio,
-                "ec|median-coverage=s" => \$medianCov,
+                "g|img"                => \$image,
+                "R|R-path=s"           => \$R,
                 "mc|min-coverage=i"    => \$minCov,
 		        "mr|max-react=s"       => \$maxReact,
-                "cr|cap-react=s"       => \$capReact ) or help(1);
+                "cr|cap-react=s"       => \$capReact,
+                "bs|block-size=s"      => \$blockSize,
+                "i|index=s"            => \$index ) or help(1);
 
-    @files = uniq(@ARGV);
+    @input = uniq(sort @ARGV);
 
 };
 
 help() if ($help);
 
 # Default
-$output ||= "rf_correlate.txt";
+$output ||= "rf_correlate/";
 $threads ||= 1;
 $keepbases ||= "ACGT";
 $minCov ||= 1;
 $capReact ||= 1e9;
+$blockSize ||= 100000;
+$R = checkRinstall($R) if ($image);
 
 ##
 # Input validation
 ##
 
-die "\n  [!] Error: No output directory specified\n\n" unless(defined $output);
-die "\n  [!] Error: 2 XML directories/files required\n\n" if (@files < 2);
-die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
-die "\n  [!] Error: Miminum number of values must be greater than 0\n\n" if (defined $minvalues &&
-                                                                             (!isnumeric($minvalues) ||
-                                                                              $minvalues == 0));
+die "\n  [!] Error: No output directory specified\n\n" if (!defined $output);
+die "\n  [!] Error: At least 2 XML directories/files are required\n\n" if (@input < 2);
+die "\n  [!] Error: Number of processors must be an INT > 0\n\n" if ($threads < 1);
+die "\n  [!] Error: Miminum number of values must be > 0\n\n" if (defined $minvalues && (!isnumeric($minvalues) || $minvalues == 0));
 die "\n  [!] Error: Parameters -r and -c are mutually exclusive\n\n" if ($ratio && $coverage);
-die "\n  [!] Error: Invalid bases to keep\n\n" if (!isiupac($keepbases) && $keepbases !~ m/^all$/i);
+die "\n  [!] Error: Invalid bases to keep\n\n" if (!isiupac($keepbases) && $keepbases !~ /^all$/i);
 die "\n  [!] Error: Maximum reactivity must be positive\n\n" if (defined $maxReact && !ispositive($maxReact));
-die "\n  [!] Error: Median coverage must be positive\n\n" if (defined $medianCov && !ispositive($medianCov));
 die "\n  [!] Error: Reactivity cap must be positive\n\n" if (!ispositive($capReact));
+die "\n  [!] Error: Block size must be a positive INT >= 3" if (!isint($blockSize) || $blockSize < 3);
+die "\n  [!] Error: Provided RCI index file does not exist\n\n" if ($index && !-e $index);
 
 $minvalues = round($minvalues) if ($minvalues > 1);
-$singlefile = 1 if (!-d $files[0] && !-d $files[1]);
 $keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepbases))))))));
+$output =~ s/\/?$/\//;
 
 print "\n[+] Importing input XML directories\/files...";
 
-for (@files) {
+foreach my $sample (@input) {
 
-    die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $_);
+    $sample = [ split ":", $sample ];
+    unshift(@$sample, (fileparse($sample->[0], qr/((\.[^.\s]+)+)$/))[0]) if (@$sample == 1);
 
-    if (-d $_) {
+    die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $sample->[1]);
 
-        $_ =~ s/\/?$/\//;
+    if (exists $seen{$sample->[0]}) {
 
-        opendir(my $dh, $_) or die "\n\n  [!] Error: Unable to read from input directory \"" . $_ . "\" (" . $! . ")\n\n";
+        my $newId = $sample->[0] . "_" . $seen{$sample->[0]};
+        $seen{$sample->[0]}++;
+        $sample->[0] = $newId;
+
+    }
+    else { $seen{$sample->[0]} = 1; }
+
+    if (-d $sample->[1]) {
+
+        $sample->[-1] =~ s/\/?$/\//;
+
+        opendir(my $dh, $sample->[-1]) or die "\n\n  [!] Error: Unable to read from input directory \"" . $sample->[1]. "\" (" . $! . ")\n\n";
         while(my $file = readdir($dh)) {
 
             next if ($file !~ m/\.xml$/);
@@ -136,49 +151,83 @@ for (@files) {
     }
     else {
 
-        next if ($_ !~ /\.(?:rc|xml)$/);
+        next if ($sample->[1] !~ /\.(?:rc|xml)$/);
 
-        $files{(fileparse($_, qw(.rc .xml)))[0]}++;
-        $isRC++ if ($_ =~ /\.rc$/);
+        $files{(fileparse($sample->[1], qw(.rc .xml)))[0]}++;
+        $isRC++ if ($sample->[1] =~ /\.rc$/);
 
     }
 
 }
 
-# Only one of the two files is in RC format
-die "\n\n  [!] Error: Mixed file types provided\n\n" if ($isRC == 1);
-#die "\n\n  [!] Error: Provided RC files have unequal sizes\n\n" if ($isRC && uniq(map { -s $_ } @files) != 1);
+# Only a subset of the files is in RC format
+die "\n\n  [!] Error: Mixed file types provided\n\n" if ($isRC && $isRC != @input);
+
+$singlefile = 1 if (scalar(grep { !-d $_->[1] } @input) == @input);
 
 # Delete all transcripts that are not common to all XML directories
-if (!$singlefile) {
+if (!$singlefile) { for (keys %files) { delete($files{$_}) if ($files{$_} != @input); } }
 
-    for (keys %files) { delete($files{$_}) if ($files{$_} != @files); }
+if ($isRC) { # Get ids common to all RCs, for which the sequence length is the same
 
-    print " " . (keys %files) . " common transcripts.";
-
-    die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" unless(keys %files);
-
-}
-
-if (-e $output) {
-
-    if ($overwrite) { unlink($output) or die  "\n\n  [!] Error: Unable to overwrite output file (" . $! . ")\n\n"; }
-    else { die "\n\n  [!] Error: Output file already exists." .
-               "\n      Please use -ow (or --overwrite) to overwrite output file\n\n"; }
-
-}
-
-print "\n[+] Calculating correlations...\n\n";
-
-if ($isRC) {
-
-    my $io = RF::Data::IO::RC->new(file => $files[0]);
-    @ids = $io->ids();
+    my (%ids);
+    @io = map { my $i = $index ? $index : (-e $_->[1] . ".rci" ? $_->[1] . ".rci" : undef);
+                RF::Data::IO::RC->new( file       => $_->[1],
+                                       index      => $i,
+                                       buildindex => $i ? 0 : 1 ) } @input;
+    %ids = map { $_ => ++$ids{$_} } map { $_->ids() } @io;
+    @ids = grep { $ids{$_} == @input } keys %ids;
+    %ids = grep { scalar(uniq(@$_)) == 1 } map { my $id = $_; [ map { $_->length($id) } @io ] } @ids;
 
 }
 else { @ids = $singlefile ? (keys %files)[0] : keys %files; }
 
-$progressBar = shared_clone(Term::Progress->new( max     => scalar(@ids),
+print " " . scalar(@ids) . " common transcripts.";
+
+die "\n\n  [!] Error: No common transcript ID found between XML directories\/files\n\n" if (!@ids);
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: $error\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+for (qw(tmp pairwise)) { if (my $error = mktree("${output}$_/", "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; } }
+
+print "\n[+] Calculating pairwise correlations...\n\n";
+
+if (!$spearman) { # Initializing partials
+
+    for my $i (0 .. $#input) {
+
+        my %partials;
+        
+        for my $j ($i + 1 .. $#input) { $partials{$input[$j]->[0]} = [ (0) x 6 ]; }
+
+        $comparisons{$input[$i]->[0]} = shareDataStruct(\%partials) if (keys %partials);
+        
+    }
+
+}
+
+# Calculates optimal font size for heatmap rendering
+if ($image) {
+
+    $labelFontSize = 16 * sqrt(8 / scalar(@input));
+    $valueFontSize = 5 * sqrt(8 / scalar(@input));
+    $decimals = @input > 20 ? 1 : 2;
+
+}
+
+$progressBar = shared_clone(Term::Progress->new( max     => getSize(),
                                                  width   => 50,
                                                  colored => 1 ));
 $progressBar->init();
@@ -186,251 +235,443 @@ $progressBar->init();
 @pool = map{ threads->create(\&correlate) } 1 .. $threads;
 $_->join() for(@pool);
 
-print "\n";
+print "\n\n";
 
-if ($singlefile && !$isRC) {
+if ($spearman) {
 
-    if (@results) { print "\n[+] Correlation: " . sprintf("%.3f", $results[0]->[1]) . " (p-value: " .  sprintf("%.2e", $results[0]->[2]) . ")"; }
-    else { print "\n\n  [!] Error: Correlation calculation failed"; }
+    print "[+] Calculating Spearman ranks...";
+
+    foreach my $sample (@input) { file2ranks($sample->[0]); }
+
+    print "\n[+] Calculating overall Spearman pairwise correlations...";
+
+    for my $i (0 .. $#input) { 
+
+        my (%partials);
+        
+        for my $j ($i + 1 .. $#input) { $partials{$input[$j]->[0]} = calcPearsonPartialsFromFile($input[$i]->[0], $input[$j]->[0]); }
+    
+        $comparisons{$input[$i]->[0]} = shareDataStruct(\%partials) if (keys %partials);
+
+    }
+
+    print "\n";
 
 }
+
+if (!$results{correlated}) { print "  [!] Error: Correlation calculation failed\n"; }
 else {
 
-    if (!$skipoverall && @allreactivities1) {
+    my ($table, @results, %matrix);
 
-        @overall = _correlate(\@allreactivities1, \@allreactivities2);
+    for my $i (keys %comparisons) { 
+        
+        for my $j (keys %{$comparisons{$i}}) { 
+            
+            push(@results, [$i, $j, pearsonFromPartials($comparisons{$i}->{$j})]);
+            my $ret = system("{ printf \"#Transcript\tCorrelation\tp-value\n\"; LC_ALL=C sort -k 1,1 ${output}tmp/.${i}_vs_${j}.tsv; } > ${output}pairwise/${i}_vs_${j}.tsv 2>&1");
 
-        print "\n[+] Overall correlation (over " . scalar(@allreactivities1) . " bases): " . sprintf("%.3f", $overall[0]) . " (p-value: " . sprintf("%.2e", $overall[1]) . ")";
+            die "\n  [!] Error: Failed to write output file \"${output}${i}_vs_${j}.tsv\"\n\n" if ($ret);
+            
+        }
+        
+    }
+
+    print "[+] Pairwise correlations (over " . $comparisons{$input[0]->[0]}->{$input[1]->[0]}->[0] . " bases):\n\n";
+
+    $table = Term::Table->new(indent => 2);
+    $table->head("Sample #1", "Sample #2", "Correlation", "p-value");
+    $table->row($_->[0], $_->[1], sprintf("%.3f", $_->[2]), sprintf("%.2e", $_->[3])) for (sort { $b->[2] <=> $a->[2] } @results);
+    $table->print();
+
+    %matrix = results2matrix(@results);
+
+    print "\n";
+
+    if ($image) {
+
+        print "\n[+] Generating heatmap...";
+
+        my ($plot, $heatmap, @x, @y);
+        @x = map { my $s = $_; map { $s } keys %{$matrix{$s}} } keys %matrix;
+        @y = map { keys %{$matrix{$_}} } keys %matrix;
+
+        $plot = Graphics::Image->new( file   => "${output}heatmap.pdf",
+                                      width  => 9,
+                                      height => 9,
+                                      R      => $R,
+                                      tmpdir => "${output}tmp" );
+        $heatmap = Graphics::Chart::Heatmap->new( dataLabels    => { x => \@x,
+                                                                     y => \@y },
+                                                  data          => [ map { sprintf("%.${decimals}f", $matrix{$x[$_]}->{$y[$_]}) } 0 .. $#x ],
+                                                  background    => 0,
+                                                  grid          => 0,
+                                                  legend        => 0,
+                                                  labelTextSize => $labelFontSize,
+                                                  axisTextSize  => $labelFontSize,
+                                                  axisTitleSize => 16,
+                                                  valueTextSize => $valueFontSize,
+                                                  x             => "x",
+                                                  y             => "y",
+                                                  colorPalette  => "RdYlBu",
+                                                  invertPalette => 1,
+                                                  plotValues    => 1,
+                                                  xLabelAngle   => 90,
+                                                  cluster       => "both" );
+
+        $plot->plot([$heatmap]);
 
     }
 
-    if (@results) {
-
-        my $top = min(scalar(@results), 10);
-        @results = sort { $b->[1] <=> $a->[1] } @results;
-
-        print "\n[+] Top $top correlated transcripts:\n\n";
-
-        $table = Term::Table->new(indent => 2);
-        $table->head("Transcript", "Correlation", "p-value");
-        $table->row($_->[0], sprintf("%.3f", $_->[1]), sprintf("%.2e", $_->[2])) for (@results[0 .. $top - 1]);
-        $table->print();
-
-    }
-    else { print "\n\n  [!] Error: Correlation calculation failed for all transcripts"; }
-
 }
 
-if (@results) {
+print "\n[+] Correlation statistics:\n" .
+      "\n  [*] Correlated transcripts/blocks: " . $results{correlated} .
+      "\n  [*] Discarded transcripts/blocks:  " . $results{failed} . " total" .
+      "\n                                     " . ($results{failed} - $results{diffseq} - $results{nominvalues}) . " parsing failed" .
+      "\n                                     " . $results{diffseq} . " mismatch between transcript sequences" .
+      "\n                                     " . $results{nominvalues} . " not enough values for correlation calculation";
 
-    open(my $wh, ">", $output) or die "\n\n  [!] Error: Unable to write output file (" . $! . ")\n\n";
-    select((select($wh), $|=1)[0]);
-    print $wh "#Transcript\tCorrelation\tp-value\n";
-    print $wh join("\t", @$_) . "\n" for (@results);
-    close($wh);
-
-}
-
-print "\n\n[+] Correlation statistics:\n" .
-      "\n  [*] Combined transcripts:  " . $results{correlated} .
-      "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
-      "\n                             " . ($results{failed} - $results{diffseq} - $results{nominvalues}) . " parsing failed" .
-      "\n                             " . $results{diffseq} . " mismatch between transcript sequences" .
-      "\n                             " . $results{nominvalues} . " not enough values for correlation calculation";
-print "\n                             " . $results{missing} . " transcripts absent in second RC file" if ($isRC);
+rmtree("${output}tmp/");
 
 print "\n\n[+] All done.\n\n";
 
+sub getSize {
+
+    my $size = 0;
+
+    if ($isRC) { $size += $io[0]->length($_) for (@ids); }
+    else { $size += @ids; }
+
+    return($size);
+
+}
+
 sub correlate {
 
-    my ($io1, $io2);
+    my ($lastIncrement, $minIncrement, %partials, %tsCorr, 
+        %sh, %partResults);
+    $minIncrement = min(1, round($progressBar->max() * 0.01));
+    $lastIncrement = 0;
 
-    if ($isRC) {
+    for my $i (0 .. $#input) { 
+        
+        if ($spearman) {
 
-        $io1 = RF::Data::IO::RC->new( file  => $files[0],
-                                      index => -e $files[0] . ".rci" ? $files[0] . ".rci" : undef );
-        $io2 = RF::Data::IO::RC->new( file  => $files[1],
-                                      index => -e $files[1] . ".rci" ? $files[1] . ".rci" : undef );
+            open(my $sh, ">", "${output}tmp/." . $input[$i]->[0] . "." . threads->tid() . ".values.txt");
+            select((select($sh), $|=1)[0]);
+            $sh{$input[$i]->[0]} = $sh;
 
+        }
+
+        for my $j ($i + 1 .. $#input) { $partials{$input[$i]->[0]}->{$input[$j]->[0]} = [ (0) x 6 ]; } 
+    
     }
 
+    if ($isRC) { $_->forceReopenFh() for (@io); }
+
+    ID:
     while (1) {
 
-        my ($id, $entry1, $entry2, $nbases,
-            $sequence, @reactivity1, @reactivity2,
-            @commonidx, @pearson);
+        my ($id, $length, @entries);
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
 
         last unless($id);
 
-        { lock($progressBar);
-          $progressBar->update(1); }
+        if (!$isRC) {
 
-        eval {
+            my $eval = do {
 
-            no warnings;
+                eval {
 
-            if (!$isRC) {
+                    no warnings;
+                    @entries = map { RF::Data::IO::XML->new(file => $singlefile ? $_->[1] : $_->[1] . "$id.xml") } @input;
 
-                $entry1 = RF::Data::IO::XML->new(file => -d $files[0] ? $files[0] . $id . ".xml" : $files[0]);
-                $entry2 = RF::Data::IO::XML->new(file => -d $files[1] ? $files[1] . $id . ".xml" : $files[1]);
+                };
 
-            }
+                $@;
 
-        };
+            };
 
-        if ($@) { # Exception from eval
+            if ($eval) { # Exception from eval
 
-            lock(%results);
-            $results{failed}++;
-
-            undef($@);
-
-            next;
-
-        }
-
-        if ($isRC) {
-
-            $entry1 = $io1->read($id);
-            $entry2 = $io2->read($id);
-
-            if (!$entry2) {
-
-                lock(%results);
-                $results{missing}++;
-                $results{failed}++;
-
-                undef($@);
+                $partResults{failed}++;
 
                 next;
 
             }
 
-            if ($medianCov && 
-                ($entry1->mediancoverage() < $medianCov || $entry2->mediancoverage() < $medianCov)) {
+            my ($uSeq, $uLen);
+            $uSeq = scalar(uniq(map { $_->sequence() } @entries));
+            $uLen = scalar(uniq(map { $_->length() } @entries));
 
-                lock(%results);
-                $results{nominvalues}++;
-                $results{failed}++;
+            if ((!$ignoreseq && $uSeq > 1) || ($ignoreseq & $uLen > 1)) {
 
-                undef($@);
-
-                next;
-
-            }
-
-        }
-
-        if ((!$ignoreseq && $entry1->sequence() ne $entry2->sequence()) ||
-            ($ignoreseq && $entry1->length() != $entry2->length())) {
-
-            lock(%results);
-            $results{diffseq}++;
-            $results{failed}++;
-
-            undef($@);
-
-            next;
-
-        }
-
-        $keepbases ||= $entry1->reactive() if (!$isRC);
-        $sequence = $entry1->sequence();
-        ($nbases) = $sequence =~ s/([$keepbases])/$1/ge;
-
-        next if (!$nbases);
-
-        if ($isRC) {
-
-            my (@counts1, @counts2, @cov1, @cov2);
-            @counts1 = $entry1->counts();
-            @counts2 = $entry2->counts();
-            @cov1 = $entry1->coverage();
-            @cov2 = $entry2->coverage();
-
-            if ($ratio) {
-
-		        my @i = grep { $cov1[$_] } 0 .. $#cov1;
-                @i = grep { $cov2[$_] } @i;
-		        @counts1 = @counts1[@i];
-                @counts2 = @counts2[@i];
-                @cov1 = @cov1[@i];
-                @cov2 = @cov2[@i];
-
-	        }
-
-            @reactivity1 = $coverage ? @cov1 : ($ratio ? map { $counts1[$_] / $cov1[$_] } 0 .. $#cov1 : @counts1);
-            @reactivity2 = $coverage ? @cov2 : ($ratio ? map { $counts2[$_] / $cov2[$_] } 0 .. $#cov2 : @counts2);
-
-            @commonidx = grep { substr($sequence, $_, 1) =~ m/^[$keepbases]$/ &&
-                                $cov1[$_] >= $minCov && $cov2[$_] >= $minCov && sum($cov1[$_], $cov2[$_]) > 0 } 0 .. $#cov1;
-
-        }
-        else {
-
-            @reactivity1 = map { isnan($_) ? "NaN" : $_ } $entry1->reactivity();
-            @reactivity2 = map { isnan($_) ? "NaN" : $_ } $entry2->reactivity();
-
-            @commonidx = grep { isnumeric($reactivity1[$_]) &&
-                                isnumeric($reactivity2[$_]) } 0 .. $#reactivity1;
-
-        }
-
-        if ($maxReact && (($isRC && $ratio) || !$isRC)) {
-
-            @commonidx = grep { $reactivity1[$_] <= $maxReact &&
-                                $reactivity2[$_] <= $maxReact } @commonidx;
-
-        }
-
-        if (defined $minvalues || @commonidx <= 2) {
-
-            if (($minvalues < 1 && @commonidx / $nbases < $minvalues) ||
-                ($minvalues >= 1 && @commonidx < $minvalues) ||
-                @commonidx <= 2) {
-
-                lock(%results);
-                $results{nominvalues}++;
-                $results{failed}++;
-
-                undef($@);
+                $partResults{diffseq}++;
+                $partResults{failed}++;
 
                 next;
 
             }
 
+            $length = $entries[0]->length();
+            $blockSize = $length; # This is an XML file, so we process the whole transcript at once
+
         }
+        else { $length = $io[0]->length($id); }
 
-        @reactivity1 = @reactivity1[@commonidx];
-        @reactivity2 = @reactivity2[@commonidx];
-        @pearson = _correlate(\@reactivity1, \@reactivity2);
+        for (my $i = 0; $i < $length; $i += $blockSize) {
 
-        { lock(%results);
-          lock(@results);
-          $results{correlated}++;
-          push(@results, shared_clone([$id, @pearson]));
+            $lastIncrement += $isRC ? ($blockSize + $i < $length ? $blockSize : $length - $i) : 1;
 
-          if (!$skipoverall) {
+            # To minimize the overhead due to locking/unlocking the progress bar with many files,
+            # we only update every 1%
+            if ($lastIncrement >= $minIncrement) { 
+                
+                lock($progressBar);
+                $progressBar->update($lastIncrement); 
+                $lastIncrement = 0;
+            
+            }
 
-              push(@allreactivities1, @reactivity1);
-              push(@allreactivities2, @reactivity2);
+            my ($j, $end, $winId, $sequence, $nBases, 
+                @reactivities, @commonidx);
+            $end = $i + $blockSize - 1;
+            $end = $length - 1 if ($end >= $length);
+            $winId = $length <= $blockSize ? $id : "$id:$i-$end";
+            
+            if ($isRC) { @entries = map { $_->readBytewise($id, [$i, $end]) } @io; }
 
-          } }
+            $sequence = $entries[0]->sequence();
+            @commonidx = grep { substr($sequence, $_, 1) =~ /^[$keepbases]$/ } 0 .. $entries[0]->length() - 1;
+            $nBases = @commonidx;
+
+            next if ($nBases < 3);
+
+            if ($isRC) {
+
+                my (@counts, @cov);
+                @counts = map { [ $_->counts() ] } @entries;
+                @cov = map { [ $_->coverage() ] } @entries;
+                @reactivities = map { my $i = $_; $coverage ? $cov[$i] : ($ratio ? [ map { $cov[$i]->[$_] >= $minCov ? $counts[$i]->[$_] / $cov[$i]->[$_] : "NaN" } 0 .. $entries[0]->length() - 1 ] : $counts[$i]) } 0 .. $#cov;
+
+            }
+            else { @reactivities = map { [ $_->reactivity() ] } @entries; }
+
+            for my $i (0 .. $#reactivities) { 
+                
+                @commonidx = grep { !isnan($reactivities[$i]->[$_]) } @commonidx; 
+                
+                if ($maxReact && (($isRC && $ratio) || !$isRC)) { for my $i (0 .. $#reactivities) { @commonidx = grep { $reactivities[$i]->[$_] <= $maxReact } @commonidx; } }
+
+            }
+
+            if (defined $minvalues || @commonidx < 3) {
+
+                if (($minvalues < 1 && @commonidx / $nBases < $minvalues) || ($minvalues >= 1 && @commonidx < $minvalues) || @commonidx < 3) {
+
+                    $partResults{nominvalues}++;
+                    $partResults{failed}++;
+
+                    next;
+
+                }
+
+            }
+
+            @reactivities = map { [ map { min($_, $capReact) } @{$_}[@commonidx] ] } @reactivities;
+
+            for my $i (0 .. $#input) {
+
+                if ($spearman) {
+
+                    my $sh = $sh{$input[$i]->[0]};
+                    print $sh join("\n", @{$reactivities[$i]}) . "\n";
+
+                }
+
+                for my $j ($i + 1 .. $#input) {
+
+                    local $SIG{__WARN__} = sub { }; # Suppresses warnings from Pearson and Spearman when stdev = 0
+
+                    if ($spearman) { push(@{$tsCorr{$input[$i]->[0]}->{$input[$j]->[0]}}, [$winId, spearman($reactivities[$i], $reactivities[$j])]); }
+                    else {
+
+                        my $partials = calcPearsonPartials($reactivities[$i], $reactivities[$j]);
+                        $partials{$input[$i]->[0]}->{$input[$j]->[0]}->[$_] += $partials->[$_] for (0 .. 5);
+                        push(@{$tsCorr{$input[$i]->[0]}->{$input[$j]->[0]}}, [$winId, pearsonFromPartials($partials)]);
+
+                    }
+
+                }
+
+            }
+
+        }
 
     }
 
-    threads->exit();
+    { lock($progressBar);
+      $progressBar->update($lastIncrement); }
+
+    if (keys %tsCorr) { 
+        
+        lock(%results);
+        $results{correlated} += scalar(@{$tsCorr{$input[0]->[0]}->{$input[1]->[0]}}); # Just get the number from one of the comparisons, as they all contain the same
+        $results{$_} += $partResults{$_} for (keys %partResults); 
+        
+    } 
+
+    for my $i (keys %partials) {
+
+        for my $j (keys %{$partials{$i}}) {
+
+            if (!$spearman) {
+
+                lock(%comparisons);
+                $comparisons{$i}->{$j}->[$_] += $partials{$i}->{$j}->[$_] for (0 .. 5);
+
+            }
+
+            open(my $wh, ">>", "${output}tmp/.${i}_vs_${j}.tsv");
+            select((select($wh), $|=1)[0]);
+            print $wh join("\t", @$_) . "\n" for (@{$tsCorr{$i}->{$j}});
+            close($wh);
+
+        }
+
+    }
+
+    if ($spearman) { close($_) for (values %sh); }
 
 }
 
-sub _correlate {
+sub file2ranks {
 
-    local $SIG{__WARN__} = sub { }; # Suppresses warnings from Pearson and Spearman when stdev = 0
+    my $sample = shift;
 
-    return($spearman ? spearman(@_, { cap => $capReact }) : pearson(@_, { cap => $capReact }));
+    my ($n, $ret, $last, @tie);
+    $n = 0;
+
+    open(my $fh, "-|", "cat ${output}tmp/.$sample.*.values.txt") or die "\n\n [!] Error: Unable to open temporary value files for sample \"$sample\" ($!)\n\n";
+    open(my $wh, ">", "${output}tmp/.$sample.tmp.txt") or die "\n\n [!] Error: Unable to write temporary numbered value file for sample \"$sample\" ($!)\n\n";
+    select((select($wh), $|=1)[0]);
+    while (<$fh>) {
+
+        print $wh "$n\t$_";
+        $n++;
+
+    }
+    close($fh);
+    close($wh);
+
+    $ret = system("sort -g -k 2,2 --parallel=$threads -T ${output}tmp/ ${output}tmp/.$sample.tmp.txt > ${output}tmp/.$sample.tmp.sorted.txt 2>&1");
+
+    die "\n\n  [!] Error: Sorting failed for sample \"$sample\"\n\n" if ($ret);
+
+    open($fh, "<", "${output}tmp/.$sample.tmp.sorted.txt") or die "\n\n [!] Error: Unable to open temporary sorted numbered value files for sample \"$sample\" ($!)\n\n";
+    open(my $wh, ">", "${output}tmp/.$sample.tmp.ranked.txt") or die "\n\n [!] Error: Unable to write temporary ranked value file for sample \"$sample\" ($!)\n\n";
+    select((select($wh), $|=1)[0]);
+
+    $n = 1;
+
+    while (<$fh>) {
+
+        chomp;
+
+        my ($line, $value) = split /\t/, $_, 2;
+
+        if (defined $last && $value != $last) {
+
+            my $avg = ($n + $n + $#tie) / 2;
+            print $wh "$_\t$avg\n" for (@tie);
+            $n += scalar(@tie);
+            @tie = ();
+
+        }
+
+        push(@tie, "$line\t$value");
+        $last = $value;
+
+    }
+
+    if (@tie) {
+
+        my $avg = ($n + $n + $#tie) / 2;
+        print $wh "$_\t$avg\n" for(@tie);
+
+    }
+
+    close($fh);
+    close($wh);
+
+    $ret = system("sort -n -k 1,1 --parallel=$threads -T ${output}tmp/ ${output}tmp/.$sample.tmp.ranked.txt > ${output}tmp/.$sample.ranked.txt 2>&1");
+
+    die "\n\n  [!] Error: Ranking failed for sample \"$sample\"\n\n" if ($ret);
+
+}
+
+sub calcPearsonPartialsFromFile {
+
+    my ($sample1, $sample2) = @_;
+
+    open(my $fh1, "-|", "cut -f 3 ${output}tmp/.$sample1.ranked.txt") or die "\n\n [!] Error: Unable to open temporary ranked value file for sample \"$sample1\" ($!)\n\n";
+    open(my $fh2, "-|", "cut -f 3 ${output}tmp/.$sample2.ranked.txt") or die "\n\n [!] Error: Unable to open temporary ranked value file for sample \"$sample2\" ($!)\n\n";
+    
+    my ($N, $sumX, $sumY, $sumXX, 
+        $sumYY, $sumXY) = (0, 0, 0, 0, 0, 0);
+
+    while(!eof($fh1)) {
+
+        my ($x, $y);
+        chomp($x = <$fh1>);
+        chomp($y = <$fh2>);
+
+        $N++;
+        $sumX  += $x;
+        $sumY  += $y;
+        $sumXX += $x*$x;
+        $sumYY += $y*$y;
+        $sumXY += $x*$y;
+
+    }
+
+    return([$N, $sumX, $sumY, $sumXX, $sumYY, $sumXY]);
+
+}
+
+sub results2matrix {
+
+    my @results = @_;
+
+    my (%corr);
+
+    foreach my $result (@results) { 
+        
+        $corr{$result->[0]}->{$result->[1]} = $result->[2];
+        $corr{$result->[1]}->{$result->[0]} = $result->[2];
+        $corr{$result->[0]}->{$result->[0]} = 1;
+        $corr{$result->[1]}->{$result->[1]} = 1;
+
+    }
+
+    open(my $wh, ">", "${output}matrix.csv") or die "\n\n [!] Error: Unable to write correlation matrix CSV file ($!)\n\n"; 
+    select((select($wh), $|=1)[0]);
+
+    print $wh join(",", "Sample", map { $_->[0] } @input) . "\n";
+
+    for my $i (0 .. $#input) {
+
+        my @row = ($input[$i]->[0], map { $corr{$input[$i]->[0]}->{$input[$_]->[0]} } 0 .. $#input);
+        print $wh join(",", @row) . "\n";
+
+    }
+
+    close($wh);
+
+    return(%corr);
 
 }
 
@@ -446,14 +687,15 @@ sub help {
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Calculates pairwise correlations of structure probing experiments
 
- Usage:   rf-correlate [Options] XML_folder_rep1/ XML_folder_rep2/           # Whole transcriptome
-          rf-correlate [Options] file_rep1.rc file_rep2.rc                   # Whole transcriptome
-          rf-correlate [Options] file_rep1.xml file_rep2.xml                 # Single transcript
+ Usage:   rf-correlate [Options] XML_folder_rep1/ XML_folder_rep2/ .. XML_folder_repN/    # Whole transcriptome
+          rf-correlate [Options] file_rep1.rc file_rep2.rc .. file_repN.rc                # Whole transcriptome
+          rf-correlate [Options] file_rep1.xml file_rep2.xml .. file_repN.xml             # Single transcript
+          rf-correlate [Options] sample1:XML_folder_rep1/ .. sanpleN:XML_folder_repN/     # With sample labels
 
  Options                                  Description
  -p  or --processors       <int>          Number of processors to use (Default: 1)
- -o  or --output           <string>       Output TSV file (Default: rf_correlate.txt)
- -ow or --overwrite                       Overwrites output file (if the specified file already exists)
+ -o  or --output           <string>       Output folder (Default: rf_correlate/)
+ -ow or --overwrite                       Overwrites output folder (if the specified folder already exists)
  -m  or --min-values       <float>        Minimum number of values to calculate correlation (Default: off)
                                           Note: if a value between 0 and 1 is provided, this is interpreted as a
                                                 fraction of the transcript's length
@@ -462,21 +704,29 @@ sub help {
  -mr or --max-react        <float>        Reactivity values above this threshold will be excluded from correlation
                                           calculation (>0, Default: none)
                                           Note: if processing RC files, this parameter only applies to ratios (-r)
- -s  or --skip-overall                    Skips overall experiment correlation calculation (faster)
- -i  or --ignore-sequences                Ignores sequence differences (e.g. SNVs) between the compared transcripts
+ -I  or --ignore-sequence                 Ignores sequence differences (e.g. SNVs) between the compared transcripts
  -S  or --spearman                        Uses Spearman instead of Pearson to calculate correlation
+ -g  or --img                             Generates a correlation heatmap (requires R)
+ -R  or --R-path           <string>       Path to R executable (Default: assumes R is in PATH)
 
  RC file-specific options
+ -i  or --index            <string>       An RCI index file to be used for all input RC files
+                                          Note: If no RCI index is provided, RF Correlate will look for files with .rci
+                                                extension in the same input folder as the RC files, named after the RC
+                                                files (e.g., Sample.rc will look for Sample.rc.rci).
+                                                If no RCI file is found, it will be created at runtime, and stored in
+                                                the same folder of the input RC files.
  -kb or --keep-bases       <string>       Bases on which correlation should be calculated (Default: all)
                                           Note: this option has effect only on RC files. For XML files, reactive
                                                 bases are automatically identified from the "reactive" attribute
  -mc or --min-coverage     <int>          Restricts the correlation analysis to bases exceeding this coverage
- -ec or --median-coverage  <float>        Restricts the correlation analysis to transcripts with median coverage
-                                          above this threshold (>=0, Default: 0)
  -c  or --coverage                        Correlation is calculated on the coverage, rather than on the raw RT
                                           stop/mutation counts
  -r  or --ratio                           Correlation is calculated on the ratio between, the RT stop/mutation
                                           counts and the coverage, rather than on the raw RT stop/mutation counts
+ -bs or --block-size       <int>          Defines the size of the memory block (in bp) to process RC files containing
+                                          whole chromosome data (such as those generated by rf-count-genome) (>=1, 
+                                          Default: 100000)
 
 HELP
 

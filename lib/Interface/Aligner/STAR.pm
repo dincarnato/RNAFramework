@@ -56,7 +56,7 @@ sub buildGenomeIndex {
 
     if (!-e $self->{genomeDir}) {
 
-        my $error = mktree($self->{genomeDir});
+        my $error = mktree($self->{genomeDir}, "755");
 
         $self->throw("Unable to create genome directory (" . $error . ")") if (defined $error);
 
