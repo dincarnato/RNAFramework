@@ -410,6 +410,7 @@ sub mktree {
     return("Invalid directory mode \"$mode\"") if ($mode !~ m/^[0-7]{3}$/);
 
     my ($last, @path);
+    $path =~ s/(?:\/\/)+/\//g;
     @path = split(/\//, $path);
 
     foreach my $folder (@path) {
