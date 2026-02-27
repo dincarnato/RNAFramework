@@ -349,8 +349,8 @@ sub getSize {
 
 sub correlate {
 
-    my ($lastIncrement, $minIncrement, %partials, %tsCorr, 
-        %sh, %partResults);
+    my ($lastIncrement, $minIncrement, $reopened, %partials, 
+        %tsCorr, %sh, %partResults);
     $minIncrement = min(1, round($progressBar->max() * 0.01));
     $lastIncrement = 0;
 
@@ -368,8 +368,6 @@ sub correlate {
     
     }
 
-    if ($isRC) { $_->forceReopenFh() for (@io); }
-
     ID:
     while (1) {
 
@@ -379,6 +377,13 @@ sub correlate {
           $id = shift(@ids) if (@ids); }
 
         last unless($id);
+
+        if ($isRC && !$reopened) { 
+            
+            $_->forceReopenFh() for (@io); 
+            $reopened = 1;
+
+        }
 
         if (!$isRC) {
 

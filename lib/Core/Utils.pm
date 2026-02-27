@@ -495,7 +495,7 @@ sub unbless {
     my $reference = shift;
 
     if (!blessed($reference)) { Core::Utils::warn("Unblessed reference"); }
-    else { return({%{$reference}}); }
+    else { return(clonehashref($reference)); }
 
 }
 
@@ -526,9 +526,9 @@ sub shareDataStruct {
         for (keys %{$var}) { $shared->{$_} = ref($var->{$_}) ? shareDataStruct($var->{$_}) : $var->{$_}; }
 
     }
-    else { $shared = $var; }
+    else { $shared = $var if ($class ne "GLOB"); }
 
-    bless($shared, $class) if (defined $class);
+    bless($shared, $class) if (defined $class && $class ne "GLOB");
 
     return($shared);
 

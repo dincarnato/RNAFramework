@@ -143,7 +143,7 @@ sub read {
 
     }
 
-    if ($header =~ m/^\s*?(\S+)\s+?(.+)$/) {
+    if ($header =~ m/^\s*?(\S+)\s+?(.+)?$/) {
 
         ($id, $description) = ($1, $2);
         $id = $description unless ($id);
