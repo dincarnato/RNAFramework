@@ -120,7 +120,13 @@ print "\n[+] Importing input XML directories\/files...";
 foreach my $sample (@input) {
 
     $sample = [ split ":", $sample ];
-    unshift(@$sample, (fileparse($sample->[0], qr/((\.[^.\s]+)+)$/))[0]) if (@$sample == 1);
+
+    if (@$sample == 1) {
+
+        $sample->[0] =~ s/\/$//;
+        unshift(@$sample, (fileparse($sample->[0], qr/((\.[^.\s]+)+)$/))[0]);
+
+    }
 
     die "\n\n  [!] Error: Provided XML directory\/file doesn't exist\n\n" if (!-e $sample->[1]);
 

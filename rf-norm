@@ -775,11 +775,11 @@ sub winsor_90 {  # 90% Winsorizing
 
     my @reactivity = @_;
 
-    return if (@reactivity < 10);
-
     my ($percentile5, $percentile95);
 
     if (!defined $normfactor) {
+
+        return if (@reactivity < 10);
 
         $percentile5 = percentile(\@reactivity, 0.05) || 0; # 5th percentile
         $percentile95 = percentile(\@reactivity, 0.95); # 95th percentile
@@ -799,11 +799,11 @@ sub norm_28 {  # 2-8% Normalization
 
     my @reactivity = @_;
 
-    return if (@reactivity < 10);
-
     my ($avg, @norm);
 
     if (!defined $normfactor) {
+
+        return if (@reactivity < 10);
         
         my ($p2, $p10);
         $p2 = max(1, round(@reactivity * 0.02) - 1);
@@ -829,11 +829,11 @@ sub boxplot {  # Box-plot Normalization
 
     my @reactivity = @_;
 
-    return if (@reactivity < 10);
-
     my ($avg, @norm);
 
     if (!defined $normfactor) {
+
+        return if (@reactivity < 10);
 
         my ($iqrange, $max, $p10, $outliers);
         $iqrange = percentile(\@reactivity, 0.75) - percentile(\@reactivity, 0.25); # Interquartile range
