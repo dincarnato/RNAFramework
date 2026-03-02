@@ -328,7 +328,7 @@ while (my $entry = $seqio->read()) {
 
     my ($id, $rentry, $offset);
     $id = $entry->id();
-    $id =~ s/[^\w\.-:]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
+    $id =~ s/[^\w\.\-:]/_/g;    # Fixes sequence ids containing slashes that can cause errors at later stages
 
     $rentry = RF::Data::RC->new( id       => $id,
                                  sequence => $entry->sequence(),
@@ -363,7 +363,7 @@ foreach my $sample (@qcounter) {
         if ($row =~ m/^\@SQ\tSN:(.+?)\tLN:(\d+)/) {
 
             my ($id, $length) = ($1, $2);
-            $id =~ s/[^\w\.-:]/_/g;
+            $id =~ s/[^\w\.\-:]/_/g;
 
             if (exists $transcripts{$id}) {
 
@@ -716,7 +716,7 @@ for(my $i = 0; $i < @qcounter; $i++) {
 
         chomp;
         my @entry = split /\t/;
-        $entry[0] =~ s/[^\w\.-:]/_/g;
+        $entry[0] =~ s/[^\w\.\-:]/_/g;
         push(@sampleIds, $entry[0]) if ($entry[2] && exists $transcripts{$entry[0]}); # Only take IDs with alignments
 
     }

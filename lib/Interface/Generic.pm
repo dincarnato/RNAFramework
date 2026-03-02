@@ -13,7 +13,7 @@ sub new {
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ tmpdir      => "/tmp/",
                    _madetmpdir => 0,
-                   _randId     => randalphanum(0x16) }, \%parameters);
+                   _randId     => "$$." . randalphanum(0x16) }, \%parameters);
 
     $self->_makeTmpDir();
 

@@ -582,7 +582,7 @@ for(my $i = 0; $i < @qcounter; $i++) {
 
         chomp;
         my @entry = split /\t/;
-        $entry[0] =~ s/[^\w\.-:]/_/g;
+        #$entry[0] =~ s/[^\w\.\-:]/_/g;
         push(@sampleIds, $entry[0]) if ($entry[2]); # Only take IDs with alignments
 
     }
