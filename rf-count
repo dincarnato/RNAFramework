@@ -959,8 +959,8 @@ if ($image && @stats) {
 
     my ($img, $plot);
     $img = Graphics::Image->new( file   => $output . "plots/base_stats.pdf",
-                                 width  => min(scalar(@stats), 40),
-                                 height => 8,
+                                 width  => min(max(2, scalar(@stats)), 40),
+                                 height => 5,
                                  R      => $R,
                                  tmpdir => $tmpdir );
 
