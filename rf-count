@@ -414,7 +414,7 @@ if (($maxcov || $discardshorter eq "MEDIAN") && $mutcount) {
             chomp($row);
             my @row = split(/\t/, $row);
 
-            push(@lengths, (parsecigar($row[5]))[2]); # The true length (so the number of bases of target covered)
+            push(@lengths, (parsecigar($row[5]))[1]); # The number of bases of target covered
 
             last if (@lengths == 10000);
 
@@ -1526,10 +1526,12 @@ sub guessTypeAndSorting {
     $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
     $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
-    open(my $fh, "-|", "$samtools view -h --no-PG $samtoolsParams $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
+    open(my $fh, "-|", "samtools view -h --no-PG $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
     while (<$fh>) {
 
         next if (/PG line/);
+
+        my @row = split "\t";
 
         if (substr($_, 0, 1) eq "@") {
 
@@ -1537,17 +1539,12 @@ sub guessTypeAndSorting {
 
             if ($tag eq "SQ") {
 
-                my @row = split "\t";
-                $header{(split(":", $row[1]))[1]} = $h;
+                my ($id) = $row[1] =~ /^SN:(.+)$/;
+                $header{$id} = $h;
                 $h++;
 
             }
-            elsif ($tag eq "HD") {
-
-                my @row = split "\t";
-                $sorted = 1 if ((split(":", $row[1]))[1] eq "coordinate");
-
-            }
+            elsif ($tag eq "HD") { $sorted = 1 if ((split(":", $row[2]))[1] eq "coordinate"); }
 
         }
         else {
@@ -1555,7 +1552,6 @@ sub guessTypeAndSorting {
             if ($mutcount) { $missingMD = 1 unless (/\tMD:Z:/); }
 
             $i++;
-            my @row = split "\t";
 
             die "  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
                                                                                     @row < 12 || !isint($row[1]) || !isdna($row[9]));
@@ -1563,13 +1559,12 @@ sub guessTypeAndSorting {
             if (@data) {
                 
                 if ($header{$row[2]} < $header{$data[0]} || ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])) {
-
+                    
                     $sorted = 0;
 
                     last;
 
                 }
-                else { $sorted = 1; }
 
             }
 

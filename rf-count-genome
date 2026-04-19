@@ -1119,24 +1119,28 @@ sub guessTypeAndSorting {
     my ($type, $header, $eof, $sorted, 
         $i, $h, $missingMD, @data, %header);
     $i = $h = $missingMD = 0;
-    $sorted = 1;
     $header = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00";
     $eof = "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
-    open(my $fh, "-|", "$samtools view -h $samtoolsParams $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
+    open(my $fh, "-|", "samtools view -h --no-PG $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
     while (<$fh>) {
 
         next if (/PG line/);
 
+        my @row = split "\t";
+
         if (substr($_, 0, 1) eq "@") {
 
-            if (substr($_, 1, 2) eq "SQ") {
+            my $tag = substr($_, 1, 2);
 
-                my @row = split "\t";
-                $header{(split(":", $row[1]))[1]} = $h;
+            if ($tag eq "SQ") {
+
+                my ($id) = $row[1] =~ /^SN:(.+)$/;
+                $header{$id} = $h;
                 $h++;
 
             }
+            elsif ($tag eq "HD") { $sorted = 1 if ((split(":", $row[2]))[1] eq "coordinate"); }
 
         }
         else {
@@ -1144,13 +1148,21 @@ sub guessTypeAndSorting {
             if ($mutcount) { $missingMD = 1 unless (/\tMD:Z:/); }
 
             $i++;
-            my @row = split "\t";
 
-            die "\n  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
-                                                                                      @row < 12 || !isint($row[1]) || !isdna($row[9]));
+            die "  [!] Error: Sample \"$file\" is not a valid SAM/BAM file\n\n" if (/(?:Failed to open file|fail to read the header)/ ||
+                                                                                    @row < 12 || !isint($row[1]) || !isdna($row[9]));
 
-            $sorted = 0 if (@data && ($header{$row[2]} < $header{$data[0]} ||
-                                      ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])));
+            if (@data) {
+                
+                if ($header{$row[2]} < $header{$data[0]} || ($header{$row[2]} == $header{$data[0]} && $row[3] < $data[1])) {
+                    
+                    $sorted = 0;
+
+                    last;
+
+                }
+
+            }
 
             @data = ($row[2], $row[3]);
 
