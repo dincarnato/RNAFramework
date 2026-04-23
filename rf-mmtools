@@ -35,7 +35,7 @@ use Term::Table;
 $|++;
 
 my ($output, $overwrite, $command, $help,
-    $tab, $keepBases, $minMutPerRead,
+    $tab, $keepBases, $minMutPerRead, $maxMutPerRead,
     $minReadLen, $randSubsample, $bedAnno, $whitelist, 
     $discardPos, $minReads, $minRate, $maxRate, 
     $spearman, @mm, %commands);
@@ -52,6 +52,7 @@ do {
                 "ow|overwrite"          => \$overwrite,
                 "kb|keepBases=s"        => \$keepBases,
                 "mpr|minMutPerRead=s"   => \$minMutPerRead,
+                "xpr|maxMutPerRead=s"   => \$maxMutPerRead,
                 "mrl|minReadLen=s"      => \$minReadLen,
                 "rs|randSubsample=s"    => \$randSubsample,
                 "a|annotation=s"        => \$bedAnno,
@@ -72,7 +73,7 @@ help() if ($help);
 
 # Default
 $randSubsample ||= 1;
-$minMutPerRead //= 1;
+$minMutPerRead ||= 0;
 $keepBases ||= "ACGT";
 $minReadLen ||= 0;
 $minReads ||= 1000;
@@ -234,7 +235,8 @@ elsif ($command eq "extract") {
     die "\n  [!] Error: Output MM file already exists." .
         "\n             Please use -ow (or --overwrite) to overwrite output file\n\n" if (-e $output && !$overwrite);
     die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepBases !~ /^all$/i && !isiupac($keepBases));
-    die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 1\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
+    die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 0\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
+    die "\n  [!] Error: Maximum number of mutations per read must be a positive INT >= 1\n\n" if (defined $maxMutPerRead && (!isint($maxMutPerRead) || !ispositive($maxMutPerRead)));
     die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || !ispositive($minReadLen));
     die "\n  [!] Error: Random subsample factor must be a positive INT >= 1\n\n" if (!isint($randSubsample) || !ispositive($randSubsample));
     die "\n  [!] Error: Minimum mutation rate must be comprised between 0 and 1\n\n" if (!inrange($minRate, [0, 1]));
@@ -394,6 +396,7 @@ elsif ($command eq "extract") {
             @muts = grep { inrange($_, [$start, $end - 1]) } @muts;
 
             next if (@muts < $minMutPerRead);
+            next if (defined $maxMutPerRead && @muts > $maxMutPerRead);
             next if ($read[1] < $start);
             last if ($read[0] >= $end);
 
@@ -832,7 +835,8 @@ HELP
  -ow  or --overwrite                       Overwrites output MM file (if the specified file already exists)
  -kb  or --keepBases          <string>     Only retains mutations on specified bases (Default: all)
                                            Note: IUPAC codes are allowed
- -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (>=0, Default: 1)
+ -mpr or --minMutPerRead      <int>        Reads with less than this number of mutations are discarded (>=0, Default: 0)
+ -xpr or --maxMutPerRead      <int>        Reads with more than this number of mutations are discarded (>=0, Default: no limit)
  -mrl or --minReadLen         <int>        Reads shorter than this length are discarded (>0, Default: 1)
  -rs  or --randSubsample      <int>        Randomly subsamples this fraction of reads (Default: keep all reads)
                                            Note: the provided value represents the denominator of the fraction (for example, 
