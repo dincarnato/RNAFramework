@@ -272,7 +272,7 @@ foreach my $sample (uniq(@ARGV)) {
                       file      => exists $files{$file} ? $file . "_" . $files{$file} : $file,
                       type      => $format,
                       sorted    => $sorted,
-                      indexed   => -e "$sample.bai" || -e "$sample.csi" ? 1 : 0,
+                      indexed   => $sorted ? (-e "$sample.bai" || -e "$sample.csi" ? 1 : 0) : 0,
                       library   => $libraryType,
                       trim5     => 0,
                       missingMD => $missingMD });
@@ -1124,6 +1124,8 @@ sub guessTypeAndSorting {
 
     open(my $fh, "-|", "samtools view -h --no-PG $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
     while (<$fh>) {
+
+        chomp;
 
         next if (/PG line/);
 

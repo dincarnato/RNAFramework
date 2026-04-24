@@ -277,7 +277,7 @@ foreach my $sample (uniq(@ARGV)) {
                       file      => exists $files{$sample[0]} ? $sample[0] . "_" . $files{$sample[0]} : $sample[0],
                       type      => $format,
                       sorted    => $sorted,
-                      indexed   => -e $sample[1] . ".bai" || -e $sample[1] . ".csi" ? 1 : 0,
+                      indexed   => $sorted ? (-e $sample[1] . ".bai" || -e $sample[1] . ".csi" ? 1 : 0) : 0,
                       trim5     => 0,
                       missingMD => $missingMD });
 
@@ -1529,6 +1529,8 @@ sub guessTypeAndSorting {
     open(my $fh, "-|", "samtools view -h --no-PG $file 2>&1") or die "\n  [!] Error: Unable to open sample \"$file\" ($!)\n\n";
     while (<$fh>) {
 
+        chomp;
+
         next if (/PG line/);
 
         my @row = split "\t";
@@ -1539,7 +1541,7 @@ sub guessTypeAndSorting {
 
             if ($tag eq "SQ") {
 
-                my ($id) = $row[1] =~ /^SN:(.+)$/;
+                my ($id) = $row[1] =~ /^SN:(.+)$/; 
                 $header{$id} = $h;
                 $h++;
 
