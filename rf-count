@@ -36,7 +36,7 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $mutcount, $seqio, $rcio, $includeclip, $maxClipped,
     $covonly, $mutmap, $nodel, $pp, $po, $tsPerJob,
     $nodiscarddup, $minqual, $maxdel, $maxmut, $mmSplitPairedEnd,
-    $hashead, $progressBar, $mapqual, $noambiguous, 
+    $hashead, $progressBar, $mapqual, $noambiguous, $mmDiscardPair,
     $medianqual, $noins, $collapse, $maxmutdist, $samtoolsMem,
     $evalsurround, $leftalign, $discardshorter, $leftdel, 
     $rightdel, $rmconsecutive, $maxcov, $primaryonly, 
@@ -97,6 +97,7 @@ do {
                 "pam|paired-end-all-mutations" => \$peAllMuts,
                 "sbn|sort-by-read-name"        => \$sortByReadName,
                 "msp|mm-split-paired-end=s"    => \$mmSplitPairedEnd,
+                "mdp|mm-discard-pair=s"        => \$mmDiscardPair,
                 "mp|max-clipped=s"             => \$maxClipped ) or help(1);
 
 };
@@ -149,6 +150,7 @@ die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($coll
 die "\n  [!] Error: Max coverage must be >= 1000\n\n" if (defined $maxcov && $maxcov < 1000);
 die "\n  [!] Error: Max number of clipped bases must be a positive INT\n\n" if (!isint($maxClipped) || !ispositive($maxClipped));
 die "\n  [!] Error: MM paired-end splitting value must be a positive INT\n\n" if (!isint($mmSplitPairedEnd) || !ispositive($mmSplitPairedEnd));
+die "\n  [!] Error: MM discard pair value must be a positive INT >= 1\n\n" if (defined $mmDiscardPair && (!isint($mmDiscardPair) || $mmDiscardPair < 1));
 die "\n  [!] Error: Parameter -mv requires parameter -m\n\n" if ($maxcov && !$mutcount);
 die "\n  [!] Error: Parameter -mm requires parameter -m\n\n" if ($mutmap && !$mutcount);
 die "\n  [!] Error: Parameter -nd requires parameter -m\n\n" if ($nodel && !$mutcount);
@@ -1257,6 +1259,8 @@ sub count {
 
                                     }
 
+                                    if ($mmDiscardPair) { next if (@{$lastRead{$row[0]}->{start}} == 2 && !$lastRead{$row[0]}->{overlapping} && $lastRead{$row[0]}->{gap} > $mmDiscardPair); }
+
                                     if (@{$lastRead{$row[0]}->{start}} == 2 && 
                                         ((!$lastRead{$row[0]}->{overlapping} && $mmSplitPairedEnd && $lastRead{$row[0]}->{gap} > $mmSplitPairedEnd) || ($lastRead{$row[0]}->{overlapping} && $forceSingleRead))) {
 
@@ -1354,6 +1358,8 @@ sub count {
                             $mmIO->append_transcript($id, $ref{sequence});
 
                         }
+
+                        if ($mmDiscardPair) { next if (@{$lastRead{$readId}->{start}} == 2 && !$lastRead{$readId}->{overlapping} && $lastRead{$readId}->{gap} > $mmDiscardPair); }
 
                         if (@{$lastRead{$readId}->{start}} == 2 && 
                             ((!$lastRead{$readId}->{overlapping} && $mmSplitPairedEnd && $lastRead{$readId}->{gap} > $mmSplitPairedEnd) || ($lastRead{$readId}->{overlapping} && $forceSingleRead))) {
@@ -2000,6 +2006,8 @@ sub help {
                                                    exceeds this value (>= 0, Default: 0 [no limit])
                                                    Note: The default behavior is to report them as a single long read spanning from the start of R1 to 
                                                          the end of R2
+    -mdp or --mm-discard-pair         <int>        In case of non-overlapping paired-end reads, the two mates will not be reported in the MM file if
+                                                   the distance between the end of R1 and the start of R2 exceeds this value (>= 1, Default: no limit)
     -wl  or --whitelist               <int>        Generates a DRACO-compatible whitelist file, containing the IDs of transcripts with median
                                                    coverage >= to the specified value
 
