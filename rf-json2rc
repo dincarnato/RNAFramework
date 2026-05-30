@@ -179,10 +179,10 @@ print "\n[+] Importing JSON file(s) [0 imported]";
 
 for my $jsonIdx (0 .. $#jsonin) {
 
-    my ($data, $file, $fixed, $lastid, 
-        $nFiles, $legacy, $filenames);
-    $file = $jsonin[$jsonIdx];
-    ($data, $fixed) = fixJson($file);
+    my ($data, $jsonFile, $fixed, $lastid, 
+        $nFiles, $legacy, $filenames, $fileId);
+    $jsonFile = $jsonin[$jsonIdx];
+    ($data, $fixed) = fixJson($jsonFile);
     $data = decode_json($data);
 
     if (exists $data->{filename}) {
@@ -191,7 +191,13 @@ for my $jsonIdx (0 .. $#jsonin) {
         $filenames = $data->{filename};
 
     }
-    else { $filenames = exists $data->{params} ? $data->{params}->{mm} : $data->{filenames}; }
+    else { 
+        
+        if (exists $data->{params} && exists $data->{params}->{mm}) { $filenames = $data->{params}->{mm}; }
+        elsif (exists $data->{filenames}) { $filenames = $data->{filenames}; }
+        else { die "\n\n  [!] Error: Input file \"$jsonFile\" does not look like a valid DRACO JSON file (filename(s) field is missing)\n\n"; }
+            
+    }
 
     # To check params agreement 
     if (exists $data->{params}) {
@@ -202,7 +208,10 @@ for my $jsonIdx (0 .. $#jsonin) {
 
     }
 
-    push(@filenames, $legacy ? $filenames : @$filenames);
+    # It might happen that two JSON files have the same exact filenames in the filenames/mm
+    # arrays, which would cause a collision.
+    # To prevent this, we now concatenate the JSON and MM filenames 
+    push(@filenames, $legacy ? "$jsonFile:$filenames" : map { "$jsonFile:$_" } @$filenames);
     $nFiles = $legacy ? 1 : scalar(@$filenames);
 
     die "\n\n  [!] Error: Fewer RC files than processed MM files provided (provided: " . scalar(@rcin) . 
@@ -210,7 +219,8 @@ for my $jsonIdx (0 .. $#jsonin) {
 
     foreach my $fileIdx (0 .. $nFiles - 1) {
 
-        $file = $legacy ? $filenames : $filenames->[$fileIdx];
+        # Concatenated JSON and MM filenames
+        $fileId = "$jsonFile:" . ($legacy ? $filenames : $filenames->[$fileIdx]);
         push(@jsonData, {}); # Initializing storage of JSON data
 
         foreach my $transcript (@{$data->{transcripts}}) {
@@ -235,7 +245,7 @@ for my $jsonIdx (0 .. $#jsonin) {
 
             foreach my $window ($legacy ? @{$transcript->{windows}} : @{$transcript->{windows}->[$fileIdx]}) {
 
-                die "\n\n  [!] Error: Input file \"$file\" does not look like a valid DRACO JSON file (preCoverage field is missing)\n\n" if (!exists $window->{preCoverage});
+                die "\n\n  [!] Error: Input file \"$jsonFile\" does not look like a valid DRACO JSON file (preCoverage field is missing)\n\n" if (!exists $window->{preCoverage});
 
                 next if (median(@{$window->{preCoverage}}) < $medianPreCov);
 
@@ -268,8 +278,8 @@ for my $jsonIdx (0 .. $#jsonin) {
                                                               counts          => @stoichiometries > 1 ? $window->{counts} : [],
                                                               coverage        => @stoichiometries > 1 ? $window->{coverage} : [] };
 
-                $allWins{$file}->{$id} = [] if (!exists $allWins{$file}->{$id});
-                push(@{$allWins{$file}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
+                $allWins{$fileId}->{$id} = [] if (!exists $allWins{$fileId}->{$id});
+                push(@{$allWins{$fileId}->{$id}}, [$start, $end, scalar(@stoichiometries)]);
 
                 $lastid = $id;
             
@@ -282,7 +292,7 @@ for my $jsonIdx (0 .. $#jsonin) {
     print CLRRET . "[+] Importing JSON file(s) [" . scalar(keys %allWins) . " imported]";
 
     # The last JSON has been fixed, so we will ignore the last window (for safety)
-    pop(@{$allWins{$file}->{$lastid}}) if ($fixed);
+    pop(@{$allWins{$fileId}->{$lastid}}) if ($fixed);
 
 }
 
