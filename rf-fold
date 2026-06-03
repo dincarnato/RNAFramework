@@ -573,7 +573,7 @@ sub fold {
 
     my @xml = @_;
 
-    my ($sequence, $id, $structure, $cmd, $plot,
+    my ($sequence, $id, $escapedId, $structure, $cmd, $plot,
         $ret, $entry, $length, $nwins, $file, $io, $energy,
         $constraint, $intf, @foldwins, @windows, @constraint,
         @pkpairs, @keptpairs, @dotplot, @shannon,
@@ -614,6 +614,8 @@ sub fold {
         if (!defined $id) { 
             
             $id = $xmlref->id();
+            $escapedId = $id;
+            $escapedId =~ s/[^\w_\-]/_/g; # To handle temporary files for ids with non-canonical characters
             $sequence = $xmlref->sequence(); 
             $length = $xmlref->length();
             
@@ -707,7 +709,7 @@ sub fold {
                 $subseq = substr($sequence, $start, $end - $start + 1);
                 $winconst = fixdotbracket(substr($constraint, $start, $end - $start + 1));
                 @winreact = @{$reactivity[$i]}[$start .. $end];
-                $tmpfile = "$id\_$start-$end\_$$\_$i";
+                $tmpfile = "$escapedId\_$start-$end\_$$\_$i";
 
                 my ($win, $shannon) = partition( file       => $tmpfile,
                                                  sample     => $i,
@@ -862,7 +864,7 @@ sub fold {
             $subseq = substr($sequence, $start, $end - $start + 1);
             @winreact = @{$reactivity[$i]}[$start .. $end];
             $winconst = rmlonelypairs(fixdotbracket(substr($constraint, $start, $end - $start + 1)));
-            $tmpfile = "$id\_$start-$end\_$$\_$i";
+            $tmpfile = "$escapedId\_$start-$end\_$$\_$i";
 
             my $win = winfold( file       => $tmpfile,
                                sample     => $i,
@@ -969,7 +971,7 @@ sub fold {
                 $subseq = substr($sequence, $start, $end - $start + 1);
                 $winconst = fixdotbracket(substr($entry->structure(), $start, $end - $start + 1));
                 @winreact = @{$reactivity[$i]}[$start .. $end];
-                $tmpfile = "$id\_$start-$end\_$$\_$i";
+                $tmpfile = "$escapedId\_$start-$end\_$$\_$i";
 
                 my ($winpk, $winbp) = pkdetect( file       => $tmpfile,
                                                 sample     => $i,

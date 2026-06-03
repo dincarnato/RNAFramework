@@ -29,9 +29,9 @@ use Term::Utils;
 
 $|++;
 
-my ($tmpdir, $output, $wt, $samtoolsParams,
+my ($tmpdir, $output, $wt, $samtoolsParams, $discardClipped,
     $samtools, $multifasta, $sam, $help, $sortByReadName,
-    $overwrite, $error, $bam_trim5, $offset, 
+    $overwrite, $error, $bam_trim5, $offset, $keepMate,
     $threads, $processmanager, $mbfile, $table, 
     $mutcount, $seqio, $rcio, $includeclip, $maxClipped,
     $covonly, $mutmap, $nodel, $pp, $po, $tsPerJob,
@@ -42,9 +42,9 @@ my ($tmpdir, $output, $wt, $samtoolsParams,
     $rightdel, $rmconsecutive, $maxcov, $primaryonly, 
     $whitelist, $onlyMut, $noCovLowQual, $outRawCounts, 
     $fast, $multiBar, $image, $R, $forceSingleRead, $peAllMuts, 
-    @mutClasses, @bam_trim5, @ids, @qcounter, @stats, %transcripts, 
-    %files, %masks, %realid, %onlyMut, %allStats, %allFreqs, 
-    %inHeaders);
+    @mutClasses, @bam_trim5, @ids, @qcounter, @stats, @maxClipped,
+    %transcripts, %files, %masks, %realid, %onlyMut, %allStats, 
+    %allFreqs, %inHeaders);
 
 do {
 
@@ -62,7 +62,7 @@ do {
                 "m|count-mutations"            => \$mutcount,
                 "orc|out-raw-counts"           => \$outRawCounts,
                 "mf|mask-file=s"               => \$mbfile,
-                "ic|include-clipped"           => \$includeclip,
+                "ic|include-clipped-bases"     => \$includeclip,
                 "co|coverage-only"             => \$covonly,
                 "nd|no-deletions"              => \$nodel,
                 "ni|no-insertions"             => \$noins,
@@ -98,7 +98,9 @@ do {
                 "sbn|sort-by-read-name"        => \$sortByReadName,
                 "msp|mm-split-paired-end=s"    => \$mmSplitPairedEnd,
                 "mdp|mm-discard-pair=s"        => \$mmDiscardPair,
-                "mp|max-clipped=s"             => \$maxClipped ) or help(1);
+                "mp|max-clipped-bases=s"       => \$maxClipped,
+                "dp|discard-clipped-reads"     => \$discardClipped,
+                "km|keep-mate=s"               => \$keepMate ) or help(1);
 
 };
 
@@ -118,8 +120,6 @@ $maxmutdist //= 2;
 $maxmut ||= 0.15;
 $discardshorter //= 1;
 $rmconsecutive //= 0;
-$maxClipped ||= 0;
-$mmSplitPairedEnd ||= 0;
 $samtools ||= which("samtools");
 $samtoolsMem ||= "500M";
 $R = checkRinstall($R) if ($image && !$covonly);
@@ -148,8 +148,7 @@ die "\n  [!] Error: Maximum edit distance value must be > 0 and <= 1\n\n" if (!i
 die "\n  [!] Error: Parameters -na and -la are mutually exclusive\n\n" if ($noambiguous && $leftalign);
 die "\n  [!] Error: Parameters -cc and -dc are mutually exclusive\n\n" if ($collapse && $rmconsecutive);
 die "\n  [!] Error: Max coverage must be >= 1000\n\n" if (defined $maxcov && $maxcov < 1000);
-die "\n  [!] Error: Max number of clipped bases must be a positive INT\n\n" if (!isint($maxClipped) || !ispositive($maxClipped));
-die "\n  [!] Error: MM paired-end splitting value must be a positive INT\n\n" if (!isint($mmSplitPairedEnd) || !ispositive($mmSplitPairedEnd));
+die "\n  [!] Error: MM paired-end splitting value must be a positive INT\n\n" if (defined $mmSplitPairedEnd && (!isint($mmSplitPairedEnd) || !ispositive($mmSplitPairedEnd)));
 die "\n  [!] Error: MM discard pair value must be a positive INT >= 1\n\n" if (defined $mmDiscardPair && (!isint($mmDiscardPair) || $mmDiscardPair < 1));
 die "\n  [!] Error: Parameter -mv requires parameter -m\n\n" if ($maxcov && !$mutcount);
 die "\n  [!] Error: Parameter -mm requires parameter -m\n\n" if ($mutmap && !$mutcount);
@@ -159,6 +158,9 @@ die "\n  [!] Error: Parameter -om requires parameter -m\n\n" if ($onlyMut && !$m
 die "\n  [!] Error: Whitelist must be an integer > 0\n\n" if (defined $whitelist && $whitelist < 1 && $mutcount);
 die "\n  [!] Error: Discard shorter must be either \"MEDIAN\" or > 0\n\n" if (defined $discardshorter && ((isint($discardshorter) && $discardshorter < 1) && $discardshorter ne "MEDIAN"));
 die "\n  [!] Error: Invalid value/format for samtools memory\n\n" if ($samtoolsMem !~ /^\d+[KMG]$/);
+die "\n  [!] Error: Invalid value for parameter -km\n\n" if (defined $keepMate && $keepMate !~ /^[53]p$/);
+die "\n  [!] Error: -km has no effect without -mdp\n\n" if (defined $keepMate && !$mmDiscardPair);
+die "\n  [!] Error: -mdp threshold must be >= -msp threshold\n\n" if (defined $mmDiscardPair && defined $mmSplitPairedEnd && $mmDiscardPair < $mmSplitPairedEnd);
 warn "\n  [!] Warning: Some input files are duplicated. Considering only unique files...\n" if (@ARGV != uniq(@ARGV));
 
 if ($image && $covonly) {
@@ -191,6 +193,39 @@ if ($mutcount && $onlyMut) {
         }
 
     }
+
+}
+
+if ($maxClipped) {
+
+    warn "\n  [!] Warning: Setting maximum clipped bases has no effect without -ic and/or -dp\n" if (!$includeclip && !$discardClipped);
+
+    my @clip = split /[,;]/, $maxClipped;
+    @maxClipped = (undef) x 3;
+
+    die "\n  [!] Error: Too many values provided for maximum clipped bases\n\n" if (@clip > 2);
+    
+    for (@clip) {
+
+        if (/^5p(\d+)$/) { $maxClipped[0] = $1; }
+        elsif (/^3p(\d+)$/) { $maxClipped[1] = $1; }
+        elsif (/^(\d+)$/) {
+
+            if (@clip == 1) {
+
+                my $clip = $1;
+                $maxClipped[2] = $clip;
+
+            }
+            else { die "\n  [!] Error: Invalid format for maximum clipped bases\n\n"; }
+
+        }
+        else { die "\n  [!] Error: Invalid format for maximum clipped bases\n\n"; }
+
+    }
+
+    warn "\n  [!] Warning: No 5' clipping (5p) specified." .
+         "\n               Only 5' clippings will be considered for RT-stop experiments\n" if ($includeclip && !$mutcount && !$covonly && !defined $maxClipped[0]);
 
 }
 
@@ -281,7 +316,8 @@ foreach my $sample (uniq(@ARGV)) {
                       sorted    => $sorted,
                       indexed   => $sorted ? (-e $sample[1] . ".bai" || -e $sample[1] . ".csi" ? 1 : 0) : 0,
                       trim5     => 0,
-                      missingMD => $missingMD });
+                      missingMD => $missingMD,
+                      nIds      => 0 });
 
     $files{$sample[0]}++;
 
@@ -590,7 +626,7 @@ if ($sortByReadName) {
 
             my $path = $tmpdir . ".$id." . $sample->{file} . ".bam";
 
-            $processmanager->enqueue( command => "$samtools view --no-PG -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\" \"$id\"",
+            $processmanager->enqueue( command => "$samtools view --no-PG -@ $wt -O BAM -o \"$path\" \"" . $sample->{path} . "\" \"" . $realid{$id} . "\"",
                                       id      => "$id." . $sample->{file} );
 
         }
@@ -725,9 +761,13 @@ for(my $i = 0; $i < @qcounter; $i++) {
     close($fh);
 
     if (!@sampleIds) {
-    splice(@qcounter, $i, 1);
-    $i--;
+
+        splice(@qcounter, $i, 1);
+        $i--;
+
     }
+
+    $sample->{nIds} = @sampleIds;
 
     for (my $i = 0; $i < @sampleIds; $i += $tsPerJob) {
 
@@ -759,7 +799,7 @@ print "\n[+] Calculating per-base " . ($covonly ? "coverage" : ($mutcount ? "mut
 
 if ($multiBar) {
 
-    $progressBar = Term::Progress::Multiple->new( sets    => { map { $_->{file} => $processmanager->queueSize() / @qcounter } @qcounter },
+    $progressBar = Term::Progress::Multiple->new( sets    => { map { $_->{file} => $_->{nIds} } @qcounter },
                                                   colored => 1 ); 
     $progressBar->initAll();
 
@@ -887,34 +927,38 @@ foreach my $sample (grep { !defined $allStats{$_}->{error} } sort keys %allStats
 
     my @row = ($sample, $allStats{$sample}->{covered} || 0);
 
-    if (!$covonly && $allStats{$sample}->{covered}) {
+    if (!$covonly) {
 
-        my ($total, $mutReads, @bases);
-        $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
-        $mutReads = 0;
+        if ($allStats{$sample}->{covered}) {
 
-        if ($mutcount) {
+            my ($total, $mutReads, @bases);
+            $total = sum(map { $allStats{$sample}->{$_} } qw(A C G T));
+            $mutReads = 0;
 
-            if ($allStats{$sample}->{total}) {
+            if ($mutcount) {
 
-                $mutReads = sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100);
-                push(@row, $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . " ($mutReads\%)");
+                if ($allStats{$sample}->{total}) {
+
+                    $mutReads = sprintf("%.2f", $allStats{$sample}->{mutated} / $allStats{$sample}->{total} * 100);
+                    push(@row, $allStats{$sample}->{mutated} . "/" . $allStats{$sample}->{total} . " ($mutReads\%)");
+
+                }
+                else { push(@row, "-"); }
 
             }
-            else { push(@row, "-"); }
+
+            if ($total) {
+
+                @bases = map { sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T);
+                push(@row, @bases);
+
+            }
+            else { push(@row, ("-") x 4); }
+
+            push(@stats, [ $sample, @bases, $mutReads ]);
 
         }
-
-        if ($total) {
-
-            @bases = map { sprintf("%.2f", $allStats{$sample}->{$_} / $total * 100 ) } qw(A C G T);
-            push(@row, @bases);
-
-        }
-        else { push(@row, ("-") x 4); }
-
-        push(@stats, [ $sample, @bases, $mutReads ]);
-
+        else { push(@row, ("-") x ($mutcount ? 5 : 4)); }
 
     }
 
@@ -1072,11 +1116,11 @@ sub count {
         my ($countCmd, $rcEntry, $readsCount, $readsToMaxCov, 
             @readStarts, @counts, @coverage, %rawCounts);
 
-        $countCmd = "$samtools view $samtoolsParams " . ($sortByReadName ? $tmpdir . ".$id.readSorted." . $sample->{file} . ".bam" : $sample->{path} . " " . $realid{$id});
+        $countCmd = "$samtools view $samtoolsParams " . ($sortByReadName ? $tmpdir . ".$id.readSorted." . $sample->{file} . ".bam" : $sample->{path} . " \"" . $realid{$id} . "\"");
 
         if (open(my $fh, "-|", "$countCmd 2>&1")) {
 
-            my ($firstRead, %ref, %lastRead);
+            my ($firstRead, %ref, %lastRead, %skippedReads);
 
             if ($fast) { 
                             
@@ -1086,7 +1130,7 @@ sub count {
             }
             else {
 
-                my $entry = $seqio->read($id);
+                my $entry = $seqio->read($realid{$id});
                 $entry->unmask();
                 $ref{sequence} = $entry->sequence();
                 $ref{length} = $transcripts{$id};
@@ -1102,8 +1146,8 @@ sub count {
 
             while (!eof($fh)) {
 
-                my ($row, $clip5, $cov, $ins,
-                    $editdist, $truelen, $skippedMate, @row);
+                my ($row, $clip, $totClip, $cov, $ins, $pairId,
+                    $editdist, $truelen, @row);
                 $row = <$fh>;
                 chomp($row);
 
@@ -1126,128 +1170,162 @@ sub count {
 
                 }
 
-                ($clip5, $cov, $truelen, $ins) = parsecigar($row[5]);
+                $pairId = join("_", $row[0], (sort {$a <=> $b} @row[3,7]));
+
+                if (exists $skippedReads{$pairId}) {
+
+                    delete($skippedReads{$pairId});
+
+                    next;
+
+                }
+
+                ($clip, $cov, $truelen, $ins) = parsecigar($row[5]);
+                $totClip = $clip->[0] + $clip->[1];
                 @$ins = map { $_ + $row[3] - 1 } @$ins; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @$ins; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
 
                 if ($mutcount && ($cov < ($discardshorter eq "MEDIAN" ? $sample->{medianReadLen} : $discardshorter) ||
                                   $editdist / $cov > $maxmut ||
-                                  median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual)) { # Check median read's quality
+                                  median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip->[0], $truelen))) < $medianqual)) { # Check median read's quality
 
                     # If paired-end, and one mate has already been stored, we allow the corresponding memory to be freed
                     # as its mate would be discarded here
-                    if (exists $lastRead{$row[0]} && !$forceSingleRead) { $skippedMate = 1; }
-                    else { next; }
+                    if (!$forceSingleRead) {
+
+                        if (exists $lastRead{$pairId}) { delete($lastRead{$pairId}); }
+                        else { $skippedReads{$pairId} = 1; }
+
+                    }
+
+                    next;
 
                 }
                 
-                next if ($clip5 && !$mutcount && !$covonly && 
-                         (!$includeclip || ($includeclip && $maxClipped && $clip5 > $maxClipped))); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
+                # RT-stop mode
+                next if ($clip->[0] && !$mutcount && !$covonly && 
+                         (!$includeclip || ($includeclip && defined $maxClipped[0] && $clip->[0] > $maxClipped[0]))); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
 
                 if ($mutcount || $covonly) {  # Mutations count / Coverage only modes
 
                     my ($start, $end, $isPairedRead, $mateUnmapped);
+                    $isPairedRead = $forceSingleRead ? 0 : $row[1] & 1;
+                    $mateUnmapped = $row[1] & 8;
 
-                    if (!$skippedMate) {
+                    my (@covered);
+                    $start = max($row[3] - 1, 0);
 
-                        $isPairedRead = $forceSingleRead ? 0 : $row[1] & 1;
-                        $mateUnmapped = $row[1] & 8;
+                    # If we include the clipped bases, we need to readjust start, and in case including them would 
+                    # pass the ends of the transcript, readjust the coverage
+                    if ($includeclip && $clip->[0] &&
+                        (!defined $maxClipped[0] || (defined $maxClipped[0] && $clip->[0] <= $maxClipped[0])) &&
+                        (!defined $maxClipped[2] || (defined $maxClipped[2] && !defined $maxClipped[0] && $totClip <= $maxClipped[2]))) {
 
-                        my (@covered);
-                        $start = max($row[3] - 1, 0);
-                        
-                        # If we include the clipped bases, we need to readjust start, and 
-                        # in case including them would pass the ends of the transcript, 
-                        # readjust the coverage
-                        if ($includeclip && (!$maxClipped || $clip5 <= $maxClipped)) {
+                        if ($start - $clip->[0] < 0) { $cov -= $clip->[0]; }
+                        else { $start -= $clip->[0]; }
 
-                            if ($start - $clip5 < 0) { $cov -= $clip5; }
-                            else { $start -= $clip5; }
+                    }
+
+                    if ($maxcov &&
+                        (($ref{length} >= $sample->{medianReadLen} && $start > $ref{length} - $sample->{medianReadLen}) ||
+                         ($readStarts[$start] == $readsToMaxCov))) {
+
+                        $skippedReads{$pairId} = 1 if (!$forceSingleRead);
+
+                        next;
+
+                    }
+
+                    unless ($row[1] & 256) {
+
+                        $readsCount++;
+                        $stats{totalPrimary}++;
+
+                    }
+
+                    $stats{total}++;
+                    $readStarts[$start]++;
+
+                    $end = min($ref{length} - 1, $start + $cov - 1);
+                    @covered = $start .. $end;
+
+                    push(@{$lastRead{$pairId}->{start}}, $start);
+                    push(@{$lastRead{$pairId}->{end}}, $end);
+                    push(@{$lastRead{$pairId}->{covered}}, clonearrayref(\@covered));
+                    push(@{$lastRead{$pairId}->{clip5}}, $clip->[0]);
+                    push(@{$lastRead{$pairId}->{clip3}}, $clip->[1]);
+
+                    if ($discardClipped) {
+
+                        if (($isPairedRead && (@{$lastRead{$pairId}->{start}} == 2 || $mateUnmapped)) || !$isPairedRead) {
+
+                            my @i = sort { $lastRead{$pairId}->{start}->[$a] <=> $lastRead{$pairId}->{start}->[$b] } 0 .. $#{$lastRead{$pairId}->{start}};
+
+                            if ((defined $maxClipped[0] && $lastRead{$pairId}->{clip5}->[$i[0]] > $maxClipped[0]) ||
+                                (defined $maxClipped[1] && $lastRead{$pairId}->{clip3}->[$i[-1]] > $maxClipped[1]) ||
+                                (defined $maxClipped[2] && 
+                                 $lastRead{$pairId}->{clip5}->[$i[0]] + $lastRead{$pairId}->{clip3}->[$i[-1]] > $maxClipped[2])) {
+
+                                delete($lastRead{$pairId});
+
+                                next;
+
+                            }
 
                         }
-
-                        if ($maxcov) {
-
-                            next if ($ref{length} >= $sample->{medianReadLen} && $start > $ref{length} - $sample->{medianReadLen});
-                            next if ($readStarts[$start] == $readsToMaxCov);
-
-                        }
-
-                        unless ($row[1] & 256) {
-
-                            $readsCount++;
-                            $stats{totalPrimary}++;
-
-                        }
-
-                        $stats{total}++;
-                        $readStarts[$start]++;
-
-                        $end = min($ref{length} - 1, $row[3] + $cov - 2);
-                        @covered = $start .. $end;
-
-                        push(@{$lastRead{$row[0]}->{start}}, $start);
-                        push(@{$lastRead{$row[0]}->{end}}, $end);
-                        push(@{$lastRead{$row[0]}->{covered}}, clonearrayref(\@covered));
 
                     }
 
                     if ($mutcount) {
 
-                        my ($muts, $rawMuts, $lowQual, $missingMD);
+                        my ($muts, $rawMuts, $lowQual, $missingMD) = parsemd(\@row, $ref{sequence});
 
-                        if (!$skippedMate) {
+                        return({ error => "Error: Missing MD tag, run 'samtools calmd' to fix" }) if ($missingMD);
 
-                            ($muts, $rawMuts, $lowQual, $missingMD) = parsemd(\@row, $ref{sequence});
+                        if ($noCovLowQual) { @{$lastRead{$pairId}->{covered}->[-1]} = grep { !exists $lowQual->{$_} } @{$lastRead{$pairId}->{covered}->[-1]}; }
 
-                            return({ error => "Error: Missing MD tag, run 'samtools calmd' to fix" }) if ($missingMD);
-
-                            if ($noCovLowQual) { @{$lastRead{$row[0]}->{covered}->[-1]} = grep { !exists $lowQual->{$_} } @{$lastRead{$row[0]}->{covered}->[-1]}; }
-
-                            push(@{$lastRead{$row[0]}->{ins}}, @$ins);
-                            push(@{$lastRead{$row[0]}->{muts}}, @$muts);
+                        push(@{$lastRead{$pairId}->{ins}}, @$ins);
+                        push(@{$lastRead{$pairId}->{muts}}, @$muts);
+                        
+                        if ($outRawCounts) { 
                             
-                            if ($outRawCounts) { 
-                                
-                                if (!exists $lastRead{$row[0]}->{rawMuts}) { $lastRead{$row[0]}->{rawMuts} = $rawMuts; }
-                                else {
+                            if (!exists $lastRead{$pairId}->{rawMuts}) { $lastRead{$pairId}->{rawMuts} = $rawMuts; }
+                            else {
 
-                                    $lastRead{$row[0]}->{rawMuts} = {
-                                        map {
-                                            my $k = $_;
-                                            $k => [ uniq(@{ exists $lastRead{$row[0]}->{rawMuts}->{$k} ? $lastRead{$row[0]}->{rawMuts}->{$k} : [] }, 
-                                                         @{ exists $rawMuts->{$k} ? $rawMuts->{$k} : [] }) ]
-                                        } keys %{{ %{$lastRead{$row[0]}->{rawMuts}}, %$rawMuts }}
-                                    };
+                                $lastRead{$pairId}->{rawMuts} = {
+                                    map {
+                                        my $k = $_;
+                                        $k => [ uniq(@{ exists $lastRead{$pairId}->{rawMuts}->{$k} ? $lastRead{$pairId}->{rawMuts}->{$k} : [] }, 
+                                                        @{ exists $rawMuts->{$k} ? $rawMuts->{$k} : [] }) ]
+                                    } keys %{{ %{$lastRead{$pairId}->{rawMuts}}, %$rawMuts }}
+                                };
 
-                                }
-                                
                             }
 
                         }
 
                         # If single read, or if paired-end and 1) this mate was skipped, or 2) this is the second mate, or 3) the mate is not mapped
-                        if ($skippedMate || ($isPairedRead && (@{$lastRead{$row[0]}->{start}} == 2 || $mateUnmapped)) || !$isPairedRead) {
+                        if (($isPairedRead && (@{$lastRead{$pairId}->{start}} == 2 || $mateUnmapped)) || !$isPairedRead) {
 
-                            my ($pairStart, $pairEnd) = processMutReads($id, $lastRead{$row[0]});
+                            my ($pairStart, $pairEnd) = processMutReads($id, $lastRead{$pairId});
                             
                             if ($outRawCounts) {
 
-                                foreach my $mut (keys %{$lastRead{$row[0]}->{rawMuts}}) { $rawCounts{$mut}->[$_]++ for (@{$lastRead{$row[0]}->{rawMuts}->{$mut}}); }
-                                $rawCounts{ins}->[$_]++ for (@{$lastRead{$row[0]}->{ins}});
+                                foreach my $mut (keys %{$lastRead{$pairId}->{rawMuts}}) { $rawCounts{$mut}->[$_]++ for (@{$lastRead{$pairId}->{rawMuts}->{$mut}}); }
+                                $rawCounts{ins}->[$_]++ for (@{$lastRead{$pairId}->{ins}});
 
                             }
 
-                            if (@{$lastRead{$row[0]}->{muts}}) {
+                            if (@{$lastRead{$pairId}->{muts}}) {
 
-                                for (@{$lastRead{$row[0]}->{muts}}) {
+                                for (@{$lastRead{$pairId}->{muts}}) {
 
                                     $counts[$_]++;
                                     $stats{substr($ref{sequence}, $_, 1)}++;
 
                                 }
 
-                                $stats{mutated} += @{$lastRead{$row[0]}->{start}};
+                                $stats{mutated} += @{$lastRead{$pairId}->{start}};
 
                                 if ($mutmap) {
 
@@ -1259,20 +1337,7 @@ sub count {
 
                                     }
 
-                                    if ($mmDiscardPair) { next if (@{$lastRead{$row[0]}->{start}} == 2 && !$lastRead{$row[0]}->{overlapping} && $lastRead{$row[0]}->{gap} > $mmDiscardPair); }
-
-                                    if (@{$lastRead{$row[0]}->{start}} == 2 && 
-                                        ((!$lastRead{$row[0]}->{overlapping} && $mmSplitPairedEnd && $lastRead{$row[0]}->{gap} > $mmSplitPairedEnd) || ($lastRead{$row[0]}->{overlapping} && $forceSingleRead))) {
-
-                                        my (@mut1, @mut2);
-                                        @mut1 = grep { inrange($_, [$lastRead{$row[0]}->{start}->[0], $lastRead{$row[0]}->{end}->[0]]) } @{$lastRead{$row[0]}->{muts}};
-                                        @mut2 = grep { inrange($_, [$lastRead{$row[0]}->{start}->[1], $lastRead{$row[0]}->{end}->[1]]) } @{$lastRead{$row[0]}->{muts}};
-
-                                        $mmIO->append_read($lastRead{$row[0]}->{start}->[0], $lastRead{$row[0]}->{end}->[0], scalar(@mut1), \@mut1) if (@mut1);
-                                        $mmIO->append_read($lastRead{$row[0]}->{start}->[1], $lastRead{$row[0]}->{end}->[1], scalar(@mut2), \@mut2) if (@mut2);
-
-                                    }
-                                    else { $mmIO->append_read($pairStart, $pairEnd, scalar(@{$lastRead{$row[0]}->{muts}}), $lastRead{$row[0]}->{muts}); } 
+                                    selectReadsForMM($lastRead{$pairId}, $pairStart, $pairEnd, $mmIO); 
 
                                 }
 
@@ -1283,23 +1348,23 @@ sub count {
                     }
 
                     # Here we handle the coverage both in mutation count and coverage-only modes
-                    if ($skippedMate || ($isPairedRead && (@{$lastRead{$row[0]}->{start}} == 2 || $mateUnmapped)) || !$isPairedRead) {
+                    if (($isPairedRead && (@{$lastRead{$pairId}->{start}} == 2 || $mateUnmapped)) || !$isPairedRead) {
 
-                        my @covered = map { @$_ } @{$lastRead{$row[0]}->{covered}};
+                        my @covered = map { @$_ } @{$lastRead{$pairId}->{covered}};
 
                         # If paired-end and single-read is not forced, we have to check if the two mates overlap and take 
-                        @covered = uniq(@covered) if (@{$lastRead{$row[0]}->{start}} == 2 && !$forceSingleRead);
+                        @covered = uniq(@covered) if (@{$lastRead{$pairId}->{start}} == 2 && !$forceSingleRead);
 
                         map {$coverage[$_]++} @covered;
 
-                        delete($lastRead{$row[0]});
+                        delete($lastRead{$pairId});
 
                     }
 
                 }
                 else {  # RT-stops count mode
 
-                    $row[3] -= $sample->{trim5} + $clip5 + 2;
+                    $row[3] -= $sample->{trim5} + $clip->[0] + 2;
 
                     if ($row[3] >= 0) { # Read 5'-end is not before transcript 5'-end
 
@@ -1309,7 +1374,7 @@ sub count {
                     }
                     else { $cov += $row[3]; } # Start will be negative by the amount that needs to be removed from coverage
 
-                    map { $coverage[$_]++ } max(0, $row[3]) .. min($ref{length} - 1, $row[3] + $cov + $clip5);
+                    map { $coverage[$_]++ } max(0, $row[3]) .. min($ref{length} - 1, $row[3] + $cov); # clipped bases are already included in the coverage
 
                     unless ($row[1] & 256) {
 
@@ -1359,20 +1424,7 @@ sub count {
 
                         }
 
-                        if ($mmDiscardPair) { next if (@{$lastRead{$readId}->{start}} == 2 && !$lastRead{$readId}->{overlapping} && $lastRead{$readId}->{gap} > $mmDiscardPair); }
-
-                        if (@{$lastRead{$readId}->{start}} == 2 && 
-                            ((!$lastRead{$readId}->{overlapping} && $mmSplitPairedEnd && $lastRead{$readId}->{gap} > $mmSplitPairedEnd) || ($lastRead{$readId}->{overlapping} && $forceSingleRead))) {
-
-                            my (@mut1, @mut2);
-                            @mut1 = grep { inrange($_, [$lastRead{$readId}->{start}->[0], $lastRead{$readId}->{end}->[0]]) } @{$lastRead{$readId}->{muts}};
-                            @mut2 = grep { inrange($_, [$lastRead{$readId}->{start}->[1], $lastRead{$readId}->{end}->[1]]) } @{$lastRead{$readId}->{muts}};
-
-                            $mmIO->append_read($lastRead{$readId}->{start}->[0], $lastRead{$readId}->{end}->[0], scalar(@mut1), \@mut1) if (@mut1);
-                            $mmIO->append_read($lastRead{$readId}->{start}->[1], $lastRead{$readId}->{end}->[1], scalar(@mut2), \@mut2) if (@mut2);
-
-                        }
-                        else { $mmIO->append_read($pairStart, $pairEnd, scalar(@{$lastRead{$readId}->{muts}}), $lastRead{$readId}->{muts}); } 
+                        selectReadsForMM($lastRead{$readId}, $pairStart, $pairEnd, $mmIO);
 
                     }
 
@@ -1428,6 +1480,71 @@ sub count {
 
 }
 
+sub selectReadsForMM {
+
+    my ($read, $pairStart, $pairEnd, $mmIO) = @_;
+
+    my ($nStarts, $gap, $overlaps);
+    $nStarts = scalar @{$read->{start}};
+    $gap = $read->{gap};
+    $overlaps = $read->{overlapping};
+
+    # Single read or overlapping pair, always return merged R1 + R2 (if present)
+    if ($nStarts == 1 || ($nStarts == 2 && $overlaps)) {
+        
+        $mmIO->append_read($pairStart, $pairEnd, scalar(@{$read->{muts}}), $read->{muts});
+
+    }
+    elsif ($nStarts == 2) { # Paired-end and no overlap between R1/R2
+
+        my ($exceedsDiscard, $exceedsSplit);
+        $exceedsSplit = $mmSplitPairedEnd && $gap > $mmSplitPairedEnd;
+        $exceedsDiscard = $mmDiscardPair && $gap > $mmDiscardPair;
+
+        if ($forceSingleRead) { # Always splits
+
+            my (@mut1, @mut2);
+            @mut1 = grep { inrange($_, [$read->{start}->[0], $read->{end}->[0]]) } @{$read->{muts}};
+            @mut2 = grep { inrange($_, [$read->{start}->[1], $read->{end}->[1]]) } @{$read->{muts}};
+            $mmIO->append_read($read->{start}->[0], $read->{end}->[0], scalar(@mut1), \@mut1) if (@mut1);
+            $mmIO->append_read($read->{start}->[1], $read->{end}->[1], scalar(@mut2), \@mut2) if (@mut2);
+
+        }
+        elsif ($exceedsDiscard) { # Exceeds discard threshold, but keepMate can rescue one mate
+            
+            if ($keepMate eq "5p") {
+
+                my @mut1 = grep { inrange($_, [$read->{start}->[0], $read->{end}->[0]]) } @{$read->{muts}};
+                $mmIO->append_read($read->{start}->[0], $read->{end}->[0], scalar(@mut1), \@mut1) if (@mut1);
+
+            }
+            elsif ($keepMate eq "3p") {
+
+                my @mut2 = grep { inrange($_, [$read->{start}->[1], $read->{end}->[1]]) } @{$read->{muts}};
+                $mmIO->append_read($read->{start}->[1], $read->{end}->[1], scalar(@mut2), \@mut2) if (@mut2);
+
+            }
+            
+        }
+        elsif ($exceedsSplit) { # Split threshold exceeded, so write both mates separately
+            
+            my (@mut1, @mut2);
+            @mut1 = grep { inrange($_, [$read->{start}->[0], $read->{end}->[0]]) } @{$read->{muts}};
+            @mut2 = grep { inrange($_, [$read->{start}->[1], $read->{end}->[1]]) } @{$read->{muts}};
+            $mmIO->append_read($read->{start}->[0], $read->{end}->[0], scalar(@mut1), \@mut1) if (@mut1);
+            $mmIO->append_read($read->{start}->[1], $read->{end}->[1], scalar(@mut2), \@mut2) if (@mut2);
+            
+        }
+        else { # Gap within all thresholds (or thresholds unset): merge into one read
+            
+            $mmIO->append_read($pairStart, $pairEnd, scalar(@{$read->{muts}}), $read->{muts});
+
+        }
+
+    }
+
+}
+
 sub processMutReads {
 
     my ($id, $lastRead) = @_;
@@ -1452,16 +1569,19 @@ sub processMutReads {
         # if they are present 2 times, otherwise we discard them
         if (@{$lastRead->{start}} == 2) {
 
-            # In case reads have been resorted by read name, the two mates might have been swapped,
-            # and the one with the lowest start mapping position might not come first anymore, so
-            # we re-sort them
-            if ($sortByReadName) {
+            # This should only be needed in case reads have been resorted by read name, 
+            # and the two mates might have been swapped, so that the one with the lowest 
+            # start mapping position might not come first anymore.
+            # However, there might be edge cases, such as when we include clipped bases,
+            # that might erroneously make one appear before the other.
 
-                my @i = sort { $lastRead->{start}->[$a] <=> $lastRead->{start}->[$b] } 0 .. 1;
-                @{$lastRead->{start}} = @{$lastRead->{start}}[@i];
-                @{$lastRead->{end}} = @{$lastRead->{end}}[@i];
+            #if ($sortByReadName) {
 
-            }
+            my @i = sort { $lastRead->{start}->[$a] <=> $lastRead->{start}->[$b] } 0 .. $#{$lastRead->{start}};
+            @{$lastRead->{start}} = @{$lastRead->{start}}[@i];
+            @{$lastRead->{end}} = @{$lastRead->{end}}[@i];
+
+            #}
             
             if ($lastRead->{start}->[1] <= $lastRead->{end}->[0]) {
 
@@ -1741,25 +1861,26 @@ sub parsecigar {
 
     my $cigar = shift;
 
-    my ($clip, $cov, $truelen, $last,
+    my ($clip5, $clip3, $cov, $truelen, $last,
         @ins);
-    ($clip, $cov, $truelen, $last) = (0, 0, 0, 0);
+    $clip5 = $clip3 = $cov = $truelen = $last = 0;
 
     while ($cigar =~ m/^(\d+[SH])/) {
 
         my $clipsh = $1;
         $cigar =~ s/^$clipsh//;
         $clipsh =~ s/[SH]$//;
-        $clip += $clipsh;
+        $clip5 += $clipsh;
 
     }
-
-    $cov = $clip if ($includeclip && (!$maxClipped || $clip <= $maxClipped));
 
     while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
 
         my ($n, $op) = ($1, $2);
-        $cov += $n if ($op =~ /^[DM=X]$/ || ($includeclip && $op =~ /^[SH]$/ && (!$maxClipped || $n <= $maxClipped)));
+
+        if ($op =~ /^[DM=X]$/) { $cov += $n; }
+        elsif ($op =~ /^[SH]$/) { $clip3 += $n; }
+        
         $last += $n if ($op =~ m/^[DNM=X]$/);
         $truelen += $n if ($op =~ m/^[MI=X]$/);
         push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
@@ -1768,7 +1889,22 @@ sub parsecigar {
 
     }
 
-    return($clip, $cov, $truelen, \@ins);
+    if ($includeclip) {
+
+        my $totClip = $clip5 + $clip3;
+
+        if (!grep { defined $_ } @maxClipped) { $cov += $totClip; }
+        else { 
+        
+            if ((defined $maxClipped[0] && $clip5 <= $maxClipped[0]) || !defined $maxClipped[0]) { $cov += $clip5; }
+            if ((defined $maxClipped[1] && $clip3 <= $maxClipped[1]) || !defined $maxClipped[1]) { $cov += $clip3; }
+            if (defined $maxClipped[2] && $totClip > $maxClipped[2]) { $cov -= $totClip; }
+
+        }
+
+    }
+
+    return([$clip5, $clip3], $cov, $truelen, \@ins);
 
 }
 
@@ -1939,16 +2075,26 @@ sub help {
                                                   both mates are mapped will be considered (SAM flag = 0x01)
  -pp  or --properly-paired                        When processing SAM/BAM files from paired-end experiments, only those reads mapped in a
                                                   proper pair will be considered (SAM flag = 0x02)
- -ic  or --include-clipped                        Includes the soft-clipped portions of reads when calculating coverage (provided that the
-                                                  number of soft-clipped bases is <= --max-clipped)
+ -ic  or --include-clipped-bases                  Includes the soft-clipped portions of reads when calculating coverage (provided that the
+                                                  number of soft-clipped bases is <= --max-clipped-bases)
                                                   Note: In RT-stop mode, the default behavior is to exclude soft/hard-clipped reads.
                                                         When this option is active, the RT-stop position is considered to be the position
-                                                        preceding the clipped bases. These bases will be also included in the reads in MM files.
- -mp  or --max-clipped             <int>          Maximum allowed number of clipped bases from either end of the read (requires -ic) 
-                                                  (>= 0, Default: 0 [no limit])
-                                                  Note: If the number of clipped bases exceeds this value, clipped bases will not be counted in
-                                                        the final coverage (and will not be included in the reads in MM files). In RT-stop mode,
-                                                        reads having more than this number of clipped bases will be discarded
+                                                        preceding the clipped bases
+                                                        In mutation count mode, these bases will be also included in the reads in MM files
+ -mp  or --max-clipped-bases       <string>       Maximum allowed number of clipped bases from either end of the read (requires -ic) 
+                                                  (>= 0, Default: no limit)
+                                                  Note: Different thresholds can be applied to the 5' and 3' end of reads. If a single
+                                                        value is provided, this is treated as the maximum number of clipped bases per read
+                                                        (5' + 3'). When the value is preceded by the prefix 5p or 3p, the filter will only
+                                                        be applied to the 5' or 3' end respectively. Two values for the two ends can be
+                                                        provided simultaneously (e.g., 5p4,3p3 will allow up to 4 and 3 clipped bases
+                                                        from the 5' and 3' end respectively).
+                                                        If the number of clipped bases exceeds this value, clipped bases will not be 
+                                                        counted in the final coverage (and will not be included in the reads in MM files). 
+                                                        In RT-stop mode, reads having more than the specified number of 5' clipped bases 
+                                                        will be discarded.
+ -dp  or --discard-clipped-reads                  Reads (or fragments in case of paired-end experiments) having a number of bases clipped 
+                                                  from their 5' or 3' end > --max-clipped-bases are discarded
  -mq  or --map-quality                            Minimum mapping quality to consider a read (Default: 0)
  -co  or --coverage-only                          Only calculates per-base coverage (disables RT-stops/mutations count)
  -m   or --count-mutations                        Enables mutations count instead of RT-stops count (for SHAPE-MaP/DMS-MaPseq)
@@ -2001,13 +2147,16 @@ sub help {
     -mc  or --max-collapse-distance   <int>        Maximum distance between consecutive mutations/indels to allow collapsing (requires -cc, >=0, Default: 2)
     -mv  or --max-coverage            <int>        Downsamples reads to achieve this maximum mean per-base coverage (>=1000, Default: off)
     -mm  or --mutation-map                         Generates a mutation map (MM) file for alternative structure deconvolution with DRACO
-    -msp or --mm-split-paired-end     <int>        In case of non-overlapping paired-end reads, the two mates and the respective mutatations will be
+    -msp or --mm-split-paired-end     <int>        In case of non-overlapping paired-end reads, the two mates and the respective mutations will be
                                                    reported as separate reads in the MM file if the distance between the end of R1 and the start of R2
-                                                   exceeds this value (>= 0, Default: 0 [no limit])
+                                                   exceeds this value (>= 1, Default: no limit)
                                                    Note: The default behavior is to report them as a single long read spanning from the start of R1 to 
                                                          the end of R2
     -mdp or --mm-discard-pair         <int>        In case of non-overlapping paired-end reads, the two mates will not be reported in the MM file if
                                                    the distance between the end of R1 and the start of R2 exceeds this value (>= 1, Default: no limit)
+                                                   Note: this threshold must exceed the -msp threshold
+    -km  or --keep-mate               <string>     When -mdp is specified, and a pair would normally be discarded from the MM file, this parameter
+                                                   enables forcefully retaining one of the two mates (5p for the 5'-most mate, 3p for the 3'-most mate) 
     -wl  or --whitelist               <int>        Generates a DRACO-compatible whitelist file, containing the IDs of transcripts with median
                                                    coverage >= to the specified value
 

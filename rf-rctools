@@ -108,15 +108,22 @@ elsif ($command =~ m/^view|stats$/) {
 
         foreach my $region (@rc) {
 
-            my ($length, @region, @coords);
-            @region = split(/:/, $region);
-            @coords = $command eq "stats" ? (0, 1) : split(/-/, $region[1]);
-            $length = $rcin->length($region[0]);
+            my ($entry, $length, @region, @coords);
+            $length = $rcin->length($region);
 
-            die "\n  [!] Error: Invalid sequence ID or target region \"$region\"\n\n" if (@region > 2 || @coords > 2 || !defined $length ||
+            if (!$length) {
+
+                @region = split(/:/, $region);
+                @region = (join(":", @region[0 .. $#region - 1]), $region[-1]) if (@region > 2);
+                @coords = $command eq "stats" ? (0, 1) : split(/-/, $region[1]);
+                $length = $rcin->length($region[0]);
+
+            }
+
+            die "\n  [!] Error: Invalid sequence ID or target region \"$region\"\n\n" if (@coords > 2 || !defined $length ||
                                                                                           (@coords && (!isint(@coords) || !ispositive(@coords) || $coords[1] < $coords[0] || $coords[1] >= $length)));
 
-            my $entry = @coords ? $rcin->readBytewise($region[0], \@coords) : $rcin->read($region);
+            $entry = @coords ? $rcin->readBytewise($region[0], \@coords) : $rcin->read($region);
 
             if ($command eq "view") { formatentry($entry); }
             else { print $entry->id() . "\t" . $entry->readscount() . "\t" . $entry->mediancoverage() . "\n"; }

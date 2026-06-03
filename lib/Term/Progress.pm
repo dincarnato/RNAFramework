@@ -28,7 +28,8 @@ sub new {
                    _complete  => 0,
                    _updateN   => 0,
                    _lastRow   => undef,
-                   _lastCol   => undef }, \%parameters);
+                   _lastCol   => undef,
+                   _istty     => undef }, \%parameters);
 
     $self->_validate();
 
@@ -54,6 +55,8 @@ sub _validate {
 
     }
 
+    $self->{_istty} = -t STDOUT;
+
     binmode(STDOUT, "encoding(UTF-8)");
     select((select(STDOUT), $|=1)[0]);
 
@@ -69,7 +72,7 @@ sub init {
     $self->{_status} = " " . $status if (defined $status);
 
     print CLRRET . "|" . (" " x $self->{width}) . "|";
-    ($self->{_lastRow}, $self->{_lastCol}) = getCursorPos() if (-t STDOUT);
+    ($self->{_lastRow}, $self->{_lastCol}) = getCursorPos() if ($self->{_istty});
     print $self->{_status} . " (Done: 0.00\%" . ($self->{showETA} ? "; ETA: unknown)" : ")");
 
 }

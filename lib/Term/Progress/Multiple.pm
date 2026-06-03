@@ -25,7 +25,8 @@ sub new {
                    _lastRow    => 0,
                    _lastCol    => 0,
                    _maxIdLen   => 0,
-                   _termSize   => -t STDOUT ? [ termsize() ] : [0, 0] }, \%parameters);
+                   _istty      => undef,
+                   _termSize   => [0, 0] }, \%parameters);
 
     $self->_validate();
 
@@ -47,6 +48,13 @@ sub _validate {
 
     }
 
+    if (-t STDOUT) {
+
+        $self->{_istty} = 1;
+        $self->{_termSize} = [ termsize() ];
+ 
+    }
+
 }
 
 sub init {
@@ -59,7 +67,7 @@ sub init {
 
         if (exists $self->{sets}->{$set}) {
 
-            if (!keys %{$self->{_progresses}} && -t STDOUT) {
+            if (!keys %{$self->{_progresses}} && $self->{_istty}) {
 
                 my ($curRow, $curCol);
                 ($curRow, $curCol) = getCursorPos();
@@ -83,10 +91,10 @@ sub init {
                                                                 updateRate => $self->{updateRate},
                                                                 updateTime => $self->{updateTime} );
             $self->{_progresses}->{$set}->init($status);
-            $self->{_positions}->{$set} = [$self->{_lastRow}, -t STDOUT ? (getCursorPos())[1] : 0];
+            $self->{_positions}->{$set} = [$self->{_lastRow}, $self->{_istty} ? (getCursorPos())[1] : 0];
             $self->{_lastCol} = $self->{_positions}->{$set}->[1];
 
-            if (-t STDOUT) { print "\n" if (keys %{$self->{sets}} > keys %{$self->{_progresses}}); }
+            if ($self->{_istty}) { print "\n" if (keys %{$self->{sets}} > keys %{$self->{_progresses}}); }
             else { print CLRRET; }
 
         }
@@ -117,11 +125,11 @@ sub update {
 
         if (exists $self->{_progresses}->{$set}) { 
 
-            if (-t STDOUT) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
+            if ($self->{_istty}) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
             else { print CLRRET; }
 
             $self->{_progresses}->{$set}->update($increment, $status);
-            setCursorPos($self->{_lastRow}, $self->{_termSize}->[1]) if (-t STDOUT);
+            setCursorPos($self->{_lastRow}, $self->{_termSize}->[1]) if ($self->{_istty});
             
         }
         else { $self->warn("Set \"$set\" does not exist or has not yet been initialized"); }
@@ -151,11 +159,11 @@ sub complete {
 
         if (exists $self->{_progresses}->{$set}) { 
 
-            if (-t STDOUT) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
+            if ($self->{_istty}) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
             else { print CLRRET; }
 
             $self->{_progresses}->{$set}->complete($status);
-            setCursorPos($self->{_lastRow}, $self->{_termSize}->[1]) if (-t STDOUT);
+            setCursorPos($self->{_lastRow}, $self->{_termSize}->[1]) if ($self->{_istty});
             
         }
         else { $self->warn("Set \"$set\" does not exist or has not yet been initialized"); }
@@ -184,7 +192,7 @@ sub appendText {
 
         if (exists $self->{_progresses}->{$set}) { 
 
-            if (-t STDOUT) { setCursorPos($self->{_positions}->{$set}->[0], $self->{_positions}->{$set}->[1] + 2); }
+            if ($self->{_istty}) { setCursorPos($self->{_positions}->{$set}->[0], $self->{_positions}->{$set}->[1] + 2); }
             else { print CLRRET; }
 
             $self->{_progresses}->{$set}->appendText($text);
@@ -207,7 +215,7 @@ sub reset {
 
         if (exists $self->{_progresses}->{$set}) { 
 
-            if (-t STDOUT) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
+            if ($self->{_istty}) { setCursorPos($self->{_positions}->{$set}->[0], 0); }
             else { print CLRRET; }
 
             $self->{_progresses}->{$set}->reset();

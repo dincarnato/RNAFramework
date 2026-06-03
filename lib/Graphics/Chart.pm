@@ -12,33 +12,34 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ id              => randalphanum(0x16),
-                   x               => undef,
-                   fill            => undef,
-                   data            => [],
-                   dataLabels      => {},
-                   dataLabelSort   => {},
-                   dataLabelType   => {},
-                   groupMethod     => "dodge",
-                   legendPos       => "right",
-                   legendKeyWidth  => undef,
-                   legendKeyHeight => undef,
-                   legendSort      => [],
-                   legendColors    => {},
-                   colorScale      => "discrete",
-                   colorPalette    => "YlGnBu",
-                   invertPalette   => 0,
-                   xLimit          => [],
-                   yLimit          => [],
-                   xBreaks         => {},
-                   labelTextSize   => 9,
-                   axisTitleSize   => 9,
-                   legendTextSize  => 9,
-                   legendTitleSize => 9,
-                   xLabelAngle     => 0,
-                   xTitle          => undef,
-                   yTitle          => undef,
-                   legendTitle     => undef,
+    $self->_init({ id               => randalphanum(0x16),
+                   x                => undef,
+                   fill             => undef,
+                   data             => [],
+                   dataLabels       => {},
+                   dataLabelSort    => {},
+                   dataLabelType    => {},
+                   groupMethod      => "dodge",
+                   legendPos        => "right",
+                   legendKeyWidth   => undef,
+                   legendKeyHeight  => undef,
+                   legendSort       => [],
+                   legendColors     => {},
+                   colorScale       => "discrete",
+		   colorScaleLimits => [],
+                   colorPalette     => "YlGnBu",
+                   invertPalette    => 0,
+                   xLimit           => [],
+                   yLimit           => [],
+                   xBreaks          => {},
+                   labelTextSize    => 9,
+                   axisTitleSize    => 9,
+                   legendTextSize   => 9,
+                   legendTitleSize  => 9,
+                   xLabelAngle      => 0,
+                   xTitle           => undef,
+                   yTitle           => undef,
+                   legendTitle      => undef,
                    grid            => 1,
                    xTicks          => 1,
                    yTicks          => 1,
@@ -60,8 +61,8 @@ sub _validate {
 
     my $self = shift;
 
-    my $palettes = join("|", qw(Spectral Blues BuGn BuPu GnBu Greens Greys Oranges OrRd PuBu PuBuGn 
-                                PuRd Purples RdPu Reds YlGn YlGnBu YlOrBr YlOrRd Accent Dark2 Paired 
+    my $palettes = join("|", qw(Spectral Blues BuGn BuPu GnBu Greens Greys Oranges OrRd PuBu PuBuGn
+                                PuRd Purples RdPu Reds YlGn YlGnBu YlOrBr YlOrRd Accent Dark2 Paired
                                 Pastel1 Pastel2 Set1 Set2 Set3 BrBG PiYG PRGn PuOr RdBu RdGy RdYlBu
                                 RdYlGn));
 
@@ -86,7 +87,7 @@ sub _validate {
                 @{$self->{$_}} = sort {$a <=> $b} @{$self->{$_}};
 
             }
-            elsif ($_ eq "xLimit" && $self->{dataLabels} && (($self->{x} eq "data" && !isnumeric(@{$self->{data}})) || 
+            elsif ($_ eq "xLimit" && $self->{dataLabels} && (($self->{x} eq "data" && !isnumeric(@{$self->{data}})) ||
                                                              ($self->{x} ne "data" && !isnumeric(@{$self->{dataLabels}->{$self->{x}}})))) {
 
                 my %groups = map { $_ => 0 } ($self->{x} eq "data" ? @{$self->{data}} : @{$self->{dataLabels}->{$self->{x}}});
@@ -104,13 +105,24 @@ sub _validate {
 
     $self->throw("Invalid legendPos value (supported: \"top\" and \"right\")") if ($self->{legendPos} !~ m/^(?:top|right)$/);
 
+    if (@{$self->{colorScaleLimits}}) {
+
+	$self->throw("colorScaleLimits requires two elements") if (@{$self->{colorScaleLimits}} != 2);
+        for (@{$self->{colorScaleLimits}}) { $self->throw("Invalid value for colorScaleLimits") if (defined $_ && !isnumeric($_)); }
+
+	$self->{colorScaleLimits}->[0] = "-Inf" if (!defined $self->{colorScaleLimits}->[0]);
+
+        $self->{colorScaleLimits}->[1] = "Inf" if (!defined $self->{colorScaleLimits}->[1]);
+
+    }
+
     if (keys %{$self->{dataLabels}}) {
 
-        for (keys %{$self->{dataLabels}}) { 
-            
-            $self->throw("\"$_\" dataLabel is not an ARRAY reference") if (ref($self->{dataLabels}->{$_}) ne "ARRAY"); 
-            $self->throw("Different number of elements for data and \"$_\" dataLabel ARRAYs") if (@{$self->{data}} != @{$self->{dataLabels}->{$_}}); 
-            
+        for (keys %{$self->{dataLabels}}) {
+
+            $self->throw("\"$_\" dataLabel is not an ARRAY reference") if (ref($self->{dataLabels}->{$_}) ne "ARRAY");
+            $self->throw("Different number of elements for data and \"$_\" dataLabel ARRAYs") if (@{$self->{data}} != @{$self->{dataLabels}->{$_}});
+
         }
 
         for my $label (keys %{$self->{dataLabelSort}}) {
@@ -170,7 +182,7 @@ sub _validate {
 
         my $nLegendColors = scalar(keys %{$self->{legendColors}});
 
-       $self->throw("Number of possible values for label \"" . $self->{fill} . "\" (n=" . $self->{_nFillValues} . 
+       $self->throw("Number of possible values for label \"" . $self->{fill} . "\" (n=" . $self->{_nFillValues} .
                     ") differs from number of provided legendColors (n=$nLegendColors)") if ($nLegendColors != $self->{_nFillValues});
 
     }
@@ -202,7 +214,7 @@ sub _generateRcode {
 
         $Rcode = "scale_" . $self->{_paletteType} . "_manual(values=c(" .
                  join(", ", map { "'$_' = '" . $self->{legendColors}->{$_} . "'" } keys %{$self->{legendColors}}) . ")";
-        $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')" if (@{$self->{legendSort}});        
+        $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')" if (@{$self->{legendSort}});
         $Rcode .= ") +";
 
     }
@@ -213,29 +225,32 @@ sub _generateRcode {
 
         if ($self->{colorScale} eq "discrete" && $self->{_nFillValues} > 12) {
 
-            $self->warn("colorScale was set to \"discrete\", but values for label \"" . $self->{fill} . "\" " . 
-                        ($isFillNumeric ? "look continuous" : "exceed the number of colors in the palette.") . 
+            $self->warn("colorScale was set to \"discrete\", but values for label \"" . $self->{fill} . "\" " .
+                        ($isFillNumeric ? "look continuous" : "exceed the number of colors in the palette.") .
                         "\ncolorScale will be adjusted accordingly");
 
             $self->{colorScale} = "gradient" if ($isFillNumeric);
 
         }
-        
+
         if ($isFillNumeric || $self->{_nFillValues} < 12) {
 
             $Rcode = ($self->{colorScale} eq "discrete" ? "scale_" . $self->{_paletteType} . "_brewer" : "scale_" . $self->{_paletteType} . "_distiller") . "(palette='" . $self->{colorPalette} . "'";
-            $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')" if (@{$self->{legendSort}});
+
+            if (@{$self->{legendSort}}) { $Rcode .= ", limits=c('" . join("', '", @{$self->{legendSort}}) . "')"; }
+	    elsif (@{$self->{colorScaleLimits}}) { $Rcode .= ", limits=c(" . join(", ", @{$self->{colorScaleLimits}}) . "), oob=scales::squish"; }
+
             $Rcode .= ", guide = 'colourbar', direction=" . ($self->{invertPalette} ? -1 : 1) . ")";
 
         }
-        else { 
-            
+        else {
+
             my $palette = "colorRampPalette(brewer.pal(9, '" . $self->{colorPalette} . "')";
             $palette = "rev($palette)" if ($self->{invertPalette});
-            $Rcode = "scale_" . $self->{_paletteType} . "_manual(values = $palette)(" . $self->{_nFillValues} . "))"; 
-            
+            $Rcode = "scale_" . $self->{_paletteType} . "_manual(values = $palette)(" . $self->{_nFillValues} . "))";
+
         }
-           
+
         $Rcode .= " + ";
 
     }
@@ -255,7 +270,7 @@ sub _generateRcode {
 
         $Rcode .= ", legend.key.width=unit(" . $self->{legendKeyWidth} . ", 'pt')" if (defined $self->{legendKeyWidth});
         $Rcode .= ", legend.key.height=unit(" . $self->{legendKeyHeight} . ", 'pt')" if (defined $self->{legendKeyHeight});
-        $Rcode .= ", legend.spacing.x=unit(" . ($self->{legendPos} eq "top" ? 0 : 3) . ", 'pt'), legend.text = element_text(margin=margin(" . 
+        $Rcode .= ", legend.spacing.x=unit(" . ($self->{legendPos} eq "top" ? 0 : 3) . ", 'pt'), legend.text = element_text(margin=margin(" .
                   ($self->{legendPos} eq "top" ? "5,0,0,0" : "0,0,0,5") . ", 'pt'), size=" . $self->{legendTextSize} . "), legend.key=element_blank(), legend.ticks=element_blank()";
         $Rcode .= ", legend.title=element_text(size=" . $self->{legendTitleSize} . ")" if ($self->{legendTitle});
 
@@ -263,13 +278,13 @@ sub _generateRcode {
     else { $Rcode .= ", legend.position='none'"; }
 
     $Rcode .= ", axis.title.x=" . ($self->{xTitle} ? "element_text(size=" . $self->{axisTitleSize} . ", margin=margin(t=10))" : "element_blank()") .
-              ", axis.title.y=" . ($self->{yTitle} ? "element_text(size=" . $self->{axisTitleSize} . ", margin=margin(r=10))" : "element_blank()") . 
+              ", axis.title.y=" . ($self->{yTitle} ? "element_text(size=" . $self->{axisTitleSize} . ", margin=margin(r=10))" : "element_blank()") .
               ", plot.margin=margin(10,0,0,0))"; # This adds a bit of margin to the top of the plot
 
     if ($self->{legend}) {
 
         $Rcode .= "+ guides(";
-        $Rcode .= join(", ", map { "$_=guide_" . ($self->{colorScale} eq "discrete" ? "legend" : "colourbar") . "(label.position='" . ($self->{legendPos} eq "top" ? "bottom" : "right") . 
+        $Rcode .= join(", ", map { "$_=guide_" . ($self->{colorScale} eq "discrete" ? "legend" : "colourbar") . "(label.position='" . ($self->{legendPos} eq "top" ? "bottom" : "right") .
                                    "', title.position='top', title.hjust=0.5, title=" . ($self->{legendTitle} ? "'" . $self->{legendTitle} . "'" : "NULL") . ")" } (qw(colour shape fill)));
         $Rcode .= ")";
 
@@ -301,6 +316,7 @@ sub _generateRcode {
 
 }
 
+
 sub _collapseDataLabels {
 
     my $self = shift;
@@ -317,9 +333,9 @@ sub _collapseDataLabels {
 
             if (defined $lastGroup) {
 
-                if ($values->[$i] eq $lastGroup) { 
-                    
-                    $reps++; 
+                if ($values->[$i] eq $lastGroup) {
+
+                    $reps++;
 
                     next;
 
@@ -333,7 +349,7 @@ sub _collapseDataLabels {
 
         }
 
-        push(@groups, $reps == 1 ? ($isNumeric ? $lastGroup : "'$lastGroup'") : "rep(" . ($isNumeric ? $lastGroup : "'$lastGroup'") . ", $reps)"); 
+        push(@groups, $reps == 1 ? ($isNumeric ? $lastGroup : "'$lastGroup'") : "rep(" . ($isNumeric ? $lastGroup : "'$lastGroup'") . ", $reps)");
 
         $collapsed->{$label} = join(", ", @groups);
 

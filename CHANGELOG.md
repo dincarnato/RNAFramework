@@ -1,3 +1,26 @@
+## [2.9.7] - 2026-06-03
+### Added
+- Added the --maxMutPerRead parameter to rf-mmtools extract to filter out reads having &gt; than a user-defined number of mutations
+- Added the -b3 parameter to rf-mmtools split to enable splitting reads by 3' end coordinate (useful for the analysis of co-transcriptional SHAPE/DMS experiments)
+- Additions to rf-count parameters:
+	- -mdp (--mm-discard-pair) to prevent reporting of non-overlapping mates (for paired-end experiments), residing at a distance higher than a user-specified threshold, in MM files
+	- -dp (--discard-clipped-reads) to discard any read (or fragment for paired-end experiments) having a number of bases clipped from their 5' or 3' end &gt; --max-clipped-bases
+	- -km (--keep-mate) to forcefully retain either the 5p or 3p mate when the -mdp threshold is hit
+
+### Changed
+- Fixed rf-rctools view to handle transcript IDs containing colons (":")
+- Fixed a naming issue in rf-correlate
+- Fixed a naming issue with temporary file generation in rf-fold
+- Fixed an unwante behaviour in rf-norm causing transcripts having < 10 reactive bases to be discarded even if a normalization factor was provided via -nf
+- Fixed an issue in rf-json2rc triggered by the rare edge case in which 2 JSON were generated from MM files having the same filename (thanks to Dolly Mehta for reporting)
+- Fixed a possible issue in rf-count and rf-count-genome with transcript IDs containing non-conventional characters
+- Fixed an issue with rf-count and rf-count-genome plot rendering with 1 sample (thanks to Victoria Begley for reporting)
+- Fixed an issue with rf-count and rf-count-genome causing sorted BAM files to be reported sometimes as not sorted
+- Fixed rf-count and rf-count-genome read quality calculation to exclude clipped bases
+- Changes to rf-count parameters:
+	- -ic (--include-clipped) is now --include-clipped-bases
+	- -mp (--max-clipped) is now --max-clipped-bases. The previous version of the parameter could only accept a single INT value, corresponding to the maximum number of bases clipped from the read from either side. In this new version, the paramter can also accept a comma (or semicolon) separated list specifying the maximum number of bases clipped from each specific end (e.g., 5p3,3p4 indicates up to 3 and 4 bases respectively clipped from 5' and 3' end)
+
 ## [2.9.6] - 2025-02-09
 ### Added
 - Added rf-correlate support for comparing more than just 2 samples. This is a major change. Several novel parameters have been implemented:

@@ -81,7 +81,7 @@ sub pearsonFromPartials {
 
     if ($N <= 2) {
  
-        Core::Utils::warn("N < 3");
+        Core::Utils::warn("Data arrays contain < 3 values");
 
         return("NaN", 1);
 
@@ -122,10 +122,16 @@ sub spearman {
 
     my ($rho, $p, $partial, @data, @rank1, @rank2);
     @data = _checkCorrInput(@_);
-    @rank1 = values2ranks($_[0]);
-    @rank2 = values2ranks($_[1]);
-    $partial = calcPearsonPartials(\@rank1, \@rank2);
-    ($rho, $p) = pearsonFromPartials($partial);
+
+    if (!@{$data[0]}) { ($rho, $p) = ("NaN", 1); }
+    else {
+
+        @rank1 = values2ranks($_[0]);
+        @rank2 = values2ranks($_[1]);
+        $partial = calcPearsonPartials(\@rank1, \@rank2);
+        ($rho, $p) = pearsonFromPartials($partial);
+
+    }
 
     return(wantarray ? ($rho, $p) : $rho);
 
@@ -138,20 +144,14 @@ sub _checkCorrInput {
                                rmOutliers => 0,
                                cap        => 0 }, $_[2] || {});
 
-    @data = _fixCorrData(@data, $rm);
-
     for (@data) { Core::Utils::throw("Values must be provided as ARRAY references") if (ref($_) ne "ARRAY"); }
 
     Core::Utils::throw("Insufficient arguments") if (@data < 2);
-    Core::Utils::throw("Pearson correlation calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
+    Core::Utils::throw("Correlation calculation needs 2 ARRAY references of the same length") if (@{$data[0]} != @{$data[1]});
     
-    if (@{$data[0]} <= 2) {
+    return([], []) if (@{$data[0]} <= 2);
 
-        Core::Utils::warn("Values ARRAY references contain < 3 values");
-
-        return("NaN", 1);
-
-    }
+    @data = _fixCorrData(@data, $rm);
 
     return(@data);
 

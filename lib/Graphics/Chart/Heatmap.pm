@@ -12,12 +12,14 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ y             => undef,
-                   plotValues    => 0,
-                   valueTextSize => 5,
-                   roundValues   => 3,
-                   cluster       => undef, 
-                   _paletteType  => "fill" }, \%parameters);
+    $self->_init({ y               => undef,
+                   plotValues      => 0,
+                   valueTextSize   => 5,
+                   roundValues     => 3,
+		           reverseYaxis    => 0,
+		           discretizeYaxis => 0,
+                   cluster         => undef,
+                   _paletteType    => "fill" }, \%parameters);
 
     # Override user-defined settings
     $self->{fill} = "data";
@@ -37,9 +39,9 @@ sub _validate {
 
     $self->throw("No data label defined for y") if (!defined $self->{y});
     $self->throw("Data label \"" . $self->{y} . "\" does not exist") if (!exists $self->{dataLabels}->{$self->{y}});
-    $self->throw("plotValues must be BOOL") if (!isbool($self->{plotValues}));
+    for (qw(plotValues reverseYaxis discretizeYaxis)) { $self->throw("$_ must be BOOL") if (!isbool($self->{$_})); }
     $self->throw("Invalid cluster value \"" . $self->{cluster} . "\" (allowed: \"rows\", \"columns\", or \"both\")") if (defined $self->{cluster} && $self->{cluster} !~ /^(?:rows|columns|both)$/);
-    
+
     for (qw(valueTextSize roundValues)) { $self->throw("$_ must be positive") if (!ispositive($self->{$_})); }
 
 }
@@ -53,7 +55,14 @@ sub _generateRcode {
     $dataLabels = $self->_collapseDataLabels();
     $Rcode = "df_$id<-data.frame(data=c(" . join(",", @{$self->{data}}) . ")";
     $Rcode .= ", $_=c(" . $dataLabels->{$_} . ")" for (keys %$dataLabels);
-    $Rcode .= ");\n";
+    $Rcode .= ");\n" .
+	      "df_$id<-df_$id\[!is.na(df_$id\$data), ];\n";
+
+    if ($self->{discretizeYaxis}) {
+
+        $Rcode .= "df_$id\$" . $self->{y} . "<-factor(df_$id\$" . $self->{y} . ", levels=" . ($self->{reverseYaxis} ? "rev" : "") . "(sort(unique(df_$id\$" . $self->{y} . "))));\n";
+
+    }
 
     if (defined $self->{cluster}) {
 
@@ -62,7 +71,7 @@ sub _generateRcode {
                   "for (i in seq_len(nrow(df_$id))) { matrix[df_$id\$y[i], df_$id\$x[i]] <- df_$id\$data[i]}\n";
         $Rcode .= "row_clust<-hclust(dist(matrix))\n" if ($self->{cluster} ne "columns");
         $Rcode .= "col_clust<-hclust(dist(t(matrix)))\n" if ($self->{cluster} ne "rows");
-        
+
         if ($self->{cluster} eq "both") { $Rcode .= "matrix_clustered<-matrix[row_clust\$order, col_clust\$order]\n"; }
         elsif ($self->{cluster} eq "rows") { $Rcode .= "matrix_clustered<-matrix[row_clust\$order, , drop=FALSE]\n"; }
         else { $Rcode .= "matrix_clustered<-matrix[ , col_clust\$order, drop=FALSE]\n"; }
@@ -79,6 +88,7 @@ sub _generateRcode {
     $Rcode .= "plot_$id<-ggplot(df_$id, aes(x=" . (defined $self->{x} ? $self->{x} : "seq(from=1, to=nrow(df_$id))") .
               ", y=" . $self->{y} . ", fill=data)) + geom_tile()";
     $Rcode .= " + geom_text(aes(label=round(data, " . $self->{roundValues} . ")), color='black', size=" . $self->{valueTextSize} . ")" if ($self->{plotValues});
+    $Rcode .= " + scale_y_reverse()" if ($self->{reverseYaxis} && !$self->{discretizeYaxis});
 
     $Rcode .= " + " . $self->SUPER::_generateRcode();
 

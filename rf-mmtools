@@ -38,7 +38,7 @@ my ($output, $overwrite, $command, $help, $by3End,
     $tab, $keepBases, $minMutPerRead, $maxMutPerRead,
     $minReadLen, $randSubsample, $bedAnno, $whitelist, 
     $discardPos, $minReads, $minRate, $maxRate, 
-    $spearman, $threads, @mm, %commands);
+    $spearman, $threads, $singleFile, @mm, %commands);
 
 %commands = map { $_ => 1 } qw(index view merge extract alignids
                                stats torc correlate split);
@@ -63,7 +63,8 @@ do {
                 "nr|minRate=s"          => \$minRate,
                 "xr|maxRate=s"          => \$maxRate,
                 "b3|by3End"             => \$by3End,
-                "p|processors=s"        => \$threads ) or help(1);
+                "p|processors=s"        => \$threads,
+                "sf|singleFile"         => \$singleFile ) or help(1);
 
     $command = shift(@ARGV);
     $command = lc($command);
@@ -668,6 +669,7 @@ elsif ($command eq "alignids") {
 }
 elsif ($command eq "split") {
 
+    die "\n  [!] Error: Output to single file requires -b3\n\n" if ($singleFile && !$by3End);
     die "\n  [!] Error: Number of processors must be an INT >= 1\n\n" if (!isint($threads) || $threads < 1);
 
     if (!defined $output) {
@@ -712,16 +714,28 @@ elsif ($command eq "split") {
 
         if ($by3End) {
 
-            if (my $error = mktree("${output}$id", "755")) { die "\n  [!] Error: Unable to create output subfolder for transcript \"$id\" ($error)\n\n"; }
+            if (!$singleFile && (my $error = mktree("${output}$id", "755"))) { 
+                
+                die "\n  [!] Error: Unable to create output subfolder for transcript \"$id\" ($error)\n\n"; 
+                
+            }
 
-            open(my $th, ">", "${output}${id}/.reads.tmp") or die "\n  [!] Error: Unable to write temporary read file for transcript \"$id\" ($!)\n\n";
+            open(my $th, ">", "${output}/.${id}.reads.tmp") or die "\n  [!] Error: Unable to write temporary read file for transcript \"$id\" ($!)\n\n";
             select((select($th), $|=1)[0]);
             while(my ($start, $end, $muts) = $mmIn->readStream($id)) { print $th join("\t", $start, $end, @$muts) . "\n"; }
             close($th);
 
             my ($lastEnd, $mmOut);
 
-            open($th, "-|", "LC_ALL=C sort -k 2,2n --parallel=$threads -T ${output}${id}/ ${output}${id}/.reads.tmp") or die "\n  [!] Error: Unable to read temporary sorted read file for transcript \"$id\" ($!)\n\n";
+            if ($singleFile) {
+
+                $mmOut = RF::Data::IO::MM->new( file  => "${output}${id}.mm",
+                                                index => "${output}${id}.mm.mmi",
+                                                mode  => "w" );
+
+            }
+
+            open($th, "-|", "LC_ALL=C sort -k 2,2n --parallel=$threads -T ${output}/ ${output}/.${id}.reads.tmp") or die "\n  [!] Error: Unable to read temporary sorted read file for transcript \"$id\" ($!)\n\n";
             while(<$th>) {
 
                 chomp;
@@ -729,12 +743,17 @@ elsif ($command eq "split") {
 
                 if (!defined $lastEnd || (defined $lastEnd && $end != $lastEnd)) {
 
-                    if (defined $lastEnd) { $mmOut->close(); }
+                    $mmOut->close() if (defined $lastEnd && !$singleFile);
 
-                    $mmOut = RF::Data::IO::MM->new( file  => "${output}${id}/$end.mm",
-                                                    index => "${output}${id}/$end.mm.mmi",
-                                                    mode  => "w" );
-                    $mmOut->append_transcript($id, substr($mmIn->sequence($id), 0, $end + 1));
+                    if (!$singleFile) {
+
+                        $mmOut = RF::Data::IO::MM->new( file  => "${output}${id}/$end.mm",
+                                                        index => "${output}${id}/$end.mm.mmi",
+                                                        mode  => "w" );
+
+                    }
+
+                    $mmOut->append_transcript($singleFile ? "${id}_$end" : $id, substr($mmIn->sequence($id), 0, $end + 1));
                     $lastEnd = $end;
 
                 }
@@ -746,7 +765,7 @@ elsif ($command eq "split") {
 
             if (defined $mmOut) { $mmOut->close(); }
 
-            unlink("${output}${id}/.reads.tmp");
+            unlink("${output}/.${id}.reads.tmp");
 
         }
         else {
@@ -869,10 +888,12 @@ HELP
  Options                                     Description
  -o  or --output       <string>              Output folder (Default: <input>_split/)
  -ow or --overwrite                          Overwrites output folder if already exists
- -b3 or --by3End                             Besides splitting by transcript, transcripts will be
-                                             split by read 3' end
+ -b3 or --by3End                             Besides splitting by transcript, reads will be split by
+                                             their 3' end
  -p  or --processors   <int>                 Number of processors to use to pre-sort reads by 3' end
                                              coordinate (requires -b3) (>=1, Default: 1)
+ -sf or --singleFile                         Reads split by 3' end will be written to a single output
+                                             MM file, rather than one file per position (requires -b3)
 
 HELP
 

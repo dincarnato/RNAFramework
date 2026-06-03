@@ -854,7 +854,7 @@ sub count {
 
         while (!eof($fh)) {
 
-            my ($row, $cov, $ins,
+            my ($row, $cov, $ins, $clip5,
                 $editdist, $truelen, $gaps,
                 $realStrand, $start, $covWithGaps, @row);
             chomp($row = <$fh>);
@@ -882,14 +882,14 @@ sub count {
             }
 
             $start = ($mutcount || $covonly || $realStrand eq "-" ? $row[3] : $row[3] - $sample->{trim5}) - 1;
-            ($cov, $truelen, $covWithGaps, $ins, $gaps) = parsecigar($row[5]);
+            ($clip5, $cov, $truelen, $covWithGaps, $ins, $gaps) = parsecigar($row[5]);
             @{$ins} = map { $_ + $start } @{$ins}; # Adjust insertion relative position to true position
             $editdist = editdist($row) + @{$ins}; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
             
             next if ($start < 0 || (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0));
             next if ($mutcount && $cov < $discardshorter);
             next if ($mutcount && $editdist / $cov > $maxmut);
-            next if ($mutcount && median(map { unpack("C*", $_) - 33 } split(//, $row[10])) < $medianqual); # Check median read's quality
+            next if ($mutcount && median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip5, $truelen))) < $medianqual); # Check median read's quality
             #next if ($po && $row[1] & 1 && $row[1] & 8); # Read is one of a pair, but one mate is unmapped
             #next if ($pp && $row[1] & 1 && !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
             next if ((($row[5] =~ m/^\d+S/ && $realStrand eq "+") || ($row[5] =~ m/\d+S$/ && $realStrand eq "-")) && !$mutcount && !$covonly); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
@@ -1338,10 +1338,17 @@ sub parsecigar {
     my $cigar = shift;
 
     my ($cov, $truelen, $last, $lastMatch,
-        @ins, @gaps);
-    ($cov, $truelen, $last, $lastMatch) = (0, 0, 0, 0);
+        $clip5, @ins, @gaps);
+    $cov = $truelen = $last = $lastMatch = $clip5 = 0;
 
-    while ($cigar =~ m/^(\d+[SH])/) { $cigar =~ s/^$1//; }
+    while ($cigar =~ m/^(\d+[SH])/) { 
+
+        my $clipsh = $1;    
+        $cigar =~ s/^$clipsh//;
+        $clipsh =~ s/[SH]$//;
+        $clip5 += $clipsh;
+        
+    }
 
     while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
 
@@ -1370,7 +1377,7 @@ sub parsecigar {
 
     }
 
-    return($cov, $truelen, $last, \@ins, \@gaps);
+    return($clip5, $cov, $truelen, $last, \@ins, \@gaps);
 
 }
 
