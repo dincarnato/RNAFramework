@@ -1146,7 +1146,7 @@ sub count {
 
             while (!eof($fh)) {
 
-                my ($row, $clip, $totClip, $cov, $ins, $pairId,
+                my ($row, $clip, $cov, $ins, $pairId,
                     $editdist, $truelen, @row);
                 $row = <$fh>;
                 chomp($row);
@@ -1181,13 +1181,12 @@ sub count {
                 }
 
                 ($clip, $cov, $truelen, $ins) = parsecigar($row[5]);
-                $totClip = $clip->[0] + $clip->[1];
                 @$ins = map { $_ + $row[3] - 1 } @$ins; # Adjust insertion relative position to true position
                 $editdist = editdist($row) + @$ins; # Editing distance is calculated this way so that consecutively deleted/inserted bases are counted only once
 
                 if ($mutcount && ($cov < ($discardshorter eq "MEDIAN" ? $sample->{medianReadLen} : $discardshorter) ||
                                   $editdist / $cov > $maxmut ||
-                                  median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip->[0], $truelen))) < $medianqual)) { # Check median read's quality
+                                  median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip->{clip5soft}, $truelen))) < $medianqual)) { # Check median read's quality
 
                     # If paired-end, and one mate has already been stored, we allow the corresponding memory to be freed
                     # as its mate would be discarded here
@@ -1203,8 +1202,8 @@ sub count {
                 }
                 
                 # RT-stop mode
-                next if ($clip->[0] && !$mutcount && !$covonly && 
-                         (!$includeclip || ($includeclip && defined $maxClipped[0] && $clip->[0] > $maxClipped[0]))); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
+                next if ($clip->{tot5pClip} && !$mutcount && !$covonly && 
+                         (!$includeclip || ($includeclip && defined $maxClipped[0] && $clip->{tot5pClip} > $maxClipped[0]))); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
 
                 if ($mutcount || $covonly) {  # Mutations count / Coverage only modes
 
@@ -1217,12 +1216,12 @@ sub count {
 
                     # If we include the clipped bases, we need to readjust start, and in case including them would 
                     # pass the ends of the transcript, readjust the coverage
-                    if ($includeclip && $clip->[0] &&
-                        (!defined $maxClipped[0] || (defined $maxClipped[0] && $clip->[0] <= $maxClipped[0])) &&
-                        (!defined $maxClipped[2] || (defined $maxClipped[2] && !defined $maxClipped[0] && $totClip <= $maxClipped[2]))) {
+                    if ($includeclip && $clip->{tot5pClip} &&
+                        (!defined $maxClipped[0] || (defined $maxClipped[0] && $clip->{tot5pClip} <= $maxClipped[0])) &&
+                        (!defined $maxClipped[2] || (defined $maxClipped[2] && !defined $maxClipped[0] && $clip->{totClip} <= $maxClipped[2]))) {
 
-                        if ($start - $clip->[0] < 0) { $cov -= $clip->[0]; }
-                        else { $start -= $clip->[0]; }
+                        if ($start - $clip->{tot5pClip} < 0) { $cov -= $clip->{tot5pClip}; }
+                        else { $start -= $clip->{tot5pClip}; }
 
                     }
 
@@ -1252,8 +1251,8 @@ sub count {
                     push(@{$lastRead{$pairId}->{start}}, $start);
                     push(@{$lastRead{$pairId}->{end}}, $end);
                     push(@{$lastRead{$pairId}->{covered}}, clonearrayref(\@covered));
-                    push(@{$lastRead{$pairId}->{clip5}}, $clip->[0]);
-                    push(@{$lastRead{$pairId}->{clip3}}, $clip->[1]);
+                    push(@{$lastRead{$pairId}->{clip5}}, $clip->{tot5pClip});
+                    push(@{$lastRead{$pairId}->{clip3}}, $clip->{tot3pClip});
 
                     if ($discardClipped) {
 
@@ -1364,7 +1363,7 @@ sub count {
                 }
                 else {  # RT-stops count mode
 
-                    $row[3] -= $sample->{trim5} + $clip->[0] + 2;
+                    $row[3] -= $sample->{trim5} + $clip->{tot5pClip} + 2;
 
                     if ($row[3] >= 0) { # Read 5'-end is not before transcript 5'-end
 
@@ -1861,16 +1860,17 @@ sub parsecigar {
 
     my $cigar = shift;
 
-    my ($clip5, $clip3, $cov, $truelen, $last,
-        @ins);
-    $clip5 = $clip3 = $cov = $truelen = $last = 0;
+    my ($clip5soft, $clip5hard, $clip3, $cov, 
+        $truelen, $last, @ins);
+    $clip5soft = $clip5hard = $clip3 = $cov = $truelen = $last = 0;
 
-    while ($cigar =~ m/^(\d+[SH])/) {
+    while ($cigar =~ m/^(\d+)([SH])/) {
 
-        my $clipsh = $1;
-        $cigar =~ s/^$clipsh//;
-        $clipsh =~ s/[SH]$//;
-        $clip5 += $clipsh;
+        my ($n, $op) = ($1, $2);
+        $cigar =~ s/^$n$op//;
+        
+        if ($op eq "H") { $clip5hard += $n; }
+        else { $clip5soft += $n; }
 
     }
 
@@ -1889,14 +1889,16 @@ sub parsecigar {
 
     }
 
-    if ($includeclip) {
+    my ($tot5pClip, $totClip);
+    $tot5pClip = $clip5soft + $clip5hard;
+    $totClip = $tot5pClip + $clip3;
 
-        my $totClip = $clip5 + $clip3;
+    if ($includeclip) {
 
         if (!grep { defined $_ } @maxClipped) { $cov += $totClip; }
         else { 
         
-            if ((defined $maxClipped[0] && $clip5 <= $maxClipped[0]) || !defined $maxClipped[0]) { $cov += $clip5; }
+            if ((defined $maxClipped[0] && $tot5pClip <= $maxClipped[0]) || !defined $maxClipped[0]) { $cov += $tot5pClip; }
             if ((defined $maxClipped[1] && $clip3 <= $maxClipped[1]) || !defined $maxClipped[1]) { $cov += $clip3; }
             if (defined $maxClipped[2] && $totClip > $maxClipped[2]) { $cov -= $totClip; }
 
@@ -1904,7 +1906,10 @@ sub parsecigar {
 
     }
 
-    return([$clip5, $clip3], $cov, $truelen, \@ins);
+    return({ tot5pClip => $tot5pClip, 
+             clip5soft => $clip5soft, 
+             tot3pClip => $clip3,
+             totClip   => $totClip }, $cov, $truelen, \@ins);
 
 }
 
