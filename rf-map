@@ -134,13 +134,6 @@ $maxN = round($maxN) if (isnumeric($maxN) && $maxN > 1);
 $tmpdir = $output . "tmp/";
 $logdir = $output . "logs/";
 
-if (isdna(join("", split(/,/, $ca5)))) {
-
-    my @ca5 = split(/,/, $ca5);
-    @ca5 = map { revcomp($_) } @ca5;
-
-}
-
 ##
 # Input validation
 ##
@@ -151,7 +144,16 @@ die "\n  [!] Error: Working threads value must be an integer greater than 0\n\n"
 
 # Cutadapt validation
 die "\n  [!] Error: No 5' adapter's sequence provided\n\n"if (!defined $ca5);
-die "\n  [!] Error: Invalid 5' adapter's sequence\n\n" if (!isdna(join("", split(/,/, $ca5))));
+
+if (isdna(join("", split(/,/, $ca5)))) {
+
+    my @ca5 = split(/,/, $ca5);
+    @ca5 = map { revcomp($_) } @ca5;
+    $ca5 = join(",", @ca5);
+
+}
+else { die "\n  [!] Error: 5' adapter sequences contain invalid characters\n\n"; }
+
 die "\n  [!] Error: No 3' adapter's sequence provided\n\n"if (!defined $ca3);
 die "\n  [!] Error: Invalid 3' adapter's sequence\n\n" if (!isdna(join("", split(/,/, $ca3))));
 die "\n  [!] Error: No minimum read length provided\n\n" if (!defined $cl);
@@ -264,7 +266,7 @@ foreach my $sample (uniq(@ARGV)) {
     else {
 
         @sample = split(/,/, $sample);
-        $basename = (fileparse($sample[0], qr/((\.[^.\s]+)+)$/))[0];
+        $basename = (fileparse($sample[0], qr/(?:\.fq|\.fastq)(?:\.gz)?$/))[0];
         $basename =~ s/_R[12]$//; # Remove _R1 or _R2 suffix added by Illumina
 
     }
@@ -288,10 +290,10 @@ foreach my $sample (uniq(@ARGV)) {
 
     push(@tmp, { path   => $sample[0],
                  id     => exists $files{$basename} ? "${basename}_" . $files{$basename} : $basename,
-                 file   => (fileparse($sample[0], qr/\.[^.]*/))[0],
+                 file   => (fileparse($sample[0], qr/(?:\.fq|\.fastq)(?:\.gz)?$/))[0],
                  paired => @sample == 2 ? 1 : 0,
                  path2  => @sample == 2 ? $sample[1] : undef,
-                 file2  => @sample == 2 ? (fileparse($sample[1], qr/\.[^.]*/))[0] : undef,
+                 file2  => @sample == 2 ? (fileparse($sample[1], qr/(?:\.fq|\.fastq)(?:\.gz)?$/))[0] : undef,
                  gzip   => $sample[0] =~ m/\.gz$/ ? 1 : 0 });
 
     # Error on mixed R1/R2 gzipped/uncompressed files

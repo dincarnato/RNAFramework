@@ -476,9 +476,7 @@ sub _checkAliFoldParams {
                                     ribosumScoring     => 0,
                                     MEA                => 0 }, $parameters);
 
-    $self->throw("Parameter maxBPspan span must be a positive INT") if ($parameters->{maxBPspan} &&
-                                                                        (!isint($parameters->{maxBPspan}) ||
-                                                                         !ispositive($parameters->{maxBPspan})));
+    $self->throw("Parameter maxBPspan span must be a positive INT") if ($parameters->{maxBPspan} && (!isint($parameters->{maxBPspan}) || !ispositive($parameters->{maxBPspan})));
 
     for (qw(slope intercept temperature)) { $self->throw("Parameter " . $_ . " must be numeric") if (!isnumeric($parameters->{$_})); }
     for (qw(noLonelyPairs noClosingGU MEA

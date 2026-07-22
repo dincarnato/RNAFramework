@@ -115,7 +115,7 @@ $minvalues = round($minvalues) if ($minvalues > 1);
 $keepbases = $keepbases =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($keepbases))))))));
 $output =~ s/\/?$/\//;
 
-print "\n[+] Importing input XML directories\/files...";
+print "\n[+] Importing input directories\/files...";
 
 foreach my $sample (@input) {
 
