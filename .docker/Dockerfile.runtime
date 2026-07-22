@@ -1,0 +1,97 @@
+# Three-stage runtime image for RNAFramework.
+# Copies only required binaries/libraries from the upstream image to keep the
+# final image small enough for HPC environments where containers are pulled per-job.
+# R + ggplot2/patchwork/RColorBrewer are added so --img flags work in containers.
+
+ARG RF_VERSION=latest
+
+# Stage 1: pull binaries from the full upstream image
+FROM ghcr.io/dincarnato/rnaframework:${RF_VERSION} AS source
+
+# Stage 2: fetch UCSC tools not present in the base image
+FROM docker.io/condaforge/miniforge3:latest AS conda-extras
+RUN conda install -y -c bioconda ucsc-bedgraphtobigwig ucsc-wigtobigwig \
+    && conda clean -afy
+
+# Stage 3: clean runtime base
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RF_RUNTIME_ROOT=/opt/rf-runtime
+ENV PATH=/usr/local/bin:/home/ubuntu/rnaframework:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rf-runtime/lib
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        python3 \
+        r-base \
+        r-cran-ggplot2 \
+        r-cran-gtable \
+        r-cran-patchwork \
+        r-cran-remotes \
+        r-cran-rcolorbrewer \
+    && Rscript -e "remotes::install_version('RColorBrewer', version='1.1-3', repos='https://cloud.r-project.org', upgrade='never', dependencies=FALSE)" \
+    && Rscript -e "remotes::install_version('gtable', version='0.3.6', repos='https://cloud.r-project.org', upgrade='never', dependencies=FALSE)" \
+    && Rscript -e "remotes::install_version('ggplot2', version='3.5.2', repos='https://cloud.r-project.org', upgrade='never', dependencies=FALSE)" \
+    && Rscript -e "remotes::install_version('patchwork', version='1.3.2', repos='https://cloud.r-project.org', upgrade='never', dependencies=FALSE)" \
+    && Rscript -e "stopifnot(packageVersion('gtable') == '0.3.6'); stopifnot(packageVersion('ggplot2') == '3.5.2'); stopifnot(packageVersion('patchwork') == '1.3.2'); stopifnot(packageVersion('RColorBrewer') == '1.1.3'); library(ggplot2); library(patchwork); library(RColorBrewer)" \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=source /home/ubuntu/rnaframework /home/ubuntu/rnaframework
+COPY --from=source /home/ubuntu/conda/lib ${RF_RUNTIME_ROOT}/lib
+COPY --from=source /home/ubuntu/conda/share ${RF_RUNTIME_ROOT}/share
+
+COPY --from=source /home/ubuntu/conda/bin/perl ${RF_RUNTIME_ROOT}/bin/perl
+COPY --from=source /home/ubuntu/conda/bin/samtools ${RF_RUNTIME_ROOT}/bin/samtools
+COPY --from=source /home/ubuntu/conda/bin/RNAfold ${RF_RUNTIME_ROOT}/bin/RNAfold
+COPY --from=source /home/ubuntu/conda/bin/RNAsubopt ${RF_RUNTIME_ROOT}/bin/RNAsubopt
+COPY --from=source /home/ubuntu/conda/bin/RNAalifold ${RF_RUNTIME_ROOT}/bin/RNAalifold
+COPY --from=source /home/ubuntu/conda/bin/RNAplot ${RF_RUNTIME_ROOT}/bin/RNAplot
+COPY --from=source /home/ubuntu/conda/bin/Fold ${RF_RUNTIME_ROOT}/bin/Fold
+COPY --from=source /home/ubuntu/conda/bin/Fold-smp ${RF_RUNTIME_ROOT}/bin/Fold-smp
+COPY --from=source /home/ubuntu/conda/bin/ShapeKnots ${RF_RUNTIME_ROOT}/bin/ShapeKnots
+COPY --from=source /home/ubuntu/conda/bin/ShapeKnots-smp ${RF_RUNTIME_ROOT}/bin/ShapeKnots-smp
+COPY --from=source /home/ubuntu/conda/bin/partition ${RF_RUNTIME_ROOT}/bin/partition
+COPY --from=source /home/ubuntu/conda/bin/partition-smp ${RF_RUNTIME_ROOT}/bin/partition-smp
+COPY --from=source /home/ubuntu/conda/bin/ProbabilityPlot ${RF_RUNTIME_ROOT}/bin/ProbabilityPlot
+COPY --from=source /home/ubuntu/conda/bin/MaxExpect ${RF_RUNTIME_ROOT}/bin/MaxExpect
+COPY --from=source /home/ubuntu/conda/bin/MaxExpect-smp ${RF_RUNTIME_ROOT}/bin/MaxExpect-smp
+COPY --from=conda-extras /opt/conda/bin/bedGraphToBigWig ${RF_RUNTIME_ROOT}/bin/bedGraphToBigWig
+COPY --from=conda-extras /opt/conda/bin/wigToBigWig ${RF_RUNTIME_ROOT}/bin/wigToBigWig
+COPY --from=conda-extras /opt/conda/lib/libmysqlclient.so.18 ${RF_RUNTIME_ROOT}/lib/libmysqlclient.so.18
+
+RUN ln -sf ${RF_RUNTIME_ROOT}/bin/perl /usr/local/bin/perl \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/samtools /usr/local/bin/samtools \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/RNAfold /usr/local/bin/RNAfold \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/RNAsubopt /usr/local/bin/RNAsubopt \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/RNAalifold /usr/local/bin/RNAalifold \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/RNAplot /usr/local/bin/RNAplot \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/Fold /usr/local/bin/Fold \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/Fold-smp /usr/local/bin/Fold-smp \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/ShapeKnots /usr/local/bin/ShapeKnots \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/ShapeKnots-smp /usr/local/bin/ShapeKnots-smp \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/partition /usr/local/bin/partition \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/partition-smp /usr/local/bin/partition-smp \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/ProbabilityPlot /usr/local/bin/ProbabilityPlot \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/MaxExpect /usr/local/bin/MaxExpect \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/MaxExpect-smp /usr/local/bin/MaxExpect-smp \
+    && ln -sf /home/ubuntu/rnaframework/lib /usr/local/bin/lib \
+    && ln -sf /home/ubuntu/rnaframework/rf-count /usr/local/bin/rf-count \
+    && ln -sf /home/ubuntu/rnaframework/rf-count-genome /usr/local/bin/rf-count-genome \
+    && ln -sf /home/ubuntu/rnaframework/rf-norm /usr/local/bin/rf-norm \
+    && ln -sf /home/ubuntu/rnaframework/rf-fold /usr/local/bin/rf-fold \
+    && ln -sf /home/ubuntu/rnaframework/rf-wiggle /usr/local/bin/rf-wiggle \
+    && ln -sf /home/ubuntu/rnaframework/rf-eval /usr/local/bin/rf-eval \
+    && ln -sf /home/ubuntu/rnaframework/rf-jackknife /usr/local/bin/rf-jackknife \
+    && ln -sf /home/ubuntu/rnaframework/rf-rctools /usr/local/bin/rf-rctools \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/bedGraphToBigWig /usr/local/bin/bedGraphToBigWig \
+    && ln -sf ${RF_RUNTIME_ROOT}/bin/wigToBigWig /usr/local/bin/wigToBigWig \
+    && ln -sf /usr/bin/R /usr/local/bin/R \
+    && ln -sf /usr/bin/Rscript /usr/local/bin/Rscript \
+    && chmod o+rx /home /home/ubuntu /home/ubuntu/rnaframework ${RF_RUNTIME_ROOT} ${RF_RUNTIME_ROOT}/bin ${RF_RUNTIME_ROOT}/lib
+
+USER 1000:1000
