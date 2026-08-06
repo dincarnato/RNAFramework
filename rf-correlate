@@ -54,10 +54,11 @@ my $progressBar : shared;
 my @ids : shared;
 my %results : shared;
 my %comparisons : shared;
-%results = ( diffseq     => 0,
-             nominvalues => 0,
-             failed      => 0,
-             correlated  => 0 );
+%results = ( diffseq      => 0,
+             nominvalues  => 0,
+             failed       => 0,
+             correlated   => 0,
+             tooManyFiles => 0 );
 
 do {
 
@@ -243,6 +244,9 @@ $_->join() for(@pool);
 
 print "\n\n";
 
+die "  [!] Error: Too many concurrently open files.\n" .
+    "             Increase the limit (via `ulimit -n`) and try again.\n\n" if ($results{tooManyFiles});
+
 if ($spearman) {
 
     print "[+] Calculating Spearman ranks...";
@@ -408,6 +412,7 @@ sub correlate {
 
             if ($eval) { # Exception from eval
 
+                $partResults{tooManyFiles} = 1 if ($eval =~ /Too many open files/);
                 $partResults{failed}++;
 
                 next;
@@ -469,7 +474,13 @@ sub correlate {
                 @reactivities = map { my $i = $_; $coverage ? $cov[$i] : ($ratio ? [ map { $cov[$i]->[$_] >= $minCov ? $counts[$i]->[$_] / $cov[$i]->[$_] : "NaN" } 0 .. $entries[0]->length() - 1 ] : $counts[$i]) } 0 .. $#cov;
 
             }
-            else { @reactivities = map { [ $_->reactivity() ] } @entries; }
+            else { 
+                
+                @reactivities = map { [ $_->reactivity() ] } @entries; 
+
+                $_->close() for (@entries);
+
+            }
 
             for my $i (0 .. $#reactivities) { 
                 
