@@ -64,19 +64,17 @@ sub read {
         $i, $length, @pairs);
 
     $self->throw("Filehandle is not in read mode") unless ($self->{mode} eq "r");
-    $self->throw("Structure ID must be an integer >= 0") if (defined $sid &&
-                                                             (!isint($sid) ||
-                                                              !ispositive($sid)));
+    $self->throw("Structure ID must be an integer >= 0") if (defined $sid && (!isint($sid) || !ispositive($sid)));
     
     $fh = $self->{_fh};
-    $i = @{$self->{_prev}};
+    $i = $self->{_pos} + 1;
     $header = 0;
     
     if (defined $sid) {
         
         if (exists $self->{_index}->{$sid}) {
         
-            seek($fh, $self->{_index}->{$sid}, SEEK_SET);
+            seek($fh, $self->{_index}->{$sid}->{offset}, SEEK_SET);
             $i = $sid;
             
         }
@@ -107,33 +105,19 @@ sub read {
             
             $length = $line[0];
                 
-            next if (!isnumeric($length) ||
-                     !ispositive($length) ||
-                     !isint($length));
+            next if (!ispositive($length) || !isint($length));
             
             # Index building at runtime
+            $self->throw("Non-matching offsets (Offsets: " . $self->{_index}->{$i}->{offset} . ", " . $offset . ")") if (exists $self->{_index}->{$i} &&
+                                                                                                                        $self->{_index}->{$i}->{offset} != $offset &&
+                                                                                                                        $self->{checkDuplicateIds});
 
-            $self->throw("Non-matching offsets (Offsets: " . $self->{_index}->{$i} . ", " . $offset . ")") if (exists $self->{_index}->{$i} &&
-                                                                                                               $self->{_index}->{$i} != $offset &&
-                                                                                                               $self->{checkDuplicateIds});
-
-            if (exists $self->{_index}->{$i}) {
-    
-                my @offsets = map { $self->{_index}->{$_} } sort {$self->{_index}->{$a} <=> $self->{_index}->{$b}} keys %{$self->{_index}};
-                @{$self->{_prev}} = grep { $_ <= $offset } @offsets;
-                
-            }
-            else {
-                
-                $self->{_index}->{$i} = $offset;
-                push(@{$self->{_prev}}, $offset);
-                
-            }
+            $self->{_pos} = $self->_indexOffset($offset, $i, { offset => $offset,
+                                                               length => $length });
             
             # End of index building block
             
-            if ((defined $sid && $i == $sid) ||
-                !defined $sid) {
+            if ((defined $sid && $i == $sid) || !defined $sid) {
                 
                 $id = ($_ =~ m/ = / ? $line[4] : $line[1]) || "Structure_" . $i;
                 $energy = $line[3] || 0;

@@ -23,7 +23,7 @@ use Getopt::Long qw(:config no_ignore_case);
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::Sequence::Utils;
@@ -78,7 +78,7 @@ help() if ($help);
 $randSubsample ||= 1;
 $minMutPerRead ||= 0;
 $keepBases ||= "ACGT";
-$minReadLen ||= 0;
+$minReadLen ||= 1;
 $minReads ||= 1000;
 $minRate ||= 0;
 $maxRate ||= 1;
@@ -241,7 +241,7 @@ elsif ($command eq "extract") {
     die "\n  [!] Error: Invalid IUPAC code\n\n" if ($keepBases !~ /^all$/i && !isiupac($keepBases));
     die "\n  [!] Error: Minimum number of mutations per read must be a positive INT >= 0\n\n" if (!isint($minMutPerRead) || !ispositive($minMutPerRead));
     die "\n  [!] Error: Maximum number of mutations per read must be a positive INT >= 1\n\n" if (defined $maxMutPerRead && (!isint($maxMutPerRead) || !ispositive($maxMutPerRead)));
-    die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || !ispositive($minReadLen));
+    die "\n  [!] Error: Minimum read length must be a positive INT\n\n" if (!isint($minReadLen) || $minReadLen < 1);
     die "\n  [!] Error: Random subsample factor must be a positive INT >= 1\n\n" if (!isint($randSubsample) || !ispositive($randSubsample));
     die "\n  [!] Error: Minimum mutation rate must be comprised between 0 and 1\n\n" if (!inrange($minRate, [0, 1]));
     die "\n  [!] Error: Maximum mutation rate must be comprised between 0 and 1\n\n" if (!inrange($maxRate, [0, 1]));
@@ -318,10 +318,8 @@ elsif ($command eq "extract") {
             next if (!isint($row[1]) || !ispositive($row[1]));
             next if (!isint($row[2]) || !ispositive($row[2]));
 
-            die "\n  [!] Error: Duplicate entry ID \"" . $row[0] . "\" in BED annotation\n\n" if (exists $bedAnno{$row[0]});
-
-            $bedAnno{$row[0]} = { start => $row[1],
-                                  end   => $row[2] };
+            push(@{$bedAnno{$row[0]}}, { start => $row[1],
+                                         end   => $row[2] });
 
         }
         close($fh);
@@ -340,8 +338,7 @@ elsif ($command eq "extract") {
 
     foreach my $id ($mmIn->ids()) {
 
-        my ($realSeq, $sequence, $length, $start, 
-            $end);
+        my ($realSeq, $length, @regions);
         $realSeq = $mmIn->sequence($id);
         $length = length($realSeq);
 
@@ -354,31 +351,28 @@ elsif ($command eq "extract") {
 
             next if (!exists $bedAnno{$id});
 
-            $start = $bedAnno{$id}->{start};
-            $end = $bedAnno{$id}->{end};
+            foreach my $region (@{$bedAnno{$id}}) {
 
-            if ($end > $length) {
+                if ($region->{end} > $length) {
 
-                warn "\n  [!] Warning: End coordinate exceeds length for transcript \"$id\" (end: $end, length: $length)\n";
+                    warn "\n  [!] Warning: End coordinate exceeds length for transcript \"$id\" (end: " . $region->{end} . ", length: $length)\n";
 
-                next;
+                    $region->{end} = $length;
+
+                }
+
+                my ($regionLen, $regionSeq);
+                $regionLen = $region->{end} - $region->{start};
+
+                next if ($regionLen < $minReadLen);
+
+                $regionSeq = substr($realSeq, $region->{start}, $regionLen);
+                push(@regions, ["$id:" . $region->{start} . "-" . $region->{end}, $regionSeq, $region->{start}, $region->{end}]);
 
             }
 
-            $length = $end - $start;
-
-            next if ($length < $minReadLen);
-
-            $sequence = substr($realSeq, $start, $length);
-
         }
-        else {
-
-            $start = 0;
-            $end = $length;
-            $sequence = $realSeq;
-
-        }
+        else { push(@regions, [$id, $realSeq, 0, $length]); }
 
         # Blacklist all positions with mutation rates > maxRate or < minRate
         if ($minRate > 0 || $maxRate < 1) {
@@ -390,32 +384,37 @@ elsif ($command eq "extract") {
 
         }
 
-        $mmOut->append_transcript($id, $sequence);
+        foreach my $region (@regions) {
 
-        while (my @read = $mmIn->readStream($id)) {
+            $mmOut->append_transcript($region->[0], $region->[1]);
+            $mmIn->resetStream($id);
 
-            my ($readStart, $readEnd, @muts);
-            @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]};
-            @muts = grep { !exists $discardPos{$id}->{$_} } @muts;
-            @muts = grep { inrange($_, [$start, $end - 1]) } @muts;
+            while (my @read = $mmIn->readStream($id)) {
 
-            next if (@muts < $minMutPerRead);
-            next if (defined $maxMutPerRead && @muts > $maxMutPerRead);
-            next if ($read[1] < $start);
-            last if ($read[0] >= $end);
+                my ($readStart, $readEnd, @muts);
+                @muts = grep { substr($realSeq, $_, 1) =~ /^[$keepBases]$/ } @{$read[2]};
+                @muts = grep { !exists $discardPos{$id}->{$_} } @muts;
+                @muts = grep { inrange($_, [$region->[2], $region->[3] - 1]) } @muts;
 
-            $readStart = max($read[0], $start) - $start;
-            $readEnd = min($read[1], $end - 1) - $start;
+                next if (@muts < $minMutPerRead);
+                next if (defined $maxMutPerRead && @muts > $maxMutPerRead);
+                next if ($read[1] < $region->[2]);
+                last if ($read[0] >= $region->[3]);
 
-            next if ($minReadLen && $readEnd - $readStart + 1 < $minReadLen);
+                $readStart = max($read[0], $region->[2]) - $region->[2];
+                $readEnd = min($read[1], $region->[3] - 1) - $region->[2];
 
-            @muts = map { $_ - $start } @muts;
-           
-            next if ($randSubsample > 1 && int(rand($randSubsample)));
+                next if ($minReadLen && $readEnd - $readStart + 1 < $minReadLen);
 
-            $mmOut->append_read($readStart, $readEnd, scalar(@muts), \@muts);
+                @muts = map { $_ - $region->[2] } @muts;
+            
+                next if ($randSubsample > 1 && int(rand($randSubsample)));
 
-        }        
+                $mmOut->append_read($readStart, $readEnd, scalar(@muts), \@muts);
+
+            }  
+
+        }      
 
     }
 

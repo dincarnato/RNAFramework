@@ -26,7 +26,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO::Sequence;
@@ -385,15 +385,7 @@ sub extract {
                         my ($energy, $mean, $stdev, $zscore, @randEnergies);
                         $energy = RNA::energy_of_struct($sequence, $structure);
 
-                        # If there is a lonely pair, than lonely pairs are allowed
-                        $RNA::noLonelyPairs = 1 if ($structure !~ m/\.[\(\)]\./);
-
-                        for (1 .. $nShufflings) {
-
-                            push(@randEnergies, (RNA::fold($dinuclShuffle ? dishuffle($sequence) : nshuffle($sequence)))[1]);
-                            RNA::free_arrays();
-
-                        }
+                        push(@randEnergies, (RNA::fold_compound->new($dinuclShuffle ? dishuffle($sequence) : nshuffle($sequence))->mfe())[1]) for (1 .. $nShufflings);
 
                         $mean = mean(@randEnergies);
                         $stdev = stdev(@randEnergies);

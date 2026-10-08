@@ -36,7 +36,7 @@ sub new {
                    h5bases => [],
                    h3bases => [] }, \%parameters);
     
-    $self->_validate();
+    $self->_validate() if ($class eq "Data::Sequence::Structure::Helix");
     
     return($self);
     
@@ -46,26 +46,19 @@ sub _validate {
     
     my $self = shift;
 
-    $self->throw("5' helix start position must be a positive integer") if (!isint($self->{h5start}) ||
-                                                                           !ispositive($self->{h5start}));
-    $self->throw("5' helix end position must be a positive integer") if (!isint($self->{h5end}) ||
-                                                                         !ispositive($self->{h5end}));
-    $self->throw("3' helix start position must be a positive integer") if (!isint($self->{h3start}) ||
-                                                                           !ispositive($self->{h3start}));
-    $self->throw("3' helix end position must be a positive integer") if (!isint($self->{h3end}) ||
-                                                                         !ispositive($self->{h3end}));
-    $self->throw("5' helix bases must be provided as an ARRAY reference") if (ref($self->{h5bases}) ne "ARRAY");
-    $self->throw("3' helix bases must be provided as an ARRAY reference") if (ref($self->{h3bases}) ne "ARRAY");
+    for (qw(parents h5bases h3bases)) { $self->throw("$_ must be an ARRAY reference") if (ref($self->{$_}) ne "ARRAY"); }
+    
+    $self->throw("5' helix start position must be a positive integer") if (!isint($self->{h5start}) || !ispositive($self->{h5start}));
+    $self->throw("5' helix end position must be a positive integer") if (!isint($self->{h5end}) || !ispositive($self->{h5end}));
+    $self->throw("3' helix start position must be a positive integer") if (!isint($self->{h3start}) || !ispositive($self->{h3start}));
+    $self->throw("3' helix end position must be a positive integer") if (!isint($self->{h3end}) || !ispositive($self->{h3end}));
     $self->throw("5' and 3' helices have different base counts") if (@{$self->{h5bases}} != @{$self->{h3bases}});
-    $self->throw("Parents must be provided as an ARRAY reference") if (ref($self->{parents}) ne "ARRAY");
     
-    for (@{$self->{parents}}) { $self->throw("Parents must be positive integers (Parent: " . $_ . ")") if (!isint($_) ||
-                                                                                                           !ispositive($_)); }
+    for (@{$self->{parents}}) { $self->throw("Parents must be positive integers (Parent: $_)") if (!isint($_) || !ispositive($_)); }
     
-    for (@{$self->{h5bases}}) { $self->throw("5' helix bases must be positive integers (Position: " . $_ . ")") if (!isint($_) ||
-                                                                                                                   !ispositive($_));}
-    for (@{$self->{h3bases}}) { $self->throw("3' helix bases must be positive integers (Position: " . $_ . ")") if (!isint($_) ||
-                                                                                                                   !ispositive($_));}
+    for (@{$self->{h5bases}}) { $self->throw("5' helix bases must be positive integers (Position: $_)") if (!isint($_) || !ispositive($_));}
+    for (@{$self->{h3bases}}) { $self->throw("3' helix bases must be positive integers (Position: $_)") if (!isint($_) || !ispositive($_));}
+
     @{$self->{h5bases}} = sort {$a <=> $b} @{$self->{h5bases}};
     @{$self->{h3bases}} = sort {$b <=> $a} @{$self->{h3bases}};
 

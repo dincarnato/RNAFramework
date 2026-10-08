@@ -25,44 +25,48 @@ use RNA::Utils;
 use base qw(Data::IO);
 
 sub new {
-    
+
     my $class = shift;
     my %parameters = @_;
-    
+
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ format            => "AUTO",
                    nrows             => 100,
-                   checkDuplicateIds => 0,
+                   checkDuplicateIds => 1,
                    maskIUPAC         => 0,
                    _offsets          => [],
+                   _pos              => -1,
                    _pack             => undef,
                    _index            => {},
                    _lastid           => 1 }, \%parameters);
 
     if ($class =~ m/^Data::IO::Sequence::\w+$/) {
-    
+
         $self->_openfh();
-        
+
         return($self);
-        
+
     }
     else {
-        
+
         my ($module, $object);
-        
+
         $self->_validate();
         $self->_loadformat();
-        $module = ref($self) . "::" . $self->{format};
+
+        if (defined $self->{format}) { $module = ref($self) . "::" . $self->{format}; }
+        else { $module = "Data::IO"; }
+
         $object = $module->new(%parameters);
-        
+
         return($object);
-        
+
     }
-    
+
 }
 
 sub _validate {
-    
+
     my $self = shift;
 
     $self->SUPER::_validate();
@@ -71,13 +75,13 @@ sub _validate {
     $self->throw("Number of rows must be a positive integer > 0") if (!ispositive($self->{nrows}) ||
                                                                       !isint($self->{nrows}) ||
                                                                       !$self->{nrows});
-    
+
 }
 
 sub _loadformat {
-    
+
     my $self = shift;
-    
+
     $self->_fixformat();
     $self->{format} = $self->_findformat() if ($self->{format} eq "AUTO");
 
@@ -92,13 +96,15 @@ sub _loadformat {
 }
 
 sub _findformat {
-    
+
     my $self = shift;
 
     my ($format, $fastalike, @rows);
     $fastalike = 0;
-    
-    # Read nrows lines from the file
+
+    # Read nrows lines from the file. The handle is read one line at a time on
+    # purpose: reading it in list context would slurp the whole file before the
+    # loop could stop, which is not viable on a multi-GB FASTA
     open(my $fh, "<", $self->{data});
     while(my $line = <$fh>) {
 
@@ -107,56 +113,56 @@ sub _findformat {
         $self->throw("File contains unsupported line endings (\"\\r\")") if ($line =~ m/\r/);
 
         next unless($line);
-        
+
         push(@rows, $line);
 
         last if (@rows > $self->{nrows});
 
     }
     close($fh);
-    
+
     for(my $i = 0; $i < @rows; $i++) {
-        
+
         my $line = $rows[$i];
-        
+
         if ($fastalike) {
-            
+
             if (isseq($line, "-")) {
-                
+
                 $format = "Fasta";
-                
+
                 if ($i + 1 < @rows) {
-                    
+
                     my $line2 = $rows[$i+1];
                     $line2 =~ s/\s*\(\s*[\+-]?\d+\.\d+\)$//; # In case is Vienna format and free energy is appended to structure
                     $line2 =~ s/^\s*|\s*$//g;
 
                     $format = "Vienna" if (isdotbracket($line2));
-                
+
                 }
-                
+
             }
             else { $fastalike = 0; }
 
         }
         else {
-            
+
             if ($line =~ m/^>/) { $fastalike = 1; }
             else {
-                
+
                 my @line = split(" ", $line);
-                
+
                 $format = "CT" if (@line == 6 && isna($line[1]) && length($line[1]) == 1 &&
                                    isint($line[0]) && ispositive($line[0]) && $line[0] >= 1 &&
                                    $line[2] == $line[0] - 1 && $line[3] == $line[0] + 1 && $line[5] == $line[0] &&
                                    isint($line[4]) && ispositive($line[4]));
-                
+
             }
-            
+
         }
-        
+
         last if (defined $format);
-        
+
     }
 
     # Unable to guess, falling back to guess from extension
@@ -172,26 +178,77 @@ sub _findformat {
     }
 
     return($format);
-    
+
 }
 
 sub _fixformat {
-    
+
     my $self = shift;
-    
+
     $self->{format} = "Fasta" if ($self->{format} =~ m/^fasta$/i);
     $self->{format} = "Vienna" if ($self->{format} =~ m/^vienna$/i);
     $self->{format} = "CT" if ($self->{format} =~ m/^c(?:onnectivity)?t(?:able)?$/i);
     $self->{format} = "AUTO" if ($self->{format} =~ m/^auto$/i);
-    
+
+}
+
+#
+# Records the offset of a record and returns its position in the offset table.
+#
+# Offsets are discovered in ascending order, so the table is sorted by
+# construction and an already-seen record can be located by binary search, with
+# no auxiliary structure to keep in memory. Re-sorting the whole index on every
+# already-seen record, as was done previously, makes re-reading a file
+# quadratic in the number of records.
+#
+# $entry is the value stored in the ID index. Every reader uses the same
+# { offset => ..., length => ... } shape, so the index can be serialized to a
+# FASTA index (.fai) file regardless of which reader built it.
+#
+sub _indexOffset {
+
+    my ($self, $offset, $id, $entry) = @_;
+
+    my $offsets = $self->{_offsets};
+
+    $entry = { offset => $offset } if (!defined $entry);
+    $self->{_index}->{$id} = $entry if (!exists $self->{_index}->{$id});
+
+    if (@{$offsets} && $offset <= $offsets->[-1]) {
+
+        my ($lo, $hi) = (0, $#{$offsets});
+
+        while ($lo < $hi) {
+
+            my $mid = int(($lo + $hi) / 2);
+
+            if ($offsets->[$mid] < $offset) { $lo = $mid + 1; }
+            else { $hi = $mid; }
+
+        }
+
+        return($lo) if ($offsets->[$lo] == $offset);
+
+        # An arbitrary seek() landed mid-file on an offset that had not been
+        # seen before: insert it in place, so the table stays sorted
+        splice(@{$offsets}, $lo, 0, $offset);
+
+        return($lo);
+
+    }
+
+    push(@{$offsets}, $offset);
+
+    return($#{$offsets});
+
 }
 
 sub format {
-    
+
     my $self = shift;
-    
+
     return($self->{format});
-    
+
 }
 
 1;

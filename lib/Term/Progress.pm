@@ -1,7 +1,7 @@
 package Term::Progress;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Term::Constants qw(:screen :colors);
 use Term::Utils;
@@ -29,7 +29,7 @@ sub new {
                    _updateN   => 0,
                    _lastRow   => undef,
                    _lastCol   => undef,
-                   _istty     => undef }, \%parameters);
+                   _isFg      => undef }, \%parameters);
 
     $self->_validate();
 
@@ -55,7 +55,7 @@ sub _validate {
 
     }
 
-    $self->{_istty} = -t STDOUT;
+    $self->{_isFg} = isForeground();
 
     binmode(STDOUT, "encoding(UTF-8)");
     select((select(STDOUT), $|=1)[0]);
@@ -72,7 +72,7 @@ sub init {
     $self->{_status} = " " . $status if (defined $status);
 
     print CLRRET . "|" . (" " x $self->{width}) . "|";
-    ($self->{_lastRow}, $self->{_lastCol}) = getCursorPos() if ($self->{_istty});
+    ($self->{_lastRow}, $self->{_lastCol}) = getCursorPos() if ($self->{_isFg});
     print $self->{_status} . " (Done: 0.00\%" . ($self->{showETA} ? "; ETA: unknown)" : ")");
 
 }
@@ -85,8 +85,7 @@ sub update {
 
     return if ($self->{_complete});
 
-    my ($time, $timePerEvent, $timeLeft, $done,
-        $blocks, $spaces, $percentage, $color);
+    my ($time, $done, $blocks, $spaces, $color);
     $self->{_status} = " " . $status if (defined $status);
     $self->{_residual} -= $increment;
     $done = $self->{max} - $self->{_residual};
@@ -97,13 +96,25 @@ sub update {
 
     return if ($time - $self->{_upTime} < $self->{updateTime} && $done < $self->{max});
 
-    $timePerEvent = $done ? ($time - $self->{_time}) / $done : 0;
-    $timeLeft = $self->{_residual} * $timePerEvent;
-    $percentage = min(100, $done / $self->{max} * 100);
     $blocks = round(min($self->{width}, $done / $self->{max} * $self->{width}));
     $spaces = " " x ($self->{width} - round($blocks));
     $blocks = Term::Constants::BLOCK x $blocks;
-    
+    $color = $self->_getColor();
+
+    print CLRRET . "|" . $color . $blocks . RESET . $spaces . "|" . $self->{_status} . " (Done: " . $color . sprintf("%.2f", $self->_getPercentDone()) . "\%" . RESET . ($self->{showETA} ? "; ETA: " . formatTime($self->_getETA()) . ")" : ")");
+
+    $self->{_upTime} = time();
+
+}
+
+sub _getColor {
+
+    my $self = shift;
+
+    my ($percentage, $color);
+    $percentage = $self->_getPercentDone();
+    $color = WHITE;
+
     if ($self->{colored}) {
 
         if ($percentage <= 20) { $color = RED; }
@@ -114,11 +125,34 @@ sub update {
         else { $color = GREEN; }
 
     }
-    else { $color = WHITE; }
 
-    print CLRRET . "|" . $color . $blocks . RESET . $spaces . "|" . $self->{_status} . " (Done: " . $color . sprintf("%.2f", $percentage) . "\%" . RESET . ($self->{showETA} ? "; ETA: " . formatTime($timeLeft) . ")" : ")");
+    return($color);
 
-    $self->{_upTime} = time();
+}
+
+sub _getETA {
+
+    my $self = shift;
+
+    my ($done, $time, $timePerEvent, $timeLeft);
+    $time = time();
+    $done = $self->{max} - $self->{_residual};
+    $timePerEvent = $done ? ($time - $self->{_time}) / $done : 0;
+    $timeLeft = $self->{_residual} * $timePerEvent;
+
+    return($timeLeft);
+
+}
+
+sub _getPercentDone {
+
+    my $self = shift;
+
+    my ($done, $percentage);
+    $done = $self->{max} - $self->{_residual};
+    $percentage = min(100, $done / $self->{max} * 100);
+
+    return($percentage);
 
 }
 
@@ -160,10 +194,13 @@ sub status {
 
     if (defined $self->{_lastRow} && defined $self->{_lastCol}) {
 
+        my $color = $self->_getColor();
+
         setCursorPos($self->{_lastRow}, $self->{_lastCol});
 
         print CLRTOEND;
         print " " . $status if (defined $status);
+        print " (Done: " . $color . sprintf("%.2f", $self->_getPercentDone()) . "\%" . RESET . ($self->{showETA} ? "; ETA: " . formatTime($self->_getETA()) . ")" : ")");
 
     }
 

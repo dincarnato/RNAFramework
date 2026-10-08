@@ -2,7 +2,7 @@ package Align::SmithWaterman;
 
 use strict;
 use Align::Alignment;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 

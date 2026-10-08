@@ -1,3 +1,104 @@
+## [2.9.8] - 2026-10-05
+### Added
+- Added rf-covalign, porting of the cm-builder program, to iteratively build and refine structure-informed alignments of homologous sequences, and to evaluate the statistical support of the predicted base-pairs by covariation analysis. The program wraps Infernal (cmbuild/cmcalibrate/cmsearch/cmalign) and R-scape, and implements:
+	- iterative homology search, driven either by bit score (-T, --bitScore and -I, --iterativeBitScoreIncrease) or by E-value (-U, --useEvalue, -E, --evalue and -D, --iterativeEvalueDecrease)
+	- data-driven estimation of the search noise level on decoy sequences (-N, --noiseEstimate, -ds, --decoySize and -md, --minDecoySize)
+	- grouping of multiple motifs into a single model (-gm, --groupMotifs), motif extension (-em, --enlargeMotif), and search on genomic sequences (-g, --onGenome)
+	- selection of the base-pairs to retain on the basis of R-scape per-pair or helix-aggregated E-values (-e, --rscapeEvalue and -a, --useHelixAggregatedEvalue), optionally retaining compatible pairs (-cp, --includeCompatiblePairs), or skipping R-scape altogether (-r, --skipRscape)
+	- generation of colored (-ca, --coloredAln) and HTML alignments, both in light and dark theme (-da, --darkAln)
+- Added the -ua (--use-alifold) parameter to rf-fold, which de facto ports the consensusFold approach. When enabled, both the partition function and the MFE folding steps are performed with RNAalifold, restrained with the reactivity profiles of all the replicates at once to yield a single consensus structure, instead of folding each replicate individually with RNAfold and aggregating the resulting base-pairs (note: this does not affect pseudoknots detection, and a single slope/intercept pair is allowed)
+- Added the -gr (--gradient) parameter to rf-fold, to color the bases of the secondary structure plots on a continuous reactivity gradient, instead of using discrete reactivity bins
+- Secondary structure plots are now drawn natively by rf-fold, hence their generation no longer requires the ViennaRNA RNAplot executable
+- The core of rf-motifdiscovery has been entirely rewritten and it now mimics the DREME algorithm (PMID: [21543442](https://pubmed.ncbi.nlm.nih.gov/21543442/)). Instead of simply reporting the most significantly enriched k-mer and its degenerate consensus, the program now, at each iteration: (i) counts the words of every searched width in both the positive and the negative sequence set, (ii) takes the most significant ones as seeds, and iteratively generalizes them into degenerate IUPAC regular expressions, one additional ambiguous position at a time, (iii) attempts to extend the best regular expression, by searching its flanks for a secondary enriched element, (iv) greedily refines it by single-symbol replacements, retaining only those that improve on their parent, and (v) erases its occurrences from the positive sequences, before searching for the next motif. Motif significance is now assessed on E-values, and enrichments are evaluated by a one-tailed Fisher's exact test computed in log space, to avoid the numerical underflow affecting strongly enriched motifs. Several novel parameters have been implemented:
+	- -mk (--min-kmer) and -xk (--max-kmer), to search every k-mer width in a range and report the best-scoring one (the previous behavior, a single fixed width, is retained by specifying -k)
+	- -mw (--max-width), to control the width a motif can be extended to when a secondary enriched element is found in its flanks
+	- -ng (--n-generalize) and -nf (--n-refine), to control respectively the number of regular expressions carried to the next generalization level, and the number retained at each greedy refinement step
+	- -nog (--no-generalize), to report the best k-mer as-is, without generalizing or refining it
+	- -co (--count-occurrences), to count every occurrence of a k-mer, rather than the number of sequences containing it
+- Added generation of sequence logos for the reported motifs to rf-motifdiscovery
+- Added support for multiple regions per transcript to the -a (--annotation) parameter of rf-mmtools extract (previously, only one region per transcript could be specified). Extracted regions are now reported as individual transcripts, named "&lt;transcript&gt;:&lt;start&gt;-&lt;end&gt;"
+- Added support for indexing of FASTA and Vienna (dot-bracket) files. When a FASTA index (.fai) file is present alongside the sequence/structure file, it is automatically used to enable random access by transcript ID, without loading the whole file
+- Added the -4d (--four-base-dms) parameter to rf-norm, to enable four-base DMS analysis (PMID: [37334863](https://pubmed.ncbi.nlm.nih.gov/37334863/)). Unlike SHAPE reagents, DMS strongly prefers A and C residues, but it also modifies U-N3 and G-N1 in a structurally informative way, albeit at substantially lower rates. As the intrinsic reactivity of the four bases differs by more than an order of magnitude, a single normalization factor calculated across the whole transcript is dominated by A/C residues, and the U/G signal is compressed towards zero. This parameter implies "-nm 4 -ni -mn 0.002", hence:
+	- each reactive base is normalized independently, so that reactivities at all four nucleotides are brought onto a comparable scale
+	- the Mitchell et al., 2023 normalization method is used
+	- a minimum normalization factor of 0.002 is enforced (see -mn below)
+	- the Siegfried scoring method is selected, unless a scoring method has been explicitly specified (note: only the Siegfried and Zubradt methods are supported, as the Mitchell normalization requires mutational profiling data)
+- Added the -mn (--min-norm-factor) parameter to rf-norm, to discard poorly modified bases when using the Mitchell et al., 2023 normalization method (-nm 4). When a base is poorly modified (for instance, due to insufficient buffering capacity), its normalization factor becomes vanishingly small, and dividing by it would turn noise into seemingly structural signal. Any base whose normalization factor falls below this threshold is reported as NaN across the entire normalization window, and the total number of masked windows per base is summarized at the end of the run. No threshold is applied unless this parameter (or -4d) is specified
+- Added the -ni (--norm-independent) parameter to rf-normfactor, to calculate one normalization factor per reactive base, instead of a single factor across all of them. Bases for which no factor could be calculated are reported as "NA" in the output file, and are left to rf-norm to normalize per transcript. When -rn (--run-norm) is enabled, the factors are handed over to rf-norm as a per-base list, and -ni is propagated
+- Added support for the Mitchell et al., 2023 normalization method (-nm 4) to rf-normfactor, along with the -mn (--min-norm-factor) parameter, which prevents bases whose normalization factor falls below the specified value from being passed on to rf-norm
+- Added the -4d (--four-base-dms) parameter to rf-count, a preset for the counting stage of four-base DMS experiments (PMID: 37334863), implying "-m -om H2N,G2Y -ncl". Only G->C/G->T mismatches are retained on G residues, as G->A reports the structurally uninformative G-N7 modification, while G-N1 is preferentially read out as G->C/G->T, whereas all mismatches are retained on A/C/T residues. Insertions and deletions are discarded, as with any -om run. Note that this parameter governs the counting stage only: the matching normalization is enabled by the homonymous rf-norm parameter
+
+### Changed
+- Removed the rf-modcall module
+- Extended the -nf (--norm-factor) parameter of rf-norm to accept one normalization factor per reactive base, provided as a "<base>:<factor>" list (e.g. "A:0.03,C:0.02,G:0.001,T:0.004"), or, for 90% Winsorizing, as a "<base>:<5th>:<95th>" list (e.g. "A:0:0.308,C:0:0.257"). Per-base factors are supported by all four normalization methods and require -ni (--norm-independent), as the factor of one base cannot be meaningfully applied to another. Any reactive base left out of the list keeps being normalized independently for each transcript, hence a partial list is allowed. The previous single-factor forms are unchanged, and cannot be combined with -ni
+- Fixed an issue in rf-norm causing the Mitchell normalization method (-nm 4) to crash whenever a transcript (or window, or individual base when -ni is specified) had fewer than 2 raw reactivities > 0.001. The index of the 75th percentile of that subset was clamped to 1 rather than to 0, hence reading past the end of the list and handing an undefined value to max()
+- Fixed an issue in rf-norm causing the Mitchell normalization method (-nm 4) to report transcripts (or windows) covering < 10 reactive bases as NaN, even when a normalization factor was provided via -nf. This aligns method 4 to the behavior of the other three normalization methods, for which the issue had been fixed in v2.9.7
+- Changes to rf-fold parameters:
+	- -KT (--keep-tmp) has been removed. Temporary files are now always removed on exit
+	- -vrp (--vienna-rnaplot) has been removed, as secondary structure plots are no longer generated via RNAplot
+	- -ksl (--pseudoknot-slope) and -kin (--pseudoknot-intercept) have been removed. Pseudoknots are now always predicted using the same slope and intercept used for the MFE folding
+- Changes to rf-motifdiscovery parameters:
+	- -b (--peaks) is now -r (--regions), and -nb (--negative-peaks) is now -nr (--negative-regions)
+	- -v (--pvalue) has been replaced by -e (--evalue), as motif significance is now assessed on E-values
+	- -ops (--one-per-seq) has been removed, as counting each k-mer only once per sequence is now the default behavior (see -co, --count-occurrences)
+	- -c (--consTollerance) is now -ct (--consTolerance)
+	- the long form of -ns is now --nuc-shuffling (previously, the help reported --nuc-shuffling, while only --nucl-shuffling was accepted)
+- Removed the -vrf (--vienna-rnafold) parameter of rf-mutate, as folding is now performed via the ViennaRNA Perl bindings
+- rf-mutate has been rewritten. Mutants and rescues are now generated through a shared in/out queue consumed by the worker threads, instead of threads-shared hashes, the program no longer changes working directory (hence no temporary folder is created), and progress is now reported via a progress bar
+- Migrated rf-duplex, rf-mutate and rf-structextract from the deprecated ViennaRNA global variable interface ($RNA::fold_constrained, $RNA::noLonelyPairs) to the RNA::fold_compound object-oriented interface
+- Substantial speed-up of rf-count and rf-count-genome:
+	- the reference-to-read coordinate mapping (previously ref2read(), now refToRead()) no longer builds a hash of every aligned base of every read, but a compact table of the aligned blocks, which is then queried on demand
+	- median read quality is now computed by medianQual(), which avoids the numeric validation performed by Core::Mathematics::median()
+	- the per-base coverage update loops no longer go through map()
+- Substantial speed-up of the rf-duplex clustering step, by inlining the k-means distance function (previously, each call performed 12 sub calls, 6 array slices and 4 anonymous array references to do arithmetic on 8 integers)
+- Substantial speed-up of rf-compare reference/query structure import, which is now handled by a single sub for both
+- Sample names are now derived from input BAM/SAM files in rf-count by stripping only the .bam/.sam extension, instead of any extension (previously, dots in filenames resulted in truncated sample names)
+- Fixed an issue in rf-normfactor causing the -rb (--reactive-bases) parameter to be ignored (the IUPAC-expanded list of reactive bases was computed, but never assigned)
+- Fixed an issue in rf-jackknife causing the program to crash when a test structure file could not be parsed. Such transcripts are now reported as NaN
+- Fixed an issue in rf-jackknife causing the program to proceed without input XML folders/files
+- Changed the separator used by rf-json2rc to build the output file IDs from ":" to "_", as colons are not allowed in filenames on all filesystems
+- Fixed an issue in rf-norm causing the "denatured sample is ignored" warning not to be reported when no Siegfried normalization was requested
+- Progress bars are now automatically disabled when the program is not running in the foreground. Previously, a program started as a background job (e.g., with "&") would be stopped by the kernel (SIGTTOU/SIGTTIN) when the progress bar tried to query the cursor position
+
+### API changes
+- Added the normIndependent and minNormFactor attributes to the data tag of rf-norm XML files, respectively reporting whether each reactive base has been normalized independently, and the minimum normalization factor (the latter only when set). Both are now checked by rf-combine, which refuses to combine profiles normalized with different settings
+- Added the normIndependent() and minNormFactor() methods to RF::Data::IO::XML
+- Added aspectRatio to Graphics::Chart to preserve the proportions of the charts
+- Added the Graphics::RNA module, to generate SVG secondary structure plots (with optional overlaid per-base values), and the accessory Graphics::RNA::Utils module, which implements the "radiate" and "NAview" structure layout algorithms, as well as the detection of overlapping elements. This removes the dependency on ViennaRNA RNAplot for the generation of secondary structure plots
+- Added the Graphics::SeqLogo module, to generate SVG sequence logos from a set of aligned sequences, or from a TRANSFAC matrix
+- Added the Interface::Infernal module, to interface with the Infernal suite (cmbuild, cmcalibrate, cmsearch, cmalign and cmemit)
+- Added the Interface::Rscape module, to interface with R-scape, along with the accessory Interface::Rscape::Results and Interface::Rscape::Results::Helix modules to parse and query its output
+- Added the Data::IO::Sequence::FastaLike base module, which implements FASTA-index (.fai) based random access, index building and line-metrics detection. Both Data::IO::Sequence::Fasta and Data::IO::Sequence::Vienna now inherit from it
+- Added the subopt() method to Interface::ViennaRNA, to generate suboptimal structures with RNAsubopt (supporting stochastic sampling, energy ranges and Zuker's suboptimal structures)
+- Added support for folding constraints to the alifold() method of Interface::ViennaRNA via the "constraint" and "enforceConstraint" parameters
+- Fixed an issue in Interface::ViennaRNA causing fold() to return a structure made entirely of unpaired bases when RNAfold failed
+- Fixed an issue in Interface::ViennaRNA::_makeShapeFile() causing the caller's reactivity array to be modified in place
+- Fixed an issue in Interface::ViennaRNA causing dot plot files to be removed before being parsed when the temporary directory and the current working directory were the same
+- Fixed an issue in Interface::ViennaRNA causing consensus structures with a negative SCI not to be parsed
+- Temporary file handling in Interface::ViennaRNA has been simplified. Output files are now deterministically named after the object's random ID and cleaned up unconditionally
+- Added the logDir parameter (and the logDir() and \_writeLogs() methods) to Interface::Generic, to allow interface modules to log the output of the wrapped executables. \_makeTmpDir() has been generalized into \_makeDir()
+- Added the isForeground() function to Term::Utils, to test whether the calling process belongs to the terminal's foreground process group (-t STDOUT alone is not sufficient, as a background job still has the terminal as its STDOUT)
+- Core::Mathematics now exports all of its functions by default
+- Core::Mathematics validation can now be globally disabled by setting the RF_NOVALIDATE environment variable (or $Core::Mathematics::NOVALIDATE), for use in performance-critical loops
+- Renamed Core::Mathematics::percentage2frequency() to percent2freq()
+- Core::Mathematics::isint() and isnumeric() no longer go through isreal(), and now test the values directly via Scalar::Util::looks_like_number()
+- Core::Utils now imports Core::Mathematics with an empty import list, to break the circular import between the two modules
+- Added the logfact() and logFisher() functions to Core::Statistics, implementing a cached log-factorial (with a precomputed Lanczos gamma approximation) and a numerically stable one-tailed Fisher's exact test in log space, for use on large contingency tables
+- Added the \_binomialPmf() function to Core::Statistics
+- Added the fullId() method to Data::Sequence, which returns the full, unparsed sequence header. The gi(), gb(), accession(), version(), locus() and name() methods, along with the corresponding GenBank header parsing, have been removed
+- Removed the probability(), shannon(), score() and ratio() methods of RF::Data::IO::XML, which were never populated
+- Substantial speed-up of record indexing in Data::IO::Sequence. Record offsets are now stored in an ordered table and looked up by binary search through the new \_indexOffset() method, instead of re-sorting the whole index every time an already-seen record was encountered (which made re-reading a file quadratic in the number of records)
+- Data::IO::back() now steps back through the record offset table of sequence readers, instead of through the stack of previously visited offsets
+- The checkDuplicateIds parameter of Data::IO::Sequence now defaults to 1
+- Added RNA::Utils::\_checkStructure(), to validate a sequence/structure pair once, instead of validating it in each individual function
+- RNA::Utils::rnapair() now tests the base pair against a lookup table, instead of a regular expression, and listpairs()/noncanonical() now evaluate each base pair only once
+- Substantial speed-up of index loading in RF::Data::IO::RC, which is now read in a single pass and decoded from memory, instead of performing three reads per entry
+- Added the \_header() method to RF::Data::IO::MM and the \_dataOffsets() method to RF::Data::IO::RC, to cache the per-transcript header and data addresses on first access
+- RF::Data::IO::MM, RF::Data::IO::NRC and RF::Data::IO::RC now check that the provided file has the expected extension
+- Term::Progress and Term::Progress::Multiple now test for the foreground process group via Term::Utils::isForeground(), rather than for a TTY. Percentage, ETA and color computation have been factored out into the \_getPercentDone(), _getETA() and \_getColor() methods
+- Added the max() method to Term::Progress::Multiple
+- Data::Sequence::Structure::Helix now only validates when instantiated directly, and not when instantiated by a subclass
+
 ## [2.9.7] - 2026-06-03
 ### Added
 - Added the --maxMutPerRead parameter to rf-mmtools extract to filter out reads having &gt; than a user-defined number of mutations

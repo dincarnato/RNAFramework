@@ -3,7 +3,7 @@
 ##
 # RF Compare
 # RNA Framework [http://www.rnaframework.com]
-#    
+#
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
 # Summary: Compares inferred secondary structures to a set of reference structures
 #
@@ -24,7 +24,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO;
 use Data::IO::Sequence;
@@ -39,15 +39,17 @@ use Term::Progress;
 
 $|++;
 
-my ($input, $reference, $help, $relaxed, 
-    $kp, $kl, $img, $threads, $output, 
-    $overwrite, $ignoreseq, $nRefs, $R, 
+my ($input, $reference, $help, $relaxed,
+    $kp, $kl, $img, $threads, $output,
+    $overwrite, $ignoreseq, $nRefs, $R,
     $tmpDir, @pool);
 my $progressBar : shared;
 my @files : shared;
 my @results : shared;
 my %results : shared;
 my %reference : shared;
+my %query : shared;
+my $importDir : shared;
 
 %results = ( compared      => 0,
              ioerr         => 0,
@@ -55,10 +57,10 @@ my %reference : shared;
              missingstruct => 0 );
 
 do {
-    
+
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"               => \$help,      
+    GetOptions( "h|help"               => \$help,
                 "r|reference=s"        => \$reference,
                 "x|relaxed"            => \$relaxed,
                 "kp|keep-pseudoknots"  => \$kp,
@@ -71,7 +73,7 @@ do {
                 "R|R-path=s"           => \$R ) or help(1);
 
     $input = $ARGV[0];
-                
+
 };
 
 help() if ($help);
@@ -101,15 +103,15 @@ print "\n[+] Making output directory...";
 if (-e $output) {
 
     if ($overwrite) {
-        
+
         my $error = rmtree($output);
-    
-        die "\n\n  [!] Error: " . $error . "\n\n" if ($error); 
-        
+
+        die "\n\n  [!] Error: " . $error . "\n\n" if ($error);
+
     }
     else { die "\n\n  [!] Error: Output directory already exists." .
                 "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
-    
+
 }
 
 if (my $error = mktree($tmpDir, "755")) { die "\n\n  [!] Error: Unable to create output directory ($error)\n\n"; }
@@ -119,67 +121,33 @@ $progressBar = shared_clone(Term::Progress->new( max     => 1,
                                                  width   => 50,
                                                  colored => 1 ));
 
-print "\n[+] Importing reference structure file(s)...\n\n";
+importStructures($reference, \%reference, "reference");
 
-if (-d $reference) { # Directory of structure files
+die "\n  [!] Error: No reference structure imported\n\n" if (!keys %reference);
 
-    opendir(my $dh, $reference) or die "\n\n  [!] Error: Unable to read reference structure files from directory\n\n";
-    while(my $file = readdir($dh)) {
+importStructures($input, \%query, "query");
 
-        next if ($file !~ m/\.(?:db|ct)$/);
-
-        push(@files, $file);
-
-    }
-    closedir($dh);
-
-    $nRefs = scalar(@files);
-    $progressBar->max($nRefs);
-    $progressBar->init();
-
-    @pool = map{ threads->create(\&import) } 1 .. $threads;
-    $_->join() for (@pool);
-
-    undef(@pool);
-
-    die "\n\n  [!] Error: Specified reference folder doesn't contain any structure file\n\n" unless(keys %reference);
-
-}
-else { # Single structure file
-
-    die "\n\n  [!] Error: Provided reference file lacks .db or .ct extension\n\n" if ($reference !~ m/\.(?:db|ct)$/);
-
-    my $io = Data::IO::Sequence->new( file        => $reference,
-                                      lonelypairs => $kl,
-                                      pseudoknots => $kp );
-    while(my $entry = $io->read()) { 
-
-        die "\n\n  [!] Error: Duplicate reference structure ID \"" . $entry->id() . "\"\n\n" if (exists $reference{$entry->id()});
-
-        $reference{$entry->id()} = shared_clone({ sequence  => dna2rna($entry->sequence()),
-                                                  structure => $entry->structure() }) if ($entry->can("structure"));
-        print CLRRET . "[+] Importing structure file(s) [" . scalar(keys %reference) . " imported]";
-
-    }
-    
-}
-
-die "\n\n  [!] Error: No structure file imported\n\n" if (!keys %reference);
-
-print "\n\n[+] Comparing transcript structures...\n\n";
+die "\n  [!] Error: No query structure imported\n\n" if (!keys %query);
 
 $nRefs = scalar(keys %reference);
 $progressBar->reset();
 $progressBar->max($nRefs);
-$progressBar->init();
+$progressBar->init("Comparing transcript structures");
 
 @pool = map{ threads->create(\&compare) } 1 .. $threads;
-$_->join() for (@pool);
+
+for my $thread (@pool) {
+
+    $thread->join();
+
+    die "\n\n  [!] Error: " . $thread->error() . "\n\n" if ($thread->error());
+
+}
 
 print "\n";
 
 if ($results{compared}) {
-    
+
     my ($table, $top, @median);
     $top = min(10, $results{compared});
     $table = Term::Table->new(indent => 2);
@@ -204,7 +172,7 @@ if ($results{compared}) {
     print $wh join("\t", "Transcript", "PPV", "Sensitivity", "FMI", "mFMI") . "\n";
     print $wh join("\t", @$_) . "\n" for (sort {$a->[0] cmp $b->[0]} @results);
     close($wh);
-    
+
 }
 
 $results{missingstruct} = 1 unless (sum(values %results));
@@ -220,36 +188,139 @@ print "\n[+] Comparison statistics:\n" .
 
 print "\n\n[+] All done.\n\n";
 
-sub import {
+# Imports structures from either a directory of structure files or a single file
+# holding any number of structures, into the provided shared hash keyed by
+# structure ID. Both the reference and the query set go through here, so a file
+# containing multiple structures is accepted for either of them.
+sub importStructures {
+
+    my ($path, $target, $label) = @_;
+
+    my (@pool);
+
+    if (-d $path) { # Directory of structure files
+
+        $path =~ s/\/?$/\//;
+
+        opendir(my $dh, $path) or die "\n\n  [!] Error: Unable to read " . $label . " structure files from directory\n\n";
+        while(my $file = readdir($dh)) {
+
+            next if ($file !~ m/\.(?:db|ct)$/);
+
+            push(@files, $file);
+
+        }
+        closedir($dh);
+
+        die "\n\n  [!] Error: Specified " . $label . " folder doesn't contain any structure file\n\n" if (!@files);
+
+        $importDir = $path;
+
+        $progressBar->reset();
+        $progressBar->max(scalar(@files));
+        $progressBar->init("Importing $label structures");
+
+        @pool = map { threads->create(\&_import, $target, $label) } 1 .. $threads;
+        
+        for my $thread (@pool) {
+
+            $thread->join();
+
+            die "\n\n  [!] Error: " . $thread->error() . "\n\n" if ($thread->error());
+
+        }
+
+        undef(@pool);
+
+    }
+    else { # Single file, possibly holding multiple structures
+
+        my ($io, $size);
+        $io = Data::IO::Sequence->new( file        => $path,
+                                       lonelypairs => $kl,
+                                       pseudoknots => $kp );
+
+        # The number of structures in the file is not known in advance, so the
+        # bar tracks how much of the file has been consumed rather than how many
+        # records have been read
+        $size = -s $path;
+
+        $progressBar->reset();
+        $progressBar->max($size);
+        $progressBar->init("Importing $label structures");
+
+        while(my $entry = $io->read()) {
+
+            die "\n\n  [!] Error: Provided $label file does not look like a valid dot-bracket/CT file\n\n" if (!$entry->can("structure"));
+
+            _addStructure($target, $entry, $label);
+
+            $progressBar->setValue($io->tell());
+
+        }
+
+        $progressBar->complete();
+
+    }
+
+    print "\n";
+
+    return(scalar(keys %{$target}));
+
+}
+
+sub _import {
+
+    my ($target, $label) = @_;
 
     while(1) {
 
         my ($file, $io);
 
         { lock(@files);
-          
+
           if (@files) { $file = shift(@files); } }
 
         last unless($file);
 
-        my $io = Data::IO::Sequence->new( file        => "$reference/$file",
-                                          lonelypairs => $kl,
-                                          pseudoknots => $kp );
-        while(my $entry = $io->read()) { 
-            
-            lock(%reference);
+        $io = Data::IO::Sequence->new( file        => $importDir . $file,
+                                       lonelypairs => $kl,
+                                       pseudoknots => $kp );
 
-            die "\n\n  [!] Error: Duplicate reference structure ID \"" . $entry->id() . "\"\n\n" if (exists $reference{$entry->id()});
+        while(my $entry = $io->read()) {
 
-            $reference{$entry->id()} = shared_clone({ sequence  => dna2rna($entry->sequence()),
-                                                      structure => $entry->structure() }) if ($entry->can("structure")); 
-            
+            lock(%{$target});
+
+            _addStructure($target, $entry, $label);
+
         }
 
         { lock($progressBar);
           $progressBar->update(1); }
 
     }
+
+}
+
+# Entries without a structure are counted as parsing failures, as they were when
+# the query files were opened one at a time inside compare()
+sub _addStructure {
+
+    my ($target, $entry, $label) = @_;
+
+    if (!$entry->can("structure") || !defined $entry->structure()) {
+
+        lock(%results);
+        $results{ioerr}++;
+
+        return;
+
+    }
+
+    die "\n\n  [!] Error: Duplicate $label structure ID \"" . $entry->id() . "\"\n\n" if (exists $target->{$entry->id()});
+
+    $target->{$entry->id()} = shared_clone({ sequence  => dna2rna($entry->sequence()),
+                                             structure => $entry->structure() });
 
 }
 
@@ -260,7 +331,7 @@ sub compare {
         my ($refId, $refSeq, $refStruct);
 
         { lock(%reference);
-          
+
           if (keys %reference) {
 
               $refId = (keys %reference)[0];
@@ -275,82 +346,50 @@ sub compare {
         { lock($progressBar);
           $progressBar->update(1); }
 
-        my ($file, $format, $queryIO, $querySeq,
-            $queryStruct, $ppv, $sensitivity, $fmi,
-            $mfmi);
+        my ($querySeq, $queryStruct, $ppv, $sensitivity,
+            $fmi, $mfmi);
 
-        if (-d $input) {
-        
-            if (-e $input . $refId . ".ct") { $format = "ct"; }
-            elsif (-e $input . $refId . ".db") { $format = "db"; }
-            else {
-            
-                lock(%results);
-                $results{missingstruct}++;
-                
-                next;
-                
-            }
-            
-            $file = $input . $refId . "." . $format;
-            
+        # Query structures are imported up front, exactly like the reference
+        # ones, so matching is by structure ID rather than by file name
+        if (exists $query{$refId}) {
+
+            $querySeq = $query{$refId}->{sequence};
+            $queryStruct = $query{$refId}->{structure};
+
+        }
+        elsif ($nRefs == 1 && keys(%query) == 1) {
+
+            # Single reference + single query, matched regardless of ID
+            $querySeq = $query{(keys %query)[0]}->{sequence};
+            $queryStruct = $query{(keys %query)[0]}->{structure};
+
         }
         else {
-            
-            my ($fileId);
-            ($fileId, undef, $format) = fileparse($input, qr/\.[^.]*/);
-            $format =~ s/^\.//;
-            $file = $input;
-            
-            next if ($fileId ne $refId && $nRefs > 1);
-            
-        }
 
-        $queryIO = Data::IO::Sequence->new( file        => $file,
-                                            pseudoknots => $kp,
-                                            lonelypairs => $kl );
-    
-        if (my $query = $queryIO->read()) {
-            
-            $querySeq = dna2rna($query->sequence());
-
-            if ($query->can("structure")) { $queryStruct = $query->structure(); }
-            else {
-
-                lock(%results);
-                $results{ioerr}++;
-
-                next;
-
-            }
-            
-        }
-        else {
-            
             lock(%results);
-            $results{ioerr}++;
-            
+            $results{missingstruct}++;
+
             next;
-        
+
         }
-        
+
         if ($querySeq ne $refSeq && !$ignoreseq) {
-            
+
             lock(%results);
             $results{diffseq}++;
-            
+
             next;
-            
+
         }
 
         $ppv = sprintf("%.2f", ppv($refStruct, $queryStruct, $relaxed));
-        $sensitivity = sprintf("%.2f", sensitivity($refStruct, $queryStruct, $relaxed)); 
+        $sensitivity = sprintf("%.2f", sensitivity($refStruct, $queryStruct, $relaxed));
         $fmi = sprintf("%.2f", fmi($refStruct, $queryStruct, $relaxed));
         $mfmi = sprintf("%.2f", mfmi($refStruct, $queryStruct, $relaxed));
 
         { lock(@results);
           push(@results, shared_clone([$refId, $ppv, $sensitivity, $fmi, $mfmi])); }
-        
+
         if ($img) {
 
             my ($plot, $length, $common, $missing, $correct, $wrong,
@@ -413,9 +452,9 @@ sub compare {
                                                      axisTitleSize   => 10 );
 
             $plot->plot([$refArcs, $queryArcs], { heights => \@heights });
-            
+
         }
-        
+
         { lock(%results);
           $results{compared}++; }
 
@@ -424,19 +463,19 @@ sub compare {
 }
 
 sub commonpairs {
-    
+
     my ($reference, $structure) = @_;
-    
+
     my (@common, @missing, %reference);
-    
+
     for (listpairs($reference)) { $reference{$_->[0] . "-" . $_->[1]} = 0; }
 	for (listpairs($structure)) { $reference{$_->[0] . "-" . $_->[1]} = 1 if (exists $reference{$_->[0] . "-" . $_->[1]}); }
 
     @common = map { [ split("-", $_) ] } (grep { $reference{$_} } keys %reference);
     @missing = map { [ split("-", $_) ] } (grep { !$reference{$_} } keys %reference);
-    
+
     return(\@common, \@missing);
-    
+
 }
 
 sub cleanup {
@@ -448,20 +487,20 @@ sub cleanup {
 }
 
 sub help {
-    
+
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
-    
+
     die <<HELP;
- 
+
  RF Compare (v$Core::Utils::VERSION)
  RNA Framework [http://www.rnaframework.com]
-    
+
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
  Summary: Compares inferred secondary structures to a set of reference structures
- 
+
  Usage:   rf-compare [Options] structures_folder/                # Multiple transcripts
           rf-compare [Options] file.(ct|db)                      # Single transcript
- 
+
  Options                                Description
  -p  or --processors        <int>       Number of processors to use (>=1, Default: 1)
  -r  or --reference         <string>    Path to (a folder) of structure file(s)
@@ -476,5 +515,5 @@ sub help {
  -R  or --R-path            <string>    Path to R executable (Default: assumes R is in PATH)
 
 HELP
-    
+
 }

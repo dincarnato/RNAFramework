@@ -25,7 +25,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO;
@@ -51,8 +51,9 @@ my ($help, $output, $overwrite, $configfile,
     $rc, $hasctrl, $decimals, $nan, $image,
     $remap, $raw, $suffix, $maxumut, $tmpDir,
     $denatured, $dynwin, $maxmutrate, $normfactor,
-    $ignoreLower, @pool, @normfactor, @legendSort,
-    %legendColors);
+    $ignoreLower, $dms, $minNormFactor, @pool,
+    @normfactor, @legendSort, %legendColors,
+    %normFactor);
 
 my $progressBar : shared;
 my @ids : shared;
@@ -96,12 +97,30 @@ do {
                 "mm|max-mutation-rate=s"         => \$maxmutrate,
                 "nf|norm-factor=s"               => \$normfactor,
                 "il|ignore-lower-than-untreated" => \$ignoreLower,
+                "mn|min-norm-factor=s"           => \$minNormFactor,
+                "4d|four-base-dms"               => \$dms,
                 "g|img"                          => \$image,
                 "R|R-path=s"                     => \$R ) or help(1);
 
 };
 
 help() if ($help);
+
+# This has to run before the defaults below are applied, so that an explicitly
+# specified --norm-method or --scoring-method can still be told apart from an
+# unset one
+if ($dms) {
+
+    warn "\n  [!] Warning: --four-base-dms sets the normalization method to Mitchell. Ignoring --norm-method...\n" if (defined $normmethod && $normmethod !~ m/^(?:4|Mitchell)$/i);
+
+    die "\n  [!] Error: --four-base-dms requires Siegfried or Zubradt scoring method\n\n" if (defined $scoremethod && $scoremethod =~ m/^(?:Ding|Rouskin|[12])$/i);
+
+    $scoremethod //= 3;
+    $normmethod = 4;
+    $independent = 1;
+    $minNormFactor //= 0.002;
+
+}
 
 $threads ||= 1;
 $decimals ||= 3;
@@ -120,10 +139,16 @@ die "\n  [!] Error: Decimals value must be an integer comprised between 1 and 10
 die "\n  [!] Error: Maximum allowed window size for dynamic windows is 30000 nt\n\n" if ($dynwin && $normwin > 30000);
 die "\n  [!] Error: Provided RCI index file does not exist\n\n" if ($index && !-e $index);
 
+if (defined $minNormFactor) {
+
+    die "\n  [!] Error: Minimum normalization factor must be > 0\n\n" if (!isnumeric($minNormFactor) || $minNormFactor <= 0);
+    die "\n  [!] Error: Minimum normalization factor requires Mitchell normalization method (-nm 4)\n\n" if ($normmethod !~ m/^(?:4|Mitchell)$/i);
+
+}
+
 print "\n[+] Parsing configuration...";
 
-print "\n\n  [!] Warning: Provided configuration file doesn't exist. Will be created...\n" if (defined $configfile &&
-                                                                                               !-e $configfile);
+print "\n\n  [!] Warning: Provided configuration file doesn't exist. Will be created...\n" if (defined $configfile && !-e $configfile);
 
 $config = RF::Config->new( file              => $configfile,
                            scoremethod       => $scoremethod,
@@ -144,6 +169,13 @@ $config = RF::Config->new( file              => $configfile,
 $config->summary();
 $hasctrl = $config->scoremethod() =~ /^[24]$/ ? 0 : 1;
 
+# The config file overrides the command line, so a config specifying another normMethod
+# can silently strip the "-nm 4" that -4d (or -mn) relies on. Re-check it here, against the
+# method that actually survived, rather than the one that was asked for
+die "\n\n  [!] Error: Minimum normalization factor requires Mitchell normalization method (-nm 4)\n\n" if (defined $minNormFactor && $config->normmethod() != 4);
+
+if (defined $minNormFactor) { $results{"lownorm_$_"} = 0 for (split(//, $config->reactivebases())); }
+
 die "\n\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 die "\n\n  [!] Error: Provided treated sample RC file doesn't exist\n\n" if (!-e $treated);
 
@@ -151,21 +183,68 @@ print "\n\n  [!] Warning: Parameter --ignore-lower-than-untreated will have no e
 
 if (defined $normfactor) {
 
-    if ($config->normmethod() == 2) { 
-        
+    # The per-base form is a list of "<base>:<factor>" entries (e.g. "A:0.03,C:0.02"),
+    # told apart from the legacy numeric forms by the leading base prefix. 90%
+    # Winsorizing needs two factors, which are appended as "<base>:<5th>:<95th>".
+    # Reactive bases left out of the list keep being normalized per transcript
+    if ($normfactor =~ m/^\s*[A-Za-z]\s*:/) {
+
+        my ($wanted);
+        $wanted = $config->normmethod() == 2 ? 2 : 1;
+
+        die "\n  [!] Error: Per-base normalization factors require -ni\n\n" if (!$config->normindependent());
+
+        foreach my $entry (split(/[,;]/, $normfactor)) {
+
+            my ($base, @values);
+            ($base, @values) = split(/:/, $entry);
+
+            die "\n  [!] Error: Invalid per-base normalization factor \"$entry\"\n\n" if (!defined $base);
+
+            for ($base, @values) { s/^\s+|\s+$//g; }
+
+            die "\n  [!] Error: Invalid base \"$base\" in normalization factor\n\n" if ($base !~ m/^[A-Za-z]$/);
+            die "\n  [!] Error: " . ($wanted == 2 ? "90% Winsorizing requires two normalization factors" : "Chosen normalization method requires one normalization factor") . " per base (got " . scalar(@values) . " for base \"$base\")\n\n" if (@values != $wanted);
+
+            # Same rule as the legacy form: the 5th percentile of a Winsorizing pair is
+            # allowed to be 0, only the value actually divided by has to be positive
+            for (@values) { die "\n  [!] Error: Normalization factor for base \"$base\" must be numeric\n\n" if (!isnumeric($_)); }
+
+            die "\n  [!] Error: Normalization factor for base \"$base\" must be >= 0\n\n" if ($values[0] < 0);
+            die "\n  [!] Error: Normalization factor for base \"$base\" must be > 0\n\n" if ($values[-1] <= 0);
+            die "\n  [!] Error: First normalization factor for base \"$base\" must be < than second normalization factor\n\n" if ($wanted == 2 && $values[0] >= $values[1]);
+
+            $base = uc($base);
+            $base =~ tr/U/T/;
+
+            die "\n  [!] Error: Base \"$base\" in -nf is not among the reactive bases (" . $config->reactivebases() . ")\n\n" if (index($config->reactivebases(), $base) == -1);
+            die "\n  [!] Error: Duplicate normalization factor for base \"$base\"\n\n" if (exists $normFactor{$base});
+
+            $normFactor{$base} = \@values;
+
+        }
+
+        die "\n  [!] Error: No valid normalization factor provided\n\n" if (!%normFactor);
+
+    }
+    else {
+
+        # A single set of factors cannot be applied to each base independently, so the
+        # two parameters would silently contradict each other
+        die "\n  [!] Error: -nf requires per-base factors (e.g. \"A:0.03,C:0.02\") when -ni is specified\n\n" if ($config->normindependent());
+
         @normfactor = split(/,/, $normfactor);
 
-        die "\n  [!] Error: 90\% Winsorizing requires two values for normalization factor\n\n" if (@normfactor != 2);
-        
-    }
-    else { @normfactor = ($normfactor); }
+        die "\n  [!] Error: 90% Winsorizing requires two normalization factors\n\n" if ($config->normmethod() == 2 && @normfactor != 2);
+        die "\n  [!] Error: Chosen normalization method only requires one normalization factor\n\n" if ($config->normmethod() != 2 && @normfactor != 1);
+        die "\n  [!] Error: Normalization factor must be >= 0\n\n" if ($normfactor[0] < 0);
+        die "\n  [!] Error: Normalization factor must be > 0\n\n" if ($normfactor[-1] <= 0);
 
-    die "\n  [!] Error: Normalization factor must be >= 0\n\n" if ($normfactor[0] < 0);
-    die "\n  [!] Error: Normalization factor must be > 0\n\n" if ($normfactor[-1] <= 0);
+    }
 
 }
 
-if (defined $untreated) { print "\n  [!] Warning: " . $config->scoremethod(1) . " scoring method has been chosen. Ignoring untreated sample file...\n" if (!$hasctrl); }
+if (defined $untreated) { print "\n  [!] Warning: Ignoring untreated sample file with scoring method " . $config->scoremethod(1) . "...\n" if (!$hasctrl); }
 else {
 
     if ($hasctrl) {
@@ -177,12 +256,10 @@ else {
 
 }
 
-if (defined $denatured) { print "\n  [!] Warning: Denatured sample is considered only by Siegfried normalization method. Ignoring denatured sample file...\n" if ($config->scoremethod() != 3); }
-else {
+if (defined $denatured) {
 
-    die "\n  [!] Error: Provided denatured sample RC file doesn't exist\n\n" if ($config->scoremethod() == 3 &&
-                                                                                 defined $denatured &&
-                                                                                 !-e $denatured);
+    if ($config->scoremethod() == 3) { die "\n  [!] Error: Provided denatured sample RC file doesn't exist\n\n" if (!-e $denatured); }
+    else { print "\n  [!] Warning: Denatured sample is considered only by Siegfried normalization method. Ignoring denatured sample file...\n"; }
 
 }
 
@@ -287,6 +364,20 @@ print "\n                             " . $results{diffuseq} . " mismatch betwee
 print "\n                             " . $results{diffdseq} . " mismatch between treated and denatured sample sequence" .
       "\n                             " . $results{nodid} . " absent in denatured sample reference" if (defined $denatured &&
                                                                                                         $config->scoremethod() == 3);
+
+if (defined $minNormFactor) {
+
+    my @lowNorm = sort(grep { $results{$_} } grep { /^lownorm_/ } keys %results);
+
+    if (@lowNorm) {
+
+        print "\n  [*] Masked for normalization factor < $minNormFactor:";
+        print "\n      " . $results{$_} . " windows on " . substr($_, 8) for (@lowNorm);
+
+    }
+
+}
+
 print "\n\n[+] All done.\n\n";
 
 cleanup();
@@ -570,7 +661,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified (unmasked) bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
+                        @basenorm = normalize($base, \@base);
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -614,7 +705,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
+                        @basenorm = normalize($base, \@base);
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -644,7 +735,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
+                        @basenorm = normalize($base, \@base);
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -669,7 +760,7 @@ sub norm {
 
                         push(@base, $wincounts[$-[0]]) while($winmask =~ m/[$base]/g); # Extracts reactivities only on specified bases
 
-                        @basenorm = $config->normmethod() == 1 ? norm_28(@base) : ($config->normmethod() == 2 ? winsor_90(@base) : ($config->normmethod() == 3 ? boxplot(@base) : mitchell(@base)));
+                        @basenorm = normalize($base, \@base);
                         @basenorm = (undef) x scalar(@base) if (!@basenorm); # In case this window has not been covered
 
                         $winnorm[$-[0]] = shift(@basenorm) while($winmask =~ m/[$base]/g);
@@ -683,7 +774,28 @@ sub norm {
 
             }
 
-            @norm = map { ref($_) eq "ARRAY" ? (isnumeric(@{$_}) ? mean(@{$_}) : undef) : undef } @norm;
+            @norm = map { 
+                
+                if (ref($_) eq "ARRAY") {
+
+                      my ($sum, $count) = (0, 0);
+
+                      for my $value (@{$_}) {
+
+                          if (!defined $value) { $count = 0; last; }
+
+                          $sum += $value;
+                          $count++;
+
+                      }
+
+                      $count ? $sum / $count : undef;
+
+                  }
+                  else { undef; } 
+                  
+            } @norm;
+
             @norm = zarringhalam(@norm) if ($config->remapreactivities());
 
         }
@@ -709,14 +821,15 @@ sub norm {
         $sequence =~ s/(\w{60})/$1\n/g;
         $reactivity =~ s/((?:[\w\.]+,){60})/$1\n/g;
 
-        $attributes = { combined => "FALSE",
-                        reactive => $config->reactivebases(),
-                        scoring  => $config->scoremethod(1),
-                        norm     => $raw ? "raw" : $config->normmethod(1),
-                        offset   => $config->windowoffset(),
-                        win      => $config->normwindow(),
-                        remap    => $config->remapreactivities(),
-                        tool     => "rf-norm" };
+        $attributes = { combined        => 0,
+                        reactive        => $config->reactivebases(),
+                        scoring         => $config->scoremethod(1),
+                        norm            => $raw ? "raw" : $config->normmethod(1),
+                        offset          => $config->windowoffset(),
+                        win             => $config->normwindow(),
+                        remap           => $config->remapreactivities(),
+                        normIndependent => $config->normindependent(),
+                        tool            => "rf-norm" };
 
         if ($config->scoremethod() == 1) { # Ding
 
@@ -733,6 +846,7 @@ sub norm {
         if ($config->scoremethod() =~ m/^[34]$/) { # Siegfried/Zubradt
 
             $attributes->{maxmutrate} = $config->maxmutationrate();
+            $attributes->{minNormFactor} = $minNormFactor if ($minNormFactor);
 
         }
 
@@ -771,23 +885,52 @@ sub cleanup {
 
 }
 
+##
+#  Normalizes the reactivities of a single base, by the method chosen on the command
+#  line. Any user-supplied normalization factor is resolved here and handed over as
+#  an ARRAY reference holding the one factor the method needs, or the two that 90%
+#  Winsorizing needs. undef means the factors are to be calculated from the
+#  reactivities themselves, which is what a base missing from a per-base
+#  --norm-factor list gets
+##
+
+sub normalize {
+
+    my ($base, $reactivity) = @_;
+
+    my ($factors);
+
+    if (%normFactor) { $factors = $normFactor{$base}; }
+    elsif (defined $normfactor) { $factors = \@normfactor; }
+
+    return(norm_28($factors, $reactivity)) if ($config->normmethod() == 1);
+    return(winsor_90($factors, $reactivity)) if ($config->normmethod() == 2);
+    return(boxplot($factors, $reactivity)) if ($config->normmethod() == 3);
+
+    # Only this one reports which base it masked, so only this one is given the base
+    return(mitchell($factors, $reactivity, $base));
+
+}
+
 sub winsor_90 {  # 90% Winsorizing
 
-    my @reactivity = @_;
+    my ($factors, $reactivity) = @_;
+    my @reactivity = @{$reactivity};
 
     my ($percentile5, $percentile95);
 
-    if (!defined $normfactor) {
+    if (!defined $factors) {
 
         return if (@reactivity < 10);
 
-        $percentile5 = percentile(\@reactivity, 0.05) || 0; # 5th percentile
-        $percentile95 = percentile(\@reactivity, 0.95); # 95th percentile
+        my @sortedReact = sort { $a <=> $b } @reactivity;
+        $percentile5 = percentile(\@sortedReact, 0.05, 1) || 0; # 5th percentile
+        $percentile95 = percentile(\@sortedReact, 0.95, 1); # 95th percentile
 
         return() unless($percentile95);
 
     }
-    else { ($percentile5, $percentile95) = @normfactor; }
+    else { ($percentile5, $percentile95) = @{$factors}; }
 
     @reactivity = map { min(($_ < $percentile5 ? $percentile5 : $_) / $percentile95, 1) } @reactivity;
 
@@ -797,11 +940,13 @@ sub winsor_90 {  # 90% Winsorizing
 
 sub norm_28 {  # 2-8% Normalization
 
-    my @reactivity = @_;
+    my ($factors, $reactivity) = @_;
+    my @reactivity = @{$reactivity};
 
     my ($avg, @norm);
+    $avg = $factors->[0] if (defined $factors);
 
-    if (!defined $normfactor) {
+    if (!defined $avg) {
 
         return if (@reactivity < 10);
         
@@ -817,7 +962,6 @@ sub norm_28 {  # 2-8% Normalization
         return() if ($avg == 0);
 
     }
-    else { $avg = $normfactor[0]; }
 
     @reactivity = map { max(0, $_ / $avg) } @reactivity;
 
@@ -827,22 +971,26 @@ sub norm_28 {  # 2-8% Normalization
 
 sub boxplot {  # Box-plot Normalization
 
-    my @reactivity = @_;
+    my ($factors, $reactivity) = @_;
+    my @reactivity = @{$reactivity};
 
     my ($avg, @norm);
+    $avg = $factors->[0] if (defined $factors);
 
-    if (!defined $normfactor) {
+    if (!defined $avg) {
 
         return if (@reactivity < 10);
 
-        my ($iqrange, $max, $p10, $outliers);
-        $iqrange = percentile(\@reactivity, 0.75) - percentile(\@reactivity, 0.25); # Interquartile range
-        $max = percentile(\@reactivity, 0.75) + ($iqrange * 1.5);                   # Above this value, data points are considered outliers
-        @norm = sort {$b <=> $a} @reactivity;
+        my ($iqrange, $max, $p10, $p75, $outliers, @sortedReact);
+        @sortedReact = sort { $a <=> $b } @reactivity;
+        $p75 = percentile(\@sortedReact, 0.75, 1);
+        $iqrange = $p75 - percentile(\@sortedReact, 0.25, 1); # Interquartile range
+        $max = $p75 + ($iqrange * 1.5); # Above this value, data points are considered outliers
+        @norm = reverse @sortedReact;
         $p10 = @norm < 100 && @norm >= 50 ? 10 : round(@norm * 0.1);
 
         if (@norm < 50) { $outliers = round(@norm * 0.02); }
-        else { for (@norm) { $outliers++ if ($_ > $max); } }
+        else { for (@norm) { last if ($_ <= $max); $outliers++; } }
 
         $outliers = 1 if (!$outliers);
         @norm = @norm[$outliers .. $#norm];
@@ -854,7 +1002,6 @@ sub boxplot {  # Box-plot Normalization
         return() if ($avg == 0);
 
     }
-    else { $avg = $normfactor[0]; }
 
     # Values will range between 0 and ~1.5 according to
     # "SHAPE-Directed RNA Secondary Structure Prediction" (Low et al., 2010)
@@ -866,13 +1013,16 @@ sub boxplot {  # Box-plot Normalization
 
 sub mitchell { # Mitchell et al., 2023 (Mustoe lab)
 
-    my @reactivity = @_;
-
-    return if (@reactivity < 10);
+    # $base is only needed to report which base was masked when its factor is too low
+    my ($factors, $reactivity, $base) = @_;
+    my @reactivity = @{$reactivity};
 
     my ($avg);
+    $avg = $factors->[0] if (defined $factors);
 
-    if (!defined $normfactor) {
+    return if (!defined $avg && @reactivity < 10);
+
+    if (!defined $avg) {
 
         my ($p90, $p95, $p75, @sorted, @sortedHigh);
         @sorted = sort {$a <=> $b} @reactivity;
@@ -880,11 +1030,33 @@ sub mitchell { # Mitchell et al., 2023 (Mustoe lab)
         $p90 = max(1, round(@sorted * 0.9) - 1);
         $p95 = max(1, round(@sorted * 0.95) - 1);
         $avg = mean(@sorted[$p90 .. $p95]);
-        $p75 = max(1, round(@sortedHigh * 0.75) - 1);
-        $avg = max($avg, $sortedHigh[$p75]);
+
+        # @sortedHigh holds the reactive subset only, so its size is independent of
+        # the >= 10 check above and can legitimately be 0 or 1. The index therefore
+        # has to be clamped to 0, not to 1: for a single element the 75th percentile
+        # is index 0, and max(1, ...) would read past the end of the list, leaving
+        # max() to be handed an undef and throw "Values must be numeric"
+        if (@sortedHigh) {
+
+            $p75 = max(0, round(@sortedHigh * 0.75) - 1);
+            $avg = max($avg, $sortedHigh[$p75]);
+
+        }
 
     }
-    else { $avg = $normfactor[0]; }
+
+    # Nothing reactive at all. Returning empty makes the caller mask the whole base,
+    # which also avoids dividing by zero just below
+    return if (!$avg);
+
+    if (defined $minNormFactor && $avg < $minNormFactor) {
+
+        lock(%results);
+        $results{"lownorm_$base"}++;
+
+        return;
+
+    }
 
     @reactivity = map { max(0, $_ / $avg) } @reactivity;
 
@@ -899,8 +1071,12 @@ sub zarringhalam {
     return if (!@reactivity);
 
     my ($oldmin, $newmin, $oldmax, $newmax,
-        $max);
-    $max = max(grep { defined $_ } @reactivity);
+        $max, @values);
+    @values = grep { defined $_ } @reactivity;
+
+    return if (!@values);
+
+    $max = max(@values);
 
 
     for (@reactivity) {
@@ -953,11 +1129,11 @@ sub help {
                                                     Note: If the provided file exists, this will override any command-line
                                                           specified parameter. If the provided file doesn't exist, it will
                                                           be generated using command-line specified (or default) parameters
- -sm or --scoring-method      <int>                 Specifies the score calculation method (1-2, Default: 1): [1] Ding et al., 2014
+ -sm or --scoring-method      <int>                 Specifies the score calculation method (1-4, Default: 1): [1] Ding et al., 2014
                                                                                                               [2] Rouskin et al., 2014
                                                                                                               [3] Siegfried et al., 2014
                                                                                                               [4] Zubradt et al., 2016
- -nm or --norm-method         <int>                 Specifies the normalization method (1-3, Default: 1): [1] 2-8%
+ -nm or --norm-method         <int>                 Specifies the normalization method (1-4, Default: 1): [1] 2-8%
                                                                                                           [2] 90% Winsorizing
                                                                                                           [3] Box-plot
                                                                                                           [4] Mitchell et al., 2023
@@ -971,10 +1147,20 @@ sub help {
  -wo or --window-offset       <int>                 Offset for sliding window during normalization (Default: none [Ding|Siegfried|Zubradt], 50 [Rouskin])
  -dw or --dynamic-window                            When enabled, the normalization window is dynamically resized to include at least that number of reactive bases
                                                     (e.g. "-rb AC -nw 50 -dw" instructs RF Norm to normalize reactivities in windows containing at least 50 A/C residues)
- -nf or --norm-factor         <float>[,<float>]     When provided, this will be used as the normalization factor for all transcripts (default behavior is to
-                                                    calculate the normalization factor independently for each transcript)
-                                                    Note: 90% Winsorizing requires 2 normalization factors, provided as a comma-separated list, respectively corresponding
-                                                          to the 5th and 95th percentiles of the distribution of raw reactivities
+ -nf or --norm-factor         <string>              When provided, this will be used as the normalization factor for all transcripts (default behavior is to
+                                                    calculate the normalization factor independently for each transcript). 
+                                                    Accepted forms are:
+
+                                                    <float>                           a single factor, applied to all reactive bases
+                                                    <float>,<float>                   the 5th and 95th percentiles (only for 90% Winsorizing, requires -nm 2)
+                                                    <base>:<float>[,...]              one factor per reactive base (e.g., "A:0.03,C:0.02,G:0.001,U:0.004") (requires -ni)
+                                                    <base>:<float>:<float>[,...]      one factor per reactive base (e.g., "A:0.003:0.05,C:0.001:0.02") (only for 90% 
+                                                                                      Winsorizing, requires -ni -nm 2)
+                                                    
+                                                    Note: reactive bases left out of a per-base list keep being normalized independently for each transcript.
+                                                          A single factor cannot be combined with -ni, as it could not be applied to each base independently.
+
+ -4d or --four-base-dms                             Enables four-base DMS analysis [Mitchell et al., 2023] (implies "-nm 4 -ni -mn 0.002")
  -mc or --mean-coverage       <float>               Discards any transcript with mean coverage below this threshold (>=0, Default: 0)
  -ec or --median-coverage     <float>               Discards any transcript with median coverage below this threshold (>=0, Default: 0)
  -D  or --decimals            <int>                 Number of decimals for reporting reactivities (1-10, Default: 3)
@@ -997,6 +1183,10 @@ sub help {
 
  Scoring methods #3 and #4 (mutational profiling) options
  -mm or --max-mutation-rate   <float>               Maximum per-base mutation rate (0<=r<=1, Default: 1 [100%])
+
+ Normalization method #4 (Mitchell et al., 2023) options
+ -mn or --min-norm-factor     <float>               Reactive bases whose normalization factor falls below this value are reported as NaN (>0)
+                                                    Note: no threshold is applied unless this parameter (or -4d) is specified
 
 HELP
 

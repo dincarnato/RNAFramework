@@ -1,19 +1,5 @@
 #!/usr/bin/perl
 
-##
-# Chimaera Framework
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 package Core::Mathematics;
 
 use strict;
@@ -30,33 +16,26 @@ use constant nan  => 0 + q{NaN};
 
 use base qw(Exporter);
 
+our $NOVALIDATE = $ENV{"RF_NOVALIDATE"};
 our @EXPORT = qw(isint isfloat isexp isinf
                  isnan isnumeric ispositive isnegative
                  isreal isbool haspositive hasnegative
-                 iseven isodd);
-
-our %EXPORT_TAGS = ( constants => [ qw() ],
-                     functions => [ qw(logarithm min max mean
-                                       geomean midrange stdev popStdev
-                                       mmode median round sum
-                                       diff product maprange intersect
-                                       variance inrange haspositive hasnegative
-                                       hasnan haszero absolute euclideandist
-                                       normeuclideandist mround argmax argmin) ] );
-
-{ my (%seen);
-  push(@{$EXPORT_TAGS{$_}}, @EXPORT) foreach (keys %EXPORT_TAGS);
-  push(@{$EXPORT_TAGS{all}}, grep {!$seen{$_}++} @{$EXPORT_TAGS{$_}}) foreach (keys %EXPORT_TAGS); }
-
-our @EXPORT_OK = ( @{$EXPORT_TAGS{constants}},
-                   @{$EXPORT_TAGS{functions}} );
+                 iseven isodd logarithm min max mean
+                 geomean midrange stdev popStdev
+                 mmode median round sum percent2freq
+                 diff product maprange intersect
+                 variance inrange haspositive hasnegative
+                 hasnan haszero absolute euclideandist
+                 normeuclideandist mround argmax argmin);
 
 sub isint {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!isreal($_) ||
-                               int($_) != $_); }
+        return if (!looks_like_number($_) || lc($_) eq "inf" || 
+                   lc($_) eq "-inf" || $_ != $_ || int($_) != $_);
+
+    }
 
     return(1);
 
@@ -64,10 +43,12 @@ sub isint {
 
 sub isfloat {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!isreal($_) ||
-                               int($_) == $_); }
+        return if (!looks_like_number($_) || lc($_) eq "inf" || 
+                   lc($_) eq "-inf" || $_ != $_ || int($_) == $_);
+
+    }
 
     return(1);
 
@@ -75,9 +56,7 @@ sub isfloat {
 
 sub isinf {
 
-    my @values = @_;
-
-    for (@values) { return if ($_ ne "inf" && $_ ne "-inf"); }
+    for (@_) { return if (lc($_) ne "inf" && lc($_) ne "-inf"); }
 
     return(1);
 
@@ -85,9 +64,7 @@ sub isinf {
 
 sub isnan {
 
-    my @values = @_;
-
-    for (@values) { return if ($_ == $_); }
+    for (@_) { return if ($_ == $_); }
 
     return(1);
 
@@ -95,9 +72,12 @@ sub isnan {
 
 sub isreal {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!looks_like_number($_) || isinf($_) || isnan($_)); }
+        return if (!looks_like_number($_) || lc($_) eq "inf" || 
+                   lc($_) eq "-inf" || $_ != $_);          
+
+    }
 
     return(1);
 
@@ -105,10 +85,12 @@ sub isreal {
 
 sub isnumeric {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!isreal($_) &&
-                               !isinf($_)); }
+        next if (lc($_) eq "inf" || lc($_) eq "-inf");     # isinf() -> accepted
+        return if (!looks_like_number($_) || $_ != $_);
+
+    }
 
     return(1);
 
@@ -116,10 +98,14 @@ sub isnumeric {
 
 sub ispositive {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!isnumeric($_) ||
-                               $_ < 0); }
+        if (lc($_) eq "inf") { next; }
+        elsif (lc($_) eq "-inf") { return; }
+
+        return if (!looks_like_number($_) || $_ != $_ || $_ < 0);
+
+    }
 
     return(1);
 
@@ -127,10 +113,14 @@ sub ispositive {
 
 sub isnegative {
 
-    my @values = @_;
+    for (@_) {
 
-    for (@values) { return if (!isnumeric($_) ||
-                               $_ >= 0); }
+        if (lc($_) eq "-inf") { next; }
+        elsif (lc($_) eq "inf") { return; }
+
+        return if (!looks_like_number($_) || $_ != $_ || $_ >= 0);
+
+    }
 
     return(1);
 
@@ -142,13 +132,12 @@ sub ispercentage {
 
     for (@values) {
 
-        return unless ($_ =~ m/\%$/);
+        return unless (substr($_, -1) eq "%");
 
-        $_ =~ s/\%$//;
+        $_ = substr($_, 0, -1);
 
-        return if (!isreal($_) ||
-                   isnegative($_) ||
-                   $_ > 100);
+        return if (!looks_like_number($_) || lc($_) eq "inf" || 
+                   lc($_) eq "-inf" || $_ != $_ || $_ < 0 || $_ > 100);
 
 
     }
@@ -161,7 +150,7 @@ sub isbool {
 
     my @values = @_;
 
-    for (@values) { return if ($_ !~ m/^[01]$/); }
+    for (@values) { return if ($_ ne "0" && $_ ne "1"); }
 
     return(1);
 
@@ -183,9 +172,9 @@ sub hasnegative {
 
     my @values = @_;
 
-    return unless(isnumeric(@values));
+    #return unless(isnumeric(@values));
 
-    return(scalar(grep { $_ < 0 } @values));
+    return(scalar(grep { looks_like_number($_) && $_ < 0 } @values));
 
 }
 
@@ -193,9 +182,9 @@ sub haszero {
 
     my @values = @_;
 
-    return unless(isnumeric(@values));
+    #return unless(isnumeric(@values));
 
-    return(scalar(grep { $_ == 0 } @values));
+    return(scalar(grep { looks_like_number($_) && $_ == 0 } @values));
 
 }
 
@@ -203,9 +192,9 @@ sub haspositive {
 
     my @values = @_;
 
-    return unless(isnumeric(@values));
+    #return unless(isnumeric(@values));
 
-    return(scalar(grep { $_ > 0 } @values));
+    return(scalar(grep { looks_like_number($_) && $_ > 0 } @values));
 
 }
 
@@ -215,11 +204,11 @@ sub hasnan {
 
     return if (isnumeric(@values));
 
-    return(scalar(grep { isnan($_) } @values));
+    return(scalar(grep { $_ != $_ } @values));
 
 }
 
-sub percentage2frequency {
+sub percent2freq {
 
     my @values = @_;
 
@@ -227,8 +216,7 @@ sub percentage2frequency {
 
         return unless (ispercentage($_));
 
-        $_ =~ s/\%$//;
-        $_ /= 100;
+        $_ = substr($_, 0, -1) / 100;
 
     }
 
@@ -241,13 +229,16 @@ sub logarithm {
     my $argument = shift;
     my $base = shift // e;
 
-    Core::Utils::throw("Logarithm argument is not numeric") if (!isnumeric($argument));
-    Core::Utils::throw("Invalid logarithm base") if (!isnumeric($base));
+    if (!$NOVALIDATE) {
+
+        Core::Utils::throw("Logarithm argument is not numeric") if (!isnumeric($argument));
+        Core::Utils::throw("Invalid logarithm base") if (!isnumeric($base));
+
+    }
 
     return(inf) if ($base == 1);
     return(inf) if ($argument == 0);
-    return(nan) if (isnegative($argument) ||
-                    isnegative($base));
+    return(nan) if (hasnegative($argument, $base));
 
     return(log($argument) / ($base ? log($base) : ninf));
 
@@ -255,41 +246,48 @@ sub logarithm {
 
 sub min {
 
-    my @values = @_;
+    Core::Utils::throw("Values array is empty") if (!@_);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@_)); }
 
-#    Core::Utils::throw("Values array is empty") if (!@values);
-#    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    # A single pass replaces sorting the whole list to take one element
+    my $min = $_[0];
 
-    @values = sort {$a <=> $b} @values;
+    for my $i (1 .. $#_) { $min = $_[$i] if ($_[$i] < $min); }
 
-    return(shift(@values));
-
+    return($min);
 
 }
 
 sub max {
 
-    my @values = @_;
+    Core::Utils::throw("Values array is empty") if (!@_);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@_)); }
 
- #   Core::Utils::throw("Values array is empty") if (!@values);
- #   Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    my $max = $_[0];
 
-    @values = sort {$a <=> $b} @values;
+    for my $i (1 .. $#_) { $max = $_[$i] if ($_[$i] > $max); }
 
-    return(pop(@values));
+    return($max);
 
 }
 
 sub argmax {
 
-    my @values = @_;
+    Core::Utils::throw("Values array is empty") if (!@_);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@_)); }
 
-    Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
-
+    # The maximum and the indices holding it are collected together, instead of
+    # calling max() (which sorted) and then scanning the list a second time
     my ($max, @maxi);
-    $max = max(@values);
-    @maxi = grep { $values[$_] == $max } 0 .. $#values;
+    $max = $_[0];
+    @maxi = (0);
+
+    for my $i (1 .. $#_) {
+
+        if ($_[$i] > $max) { $max = $_[$i]; @maxi = ($i); }
+        elsif ($_[$i] == $max) { push(@maxi, $i); }
+
+    }
 
     return(wantarray() ? @maxi : $maxi[0]);
 
@@ -297,14 +295,19 @@ sub argmax {
 
 sub argmin {
 
-    my @values = @_;
-
-    Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    Core::Utils::throw("Values array is empty") if (!@_);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@_)); }
 
     my ($min, @mini);
-    $min = min(@values);
-    @mini = grep { $values[$_] == $min } 0 .. $#values;
+    $min = $_[0];
+    @mini = (0);
+
+    for my $i (1 .. $#_) {
+
+        if ($_[$i] < $min) { $min = $_[$i]; @mini = ($i); }
+        elsif ($_[$i] == $min) { push(@mini, $i); }
+
+    }
 
     return(wantarray() ? @mini : $mini[0]);
 
@@ -316,8 +319,8 @@ sub mean {
 
     my ($avg);
 
-#    Core::Utils::throw("Values array is empty") if (!@values);
-#    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    Core::Utils::throw("Values array is empty") if (!@values);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return($values[0]) if (@values == 1);
 
@@ -335,7 +338,7 @@ sub geomean {
     my ($avg);
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be positive numbers") if (!ispositive(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be >= 0") if (!ispositive(@values)); }
 
     return(0) if (haszero(@values));
     return($values[0]) if (@values == 1);
@@ -352,7 +355,7 @@ sub midrange {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return((max(@values) + min(@values)) / 2);
 
@@ -366,8 +369,8 @@ sub variance {
     my ($avg, $sq, $variance);
     $sq = 0;
 
-    #Core::Utils::throw("Values array is empty") if (!@values);
-    #Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    Core::Utils::throw("Values array is empty") if (!@values);
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return(0) if (@values == 1);
 
@@ -387,13 +390,12 @@ sub mmode {
 
     my @values = @_;
 
-    my (%counts);
-
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return($values[0]) if (@values == 1);
 
+    my (%counts);
     $counts{$_}++ for (@values);
     @values = sort {$counts{$b} <=> $counts{$a}} keys %counts;
 
@@ -406,7 +408,7 @@ sub median {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return $values[0] if (@values == 1);
 
@@ -422,7 +424,7 @@ sub round {
     my $value = shift;
 
     Core::Utils::throw("No value has been provided") if (!defined $value);
-    Core::Utils::throw("Value must be a real number") if (!isreal($value));
+    Core::Utils::throw("Value must be real") if (!isreal($value));
 
     my $int = floor($value);
 
@@ -437,8 +439,8 @@ sub mround {
   my $multiple = shift || 0.5;
 
   Core::Utils::throw("No value has been provided") if (!defined $value);
-  Core::Utils::throw("Value must be a real number") if (!isreal($value));
-  Core::Utils::throw("Multiple value must be a real number") if (!isreal($multiple));
+  Core::Utils::throw("Value must be real") if (!isreal($value));
+  Core::Utils::throw("Multiple value must be real") if (!isreal($multiple));
 
   $multiple = abs($multiple);
 
@@ -453,7 +455,7 @@ sub sum {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     my ($sum);
 
@@ -468,7 +470,7 @@ sub diff {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     my $diff = shift(@values);
 
@@ -483,7 +485,7 @@ sub product {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     my $product = shift(@values);
 
@@ -498,7 +500,7 @@ sub absolute {
     my @values = @_;
 
     Core::Utils::throw("Values array is empty") if (!@values);
-    Core::Utils::throw("Values must be numeric") if (!isnumeric(@values));
+    if (!$NOVALIDATE) { Core::Utils::throw("Values must be numeric") if (!isnumeric(@values)); }
 
     return(map { abs($_) } @values);
 
@@ -508,8 +510,8 @@ sub maprange {
 
     my ($oldmin, $oldmax, $newmin, $newmax, $value) = @_;
 
-    Core::Utils::throw("Invalid old range boundaries (old minimum is equal to old maximum)") if ($oldmin == $oldmax);
-    Core::Utils::throw("Invalid new range boundaries (new minimum is equal to new maximum)") if ($newmin == $newmax);
+    Core::Utils::throw("Invalid old range (old minimum = old maximum)") if ($oldmin == $oldmax);
+    Core::Utils::throw("Invalid new range (new minimum = new maximum)") if ($newmin == $newmax);
 
     return(((($value - $oldmin) * ($newmax - $newmin)) / ($oldmax - $oldmin)) + $newmin);
 
@@ -524,16 +526,23 @@ sub intersect {
     for (@intervals) {
 
         Core::Utils::throw("Intervals must be provided as ARRAY references") if (ref($_) ne "ARRAY");
-        Core::Utils::throw("Intervals must be numeric") if (!isnumeric(@{$_}));
         Core::Utils::throw("Intervals must have 2 values (start, end)") if (@{$_} < 2);
+        if (!$NOVALIDATE) { Core::Utils::throw("Intervals must be numeric") if (!isnumeric(@{$_})); }
 
     };
 
-    my ($start, $end, @start, @end);
-    @start = map({ $_->[0] } @intervals);
-    @end = map({ $_->[1] } @intervals);
-    $start = max(@start);
-    $end = min(@end);
+    # The bounds are tracked directly, rather than building two lists and
+    # calling max()/min() on them
+    my ($start, $end);
+    $start = $intervals[0]->[0];
+    $end = $intervals[0]->[1];
+
+    for my $i (1 .. $#intervals) {
+
+        $start = $intervals[$i]->[0] if ($intervals[$i]->[0] > $start);
+        $end = $intervals[$i]->[1] if ($intervals[$i]->[1] < $end);
+
+    }
 
     return() if ($start > $end);
 

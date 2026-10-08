@@ -17,7 +17,7 @@
 package Data::Sequence::Utils;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 
 use base qw(Exporter);

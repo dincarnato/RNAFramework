@@ -11,7 +11,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use lib $Bin . "/lib";
 
 use Core::Utils;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Process::Queue;
 use Core::Statistics;
 use Data::IO::Sequence;
@@ -32,7 +32,7 @@ $|++;
 my ($tmpdir, $output, $wt, $samtoolsParams, $discardClipped,
     $samtools, $multifasta, $sam, $help, $sortByReadName,
     $overwrite, $error, $bam_trim5, $offset, $keepMate,
-    $threads, $processmanager, $mbfile, $table, 
+    $threads, $processmanager, $mbfile, $table, $dms,
     $mutcount, $seqio, $rcio, $includeclip, $maxClipped,
     $covonly, $mutmap, $nodel, $pp, $po, $tsPerJob,
     $nodiscarddup, $minqual, $maxdel, $maxmut, $mmSplitPairedEnd,
@@ -100,7 +100,8 @@ do {
                 "mdp|mm-discard-pair=s"        => \$mmDiscardPair,
                 "mp|max-clipped-bases=s"       => \$maxClipped,
                 "dp|discard-clipped-reads"     => \$discardClipped,
-                "km|keep-mate=s"               => \$keepMate ) or help(1);
+                "km|keep-mate=s"               => \$keepMate,
+                "4d|four-base-dms"             => \$dms ) or help(1);
 
 };
 
@@ -129,6 +130,28 @@ $discardshorter = uc($discardshorter);
 $output =~ s/\/?$/\//;
 $tmpdir = $output . "tmp/";
 $multiBar = 0 if (!-t STDOUT);
+
+##
+# Four-base DMS preset
+##
+
+# This runs before the validation below, so that everything -4d implies is checked
+# like any other parameter, and before the -om expansion, which it feeds
+if ($dms) {
+
+    # Caught here rather than by the generic -co/-m check below, which would complain
+    # about a parameter the user never specified
+    die "\n  [!] Error: Parameters -co and -4d are mutually exclusive\n\n" if ($covonly);
+    warn "\n  [!] Warning: --four-base-dms presets -om \"H2N,G2\". Ignoring user-provided -om parameter...\n" if (defined $onlyMut);
+
+    # G->A reports the structurally uninformative G-N7 modification, while G-N1 is
+    # read out as G->C/G->T, so only those two are retained on Gs. All mismatches are
+    # informative on A/C/T (H). Indels are discarded by the -om block further down
+    $mutcount = 1;
+    $onlyMut = "H2N,G2Y";
+    $noCovLowQual = 1;
+
+}
 
 ##
 # Input validation
@@ -304,7 +327,7 @@ foreach my $sample (uniq(@ARGV)) {
 
     my ($format, $sorted, $missingMD, @sample);
     @sample = split /:/, $sample;
-    unshift(@sample, (fileparse($sample, qr/\.[^.]*/))[0]) if (@sample == 1 || $sample[0] eq "");
+    unshift(@sample, (fileparse($sample, qr/\.[bs]am$/i))[0]) if (@sample == 1 || $sample[0] eq "");
 
     die "  [!] Error: Specified sample file \"" . $sample[1] . "\" doesn't exist\n\n" if (!-e $sample[1]);
 
@@ -564,6 +587,7 @@ if (my @missingMD = grep { $_->{missingMD} } @qcounter) {
                                   id      => $sample->{file} );
 
         $sample->{path} = $path;
+        $sample->{indexed} = 0;
 
     }
 
@@ -1186,7 +1210,7 @@ sub count {
 
                 if ($mutcount && ($cov < ($discardshorter eq "MEDIAN" ? $sample->{medianReadLen} : $discardshorter) ||
                                   $editdist / $cov > $maxmut ||
-                                  median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip->{clip5soft}, $truelen))) < $medianqual)) { # Check median read's quality
+                                  medianQual($row[10], $clip->{clip5soft}, $truelen) < $medianqual)) { # Check median read's quality
 
                     # If paired-end, and one mate has already been stored, we allow the corresponding memory to be freed
                     # as its mate would be discarded here
@@ -1250,7 +1274,7 @@ sub count {
 
                     push(@{$lastRead{$pairId}->{start}}, $start);
                     push(@{$lastRead{$pairId}->{end}}, $end);
-                    push(@{$lastRead{$pairId}->{covered}}, clonearrayref(\@covered));
+                    push(@{$lastRead{$pairId}->{covered}}, [@covered]);
                     push(@{$lastRead{$pairId}->{clip5}}, $clip->{tot5pClip});
                     push(@{$lastRead{$pairId}->{clip3}}, $clip->{tot3pClip});
 
@@ -1354,7 +1378,7 @@ sub count {
                         # If paired-end and single-read is not forced, we have to check if the two mates overlap and take 
                         @covered = uniq(@covered) if (@{$lastRead{$pairId}->{start}} == 2 && !$forceSingleRead);
 
-                        map {$coverage[$_]++} @covered;
+                        $coverage[$_]++ for @covered;
 
                         delete($lastRead{$pairId});
 
@@ -1373,7 +1397,7 @@ sub count {
                     }
                     else { $cov += $row[3]; } # Start will be negative by the amount that needs to be removed from coverage
 
-                    map { $coverage[$_]++ } max(0, $row[3]) .. min($ref{length} - 1, $row[3] + $cov); # clipped bases are already included in the coverage
+                    $coverage[$_]++ for (max(0, $row[3]) .. min($ref{length} - 1, $row[3] + $cov)); # clipped bases are already included in the coverage
 
                     unless ($row[1] & 256) {
 
@@ -1434,7 +1458,7 @@ sub count {
                 # If paired-end and single-read is not forced, we have to check if the two mates overlap and take 
                 @covered = uniq(@covered) if (@{$lastRead{$readId}->{start}} == 2 && !$forceSingleRead);
 
-                map {$coverage[$_]++} @covered;
+                $coverage[$_]++ for @covered;
 
                 delete($lastRead{$readId});
 
@@ -1719,199 +1743,7 @@ sub guessTypeAndSorting {
 
 }
 
-sub parsemd { # SAM MD flag parser
 
-    my ($row, $reference) = @_;
-
-    my ($md, $llen, @pos, @quals,
-        %lowQual, %pos, %posMap);
-    $llen = $row->[3] - 1;
-
-    return([], {}, [], 1) if (@{$row} < 11);
-
-    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
-
-    return([], {}, [], 1) if (!defined $md);
-
-    %posMap = ref2read($row);
-    @quals = split(//, $row->[10]);
-    $md = uc($md);
-
-    while($md =~ m/^(\d+)/) {
-
-        my ($len, $next);
-        $len = $1;
-        $md =~ s/^$len//;
-
-        while($md =~ m/^(\D)/) {
-
-            $next = $1;
-
-            if ($next eq "^") { # Deletion
-
-                my ($del, $start, $end, $win,
-                    $real, $disttodel, %collapsed);
-
-                $md =~ s/^\^//;
-                $md =~ m/^([ACGNT]+)/;
-                $del = $1;
-
-                if (!$nodel && length($del) <= $maxdel) { # Count unambiguously mapped deletions as mutations
-
-                    my ($before, $after, @truedel);
-
-                    # Extract a window of 20 nt (+/- 10nt) centered on the deletion
-                    $start = $len + $llen - 1 >= 9 ? $len + $llen - 1 - 9 : 0;
-                    $end = $len + $llen - 1 + length($del) + 10 < length($reference) ? $len + $llen - 1 + length($del) + 10 : length($reference) - 1;
-                    $win = substr($reference, $start, $end - $start + 1);
-                    $disttodel = $len + $llen >= 10 ? 10 : $len + $llen;
-                    $real = substr($reference, $start, $disttodel) . substr($reference, $start + $disttodel + length($del), $end - $start - $disttodel - length($del) + 1);
-
-                    # Slide the deletion along sequence, and build hash table
-                    push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
-
-                    if (@{$collapsed{$real}} > 1) { # Deletion is not unambiguously mapped
-
-                        if (!$noambiguous) {
-
-                            my $truedel = $leftalign ? min(@{$collapsed{$real}}) : max(@{$collapsed{$real}});
-                            $before = $truedel - length($del);
-                            $after = $truedel + 1;
-                            @truedel = $rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel));
-                            # if (($evalsurround &&
-                            #     ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
-                            #     ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
-                            #     !$evalsurround) { 
-                                    
-                                push(@pos, @truedel);
-                                push(@{$pos{del}}, @truedel) if ($outRawCounts);
-                                
-                            #}
-                            #else { $lowQual{$_} = 1 for (@truedel); }
-
-                        }
-
-                    }
-                    else {
-
-                        $before = $collapsed{$real}->[0] - length($del);
-                        $after = $collapsed{$real}->[0] + 1;
-                        @truedel = $rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]));
-                        # if (($evalsurround &&
-                        #     ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
-                        #     ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
-                        #     !$evalsurround) {
-
-                        push(@pos, @truedel);
-                        push(@{$pos{del}}, @truedel) if ($outRawCounts);
-
-                        # }
-                        # else { $lowQual{$_} = 1 for (@truedel); }
-
-                    }
-
-                }
-
-                $len += length($del);
-                $md =~ s/^$del//;
-
-            }
-            elsif ($next =~ m/^([ACGNT])$/) {
-
-                my $readBase = substr($row->[9], $posMap{$llen + $len}, 1);
-
-                if ($next ne "N" && $readBase ne "N") {
-
-                    # Include the mutation if both the mutated base and the bases immediately surroundinding
-                    # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
-                    if (unpack("C*", $quals[$posMap{$llen + $len}]) - 33 >= $minqual &&
-                        (($evalsurround &&
-                         ((exists $posMap{$llen + $len - 1} && unpack("C*", $quals[$posMap{$llen + $len - 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len - 1}) &&
-                         ((exists $posMap{$llen + $len + 1} && unpack("C*", $quals[$posMap{$llen + $len + 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len + 1})) ||
-                         !$evalsurround) &&
-                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) {
-
-                        push(@pos, $len + $llen);
-                        push(@{$pos{$next . $readBase}}, $len + $llen) if ($outRawCounts);
-
-                    }
-                    else { $lowQual{$len + $llen} = 1; }
-
-                    $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
-
-                }
-
-                $md =~ s/^$next//;
-                $len++;
-
-            }
-
-        }
-
-        $llen += $len;
-
-    }
-
-    return(\@pos, \%pos, \%lowQual, 0);
-
-}
-
-sub parsecigar {
-
-    my $cigar = shift;
-
-    my ($clip5soft, $clip5hard, $clip3, $cov, 
-        $truelen, $last, @ins);
-    $clip5soft = $clip5hard = $clip3 = $cov = $truelen = $last = 0;
-
-    while ($cigar =~ m/^(\d+)([SH])/) {
-
-        my ($n, $op) = ($1, $2);
-        $cigar =~ s/^$n$op//;
-        
-        if ($op eq "H") { $clip5hard += $n; }
-        else { $clip5soft += $n; }
-
-    }
-
-    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
-
-        my ($n, $op) = ($1, $2);
-
-        if ($op =~ /^[DM=X]$/) { $cov += $n; }
-        elsif ($op =~ /^[SH]$/) { $clip3 += $n; }
-        
-        $last += $n if ($op =~ m/^[DNM=X]$/);
-        $truelen += $n if ($op =~ m/^[MI=X]$/);
-        push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
-
-        $cigar =~ s/^$n$op//;
-
-    }
-
-    my ($tot5pClip, $totClip);
-    $tot5pClip = $clip5soft + $clip5hard;
-    $totClip = $tot5pClip + $clip3;
-
-    if ($includeclip) {
-
-        if (!grep { defined $_ } @maxClipped) { $cov += $totClip; }
-        else { 
-        
-            if ((defined $maxClipped[0] && $tot5pClip <= $maxClipped[0]) || !defined $maxClipped[0]) { $cov += $tot5pClip; }
-            if ((defined $maxClipped[1] && $clip3 <= $maxClipped[1]) || !defined $maxClipped[1]) { $cov += $clip3; }
-            if (defined $maxClipped[2] && $totClip > $maxClipped[2]) { $cov -= $totClip; }
-
-        }
-
-    }
-
-    return({ tot5pClip => $tot5pClip, 
-             clip5soft => $clip5soft, 
-             tot3pClip => $clip3,
-             totClip   => $totClip }, $cov, $truelen, \@ins);
-
-}
 
 sub editdist {
 
@@ -1978,55 +1810,261 @@ sub rmconsecutive {
 
 }
 
-sub ref2read { # Reference to read relative position
 
-    my $row = shift;
+sub parsecigar {
 
-    my ($rpos, $qpos, $cigar, $lastrpos,
-        $lastqpos, @ops, %pos, %ops);
-    $cigar = $row->[5];
-    $rpos = $lastrpos = $row->[3] - 1;
-    $qpos = $lastqpos = 0;
-    %ops = ( "M" => [1, 1],
-             "I" => [1, 0],
-             "D" => [0, 1],
-             "N" => [0, 1],
-             "S" => [1, 0],
-             "H" => [0, 0],
-             "P" => [0, 0],
-             "=" => [1, 1],
-             "X" => [1, 1] );
+    my $cigar = shift;
 
-    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
+    my ($clip5soft, $clip5hard, $clip3, $cov,
+        $truelen, $last, @ins);
+    $clip5soft = $clip5hard = $clip3 = $cov = $truelen = $last = 0;
 
-        my ($n, $op) = ($1, $2);
-        push(@ops, [$n, $op]);
-        $cigar =~ s/^$n$op//;
+    # Scanned in place with \G instead of repeatedly chopping the string with an
+    # interpolated s///, which recompiled a regex for every CIGAR operation
+    while ($cigar =~ m/\G(\d+)([SH])/gc) {
+
+        if ($2 eq "H") { $clip5hard += $1; }
+        else { $clip5soft += $1; }
 
     }
 
-    for (@ops) {
+    while ($cigar =~ m/\G(\d+)([MIDNSHP=X])/gc) {
 
-        my ($n, $op) = @{$_};
-        next if (!$ops{$op}->[0] &&
-                 !$ops{$op}->[1]);
+        my ($n, $op) = ($1, $2);
 
-        $qpos += $n if ($ops{$op}->[0]);
-        $rpos += $n if ($ops{$op}->[1]);
+        if ($op eq "M" || $op eq "=" || $op eq "X") { $cov += $n; $last += $n; $truelen += $n; }
+        elsif ($op eq "D") { $cov += $n; $last += $n; }
+        elsif ($op eq "N") { $last += $n; }
+        elsif ($op eq "I") { $truelen += $n; push(@ins, $last - 1); }
+        elsif ($op eq "S" || $op eq "H") { $clip3 += $n; }
 
-        if ($ops{$op}->[0] &&
-            $ops{$op}->[1]) {
+    }
 
-            if (my $diff = $qpos - $lastqpos) { $pos{$lastrpos + $_} = $lastqpos + $_ for (0 .. $diff - 1); }
+    my ($tot5pClip, $totClip);
+    $tot5pClip = $clip5soft + $clip5hard;
+    $totClip = $tot5pClip + $clip3;
+
+    if ($includeclip) {
+
+        if (!grep { defined $_ } @maxClipped) { $cov += $totClip; }
+        else {
+
+            if ((defined $maxClipped[0] && $tot5pClip <= $maxClipped[0]) || !defined $maxClipped[0]) { $cov += $tot5pClip; }
+            if ((defined $maxClipped[1] && $clip3 <= $maxClipped[1]) || !defined $maxClipped[1]) { $cov += $clip3; }
+            if (defined $maxClipped[2] && $totClip > $maxClipped[2]) { $cov -= $totClip; }
 
         }
 
-        $lastqpos = $qpos;
-        $lastrpos = $rpos;
+    }
+
+    return({ tot5pClip => $tot5pClip,
+             clip5soft => $clip5soft,
+             tot3pClip => $clip3,
+             totClip   => $totClip }, $cov, $truelen, \@ins);
+
+}
+
+# Walks the CIGAR once and returns the aligned blocks as [refStart, refEnd, delta],
+# where a reference position p inside a block maps to read position p + delta.
+# The previous version built one hash entry per aligned base, i.e. 150 inserts for
+# a 150 nt read, to serve the handful of lookups parsemd() actually makes.
+# Use refToRead() below to query the result.
+sub alignedBlocks {
+
+    my $row = shift;
+
+    my ($cigar, $rpos, $qpos, @blocks);
+    $cigar = $row->[5];
+    $rpos = $row->[3] - 1;
+    $qpos = 0;
+
+    while ($cigar =~ m/\G(\d+)([MIDNSHP=X])/gc) {
+
+        my ($n, $op) = ($1, $2);
+
+        if ($op eq "M" || $op eq "=" || $op eq "X") {
+
+            push(@blocks, [$rpos, $rpos + $n - 1, $qpos - $rpos]);
+            $qpos += $n;
+            $rpos += $n;
+
+        }
+        elsif ($op eq "I" || $op eq "S") { $qpos += $n; }
+        elsif ($op eq "D" || $op eq "N") { $rpos += $n; }
 
     }
 
-    return(%pos);
+    return(\@blocks);
+
+}
+
+# Maps a single reference position through the blocks built by alignedBlocks(),
+# returning undef when the position is not covered by the alignment
+sub refToRead {
+
+    my ($blocks, $refPos) = @_;
+
+    for my $block (@{$blocks}) {
+
+        return if ($refPos < $block->[0]);
+        return($refPos + $block->[2]) if ($refPos <= $block->[1]);
+
+    }
+
+    return;
+
+}
+
+# median() validates every element through isnumeric(), which calls isreal() and
+# isinf() per value: 300 sub calls for a 150 nt quality string. Quality scores
+# come straight out of unpack("C*") so they are integers by construction
+sub medianQual {
+
+    my ($qual, $offset, $length) = @_;
+
+    my @q = sort { $a <=> $b } unpack("C*", substr($qual, $offset, $length));
+
+    # We avoid using median() to avoid performing all the numeric checks that would slow down
+    return(@q % 2 ? $q[$#q / 2] - 33
+                  : ($q[@q / 2 - 1] + $q[@q / 2]) / 2 - 33);
+
+}
+
+sub parsemd { # SAM MD flag parser
+
+    my ($row, $reference) = @_;
+
+    my ($md, $llen, $qual, $blocks,
+        @pos, %lowQual, %pos);
+    $llen = $row->[3] - 1;
+
+    return([], {}, [], 1) if (@{$row} < 11);
+
+    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
+
+    return([], {}, [], 1) if (!defined $md);
+
+    $blocks = alignedBlocks($row);
+    $qual = $row->[10];
+    $md = uc($md);
+
+    # The MD spec allows any [A-Z] as a reference base, so aligners can emit IUPAC
+    # codes (R, Y, M, ...) for ambiguous reference positions. Anything that is not
+    # A/C/G/T is normalized to N here, so that it is still consumed as one
+    # reference base below: a token that fell through the dispatch would leave $len
+    # un-incremented, shifting every subsequent position of the read 5'-ward
+    $md =~ s/[^ACGT\d^]/N/g;
+
+    # Scanned in place with \G rather than repeatedly chopping the string with
+    # interpolated s/// patterns, which recompiled a regex per MD token
+    pos($md) = 0;
+
+    while ($md =~ m/\G(\d+)/gc) {
+
+        my ($len, $next);
+        $len = $1;
+
+        while ($md =~ m/\G(\D)/gc) {
+
+            $next = $1;
+
+            if ($next eq "^") { # Deletion
+
+                my ($del, $start, $end, $win,
+                    $real, $disttodel, %collapsed);
+
+                $md =~ m/\G([ACGNT]+)/gc;
+                $del = $1;
+
+                if (!$nodel && length($del) <= $maxdel) { # Count unambiguously mapped deletions as mutations
+
+                    my ($before, $after, @truedel);
+
+                    $start = $len + $llen - 1 >= 9 ? $len + $llen - 1 - 9 : 0;
+                    $end = $len + $llen - 1 + length($del) + 10 < length($reference) ? $len + $llen - 1 + length($del) + 10 : length($reference) - 1;
+                    $win = substr($reference, $start, $end - $start + 1);
+                    $disttodel = $len + $llen >= 10 ? 10 : $len + $llen;
+                    $real = substr($reference, $start, $disttodel) . substr($reference, $start + $disttodel + length($del), $end - $start - $disttodel - length($del) + 1);
+
+                    push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
+
+                    if (@{$collapsed{$real}} > 1) { # Deletion is not unambiguously mapped
+
+                        if (!$noambiguous) {
+
+                            my $truedel = $leftalign ? min(@{$collapsed{$real}}) : max(@{$collapsed{$real}});
+                            $before = $truedel - length($del);
+                            $after = $truedel + 1;
+                            @truedel = $rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel));
+
+                            push(@pos, @truedel);
+                            push(@{$pos{del}}, @truedel) if ($outRawCounts);
+
+                        }
+
+                    }
+                    else {
+
+                        $before = $collapsed{$real}->[0] - length($del);
+                        $after = $collapsed{$real}->[0] + 1;
+                        @truedel = $rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]));
+
+                        push(@pos, @truedel);
+                        push(@{$pos{del}}, @truedel) if ($outRawCounts);
+
+                    }
+
+                }
+
+                $len += length($del);
+
+            }
+            else { # Mismatch: always A, C, G, T or N, as $md was normalized above
+
+                my ($refPos, $readPos, $readBase);
+                $refPos = $llen + $len;
+                $readPos = refToRead($blocks, $refPos);
+
+                die "\n\n  [!] Error: MD tag and CIGAR disagree for read \"" . $row->[0] . "\" (position: " . ($refPos + 1) . ")\n\n" if (!defined $readPos);
+
+                $readBase = defined $readPos ? substr($row->[9], $readPos, 1) : substr($row->[9], 0, 1);
+
+                if ($next ne "N" && $readBase ne "N") {
+
+                    my ($before, $after);
+                    $before = $evalsurround ? refToRead($blocks, $refPos - 1) : undef;
+                    $after = $evalsurround ? refToRead($blocks, $refPos + 1) : undef;
+
+                    # Quality bytes are read straight out of the string instead of
+                    # splitting it into one scalar per base
+                    if (ord(substr($qual, $readPos, 1)) - 33 >= $minqual &&
+                        (($evalsurround &&
+                         ((defined $before && ord(substr($qual, $before, 1)) - 33 >= $minqual) || !defined $before) &&
+                         ((defined $after && ord(substr($qual, $after, 1)) - 33 >= $minqual) || !defined $after)) ||
+                         !$evalsurround) &&
+                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) {
+
+                        push(@pos, $refPos);
+                        push(@{$pos{$next . $readBase}}, $refPos) if ($outRawCounts);
+
+                    }
+                    else { $lowQual{$refPos} = 1; }
+
+                    $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
+
+                }
+
+                $len++;
+
+            }
+
+        }
+
+        $llen += $len;
+
+    }
+
+    return(\@pos, \%pos, \%lowQual, 0);
 
 }
 
@@ -2127,6 +2165,10 @@ sub help {
                                                          a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
                                                          separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
                                                          and deletion count
+    -4d  or --four-base-dms                        Preset for four-base DMS experiments [Mitchell et al., 2023] (implies "-m -om H2N,G2Y -ncl")
+                                                   Note: only G->C/G->T mismatches are retained on Gs, as G->A reports the structurally uninformative
+                                                         G-N7 modification, while G-N1 is preferentially read out as G->C/G->T. All mismatches are
+                                                         retained on A/C/T bases, and insertions/deletions are discarded (see -om)
     -ds  or --discard-shorter         <int>        Discards reads spanning less than this number of bases, excluding clipped bases (unless -ic is specified)
                                                    (Default: 1)
                                                    Note: when set to "MEDIAN" (case-insensitive), the median read length will be used

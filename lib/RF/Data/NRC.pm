@@ -1,7 +1,7 @@
 package RF::Data::NRC;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Data::Sequence::Utils;
 
 use base qw(Core::Base);

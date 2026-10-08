@@ -1,7 +1,7 @@
 package Align::Alignment;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 

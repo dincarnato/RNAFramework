@@ -3,7 +3,7 @@ package Data::IO;
 use strict;
 use Fcntl qw(:flock SEEK_END SEEK_SET);
 use HTTP::Tiny;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 
 use base qw(Core::Base);
@@ -212,7 +212,7 @@ sub read {
         my ($buffer, $offset);
         $offset = tell($fh); 
         $size ||= $self->{_size} - $offset + 1;
-        read($fh, $buffer, $size);
+        CORE::read($fh, $buffer, $size);
 
         return($buffer);
 
@@ -244,10 +244,27 @@ sub back {
     #if (ref($self) =~ m/^Data::IO::(?:Track|Sequence)::\w+$/) {
     if (ref($self) =~ m/^Data::IO::\w+/) {
 
-        splice(@{$self->{_prev}}, (@{$self->{_prev}} - $index), $index);
+        # Sequence readers keep an ordered table of record offsets and the
+        # position of the current record in it, so stepping back is a lookup
+        # rather than a stack pop
+        if (ref($self->{_offsets}) eq "ARRAY" &&
+            @{$self->{_offsets}}) {
 
-        push(@{$self->{_prev}}, 0) unless (@{$self->{_prev}});
-        seek($self->{_fh}, pop(@{$self->{_prev}}), SEEK_SET);
+            my $pos = $self->{_pos} - $index;
+            $pos = 0 if ($pos < 0);
+
+            CORE::seek($self->{_fh}, $self->{_offsets}->[$pos], SEEK_SET);
+            $self->{_pos} = $pos - 1;
+
+        }
+        else {
+
+            splice(@{$self->{_prev}}, (@{$self->{_prev}} - $index), $index);
+
+            push(@{$self->{_prev}}, 0) unless (@{$self->{_prev}});
+            CORE::seek($self->{_fh}, pop(@{$self->{_prev}}), SEEK_SET);
+
+        }
 
     }
     else { $self->throw("Unable to call method on a generic object"); }
@@ -324,7 +341,7 @@ sub seek {
 
     $self->throw("Offset must be a positive INT") if (!ispositive($offset) || !isint($offset));
 
-    return(seek($self->{_fh}, $offset, SEEK_SET)) if (fileno($self->{_fh}));
+    return(CORE::seek($self->{_fh}, $offset, SEEK_SET)) if (fileno($self->{_fh}));
 
 }
 
@@ -333,7 +350,7 @@ sub lock {
     my $self = shift;
 
     flock($self->{_fh}, LOCK_EX) or $self->throw("Cannot lock filehandle (" . $! . ")");
-    seek($self->{_fh}, 0, SEEK_END) or $self->throw("Cannot seek filehandle (" . $! . ")");
+    CORE::seek($self->{_fh}, 0, SEEK_END) or $self->throw("Cannot seek filehandle (" . $! . ")");
 
 }
 
@@ -351,7 +368,9 @@ sub reset {
 
     # Reinitialize the prev array for back() calls
     undef(@{$self->{_prev}});
-    seek($self->{_fh}, 0, SEEK_SET) if (fileno($self->{_fh}));
+    undef(@{$self->{_offsets}}) if (ref($self->{_offsets}) eq "ARRAY");
+    $self->{_pos} = -1 if (exists $self->{_pos});
+    CORE::seek($self->{_fh}, 0, SEEK_SET) if (fileno($self->{_fh}));
 
 }
 
@@ -359,7 +378,7 @@ sub goToEof {
 
     my $self = shift;
 
-    seek($self->{_fh}, 0, SEEK_END) if (fileno($self->{_fh}));
+    CORE::seek($self->{_fh}, 0, SEEK_END) if (fileno($self->{_fh}));
 
 }
 
@@ -379,6 +398,17 @@ sub close {
 
 }
 
-sub DESTROY { $_[0]->Data::IO::close(); }
+sub DESTROY { 
+
+    my $self = shift;
+
+    # Only the base class close() here. A subclass close() can write an index
+    # (RF::Data::IO::RC, Data::IO::Sequence::FastaLike), and this runs during
+    # global destruction in every forked child that inherited the object, so
+    # dispatching to the subclass would truncate and rewrite the parent's index
+    # at child exit. Callers that need the index written must call close().
+    $self->Data::IO::close();
+
+}
 
 1;

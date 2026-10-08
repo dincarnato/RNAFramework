@@ -20,7 +20,7 @@ sub new {
                    appendable     => 0,
                    _mappedreads   => 0,
                    _offsets       => {},
-                   _lenghts       => {},
+                   _lengths       => {},
                    _lastoffset    => 0,
                    _lastId        => undef,
                    _streamOffsets => {},
@@ -40,14 +40,16 @@ sub _validate {
 
     my $self = shift;
 
+    $self->throw("File \"" . $self->{file} . "\" is not an MM file") if (lc(substr($self->{file}, -3)) ne ".mm");
+
     if ($self->{mode} eq "w+") {
 
         my ($fh, $eof);
         $fh = $self->{_fh};
 
-        seek($fh, -7, SEEK_END);
-        read($fh, $eof, 7);
-        seek($fh, 0, SEEK_END);
+        CORE::seek($fh, -7, SEEK_END);
+        CORE::read($fh, $eof, 7);
+        CORE::seek($fh, 0, SEEK_END);
 
         $self->throw("EOF already present") if ($eof eq EOF);
 
@@ -70,30 +72,71 @@ sub _loadindex {
         open(my $ih, "<:raw", $self->{index}) or $self->throw("Unable to read from MMI index file (" . $! . ")");
         while(!eof($ih)) {
 
-            read($ih, $data, 2);
+            CORE::read($ih, $data, 2);
             $idlen = unpack("S<", $data);
 
-            read($ih, $data, $idlen);
+            CORE::read($ih, $data, $idlen);
             $id = substr($data, 0, -1); # Removes the "\x00" string terminator
 
-            read($ih, $data, 8);
+            CORE::read($ih, $data, 8);
             $offset = unpack("Q<", $data);
             $self->{_offsets}->{$id}->{start} = $offset; # Stores the start offset for ID
 
-            read($ih, $data, 8);
+            CORE::read($ih, $data, 8);
             $offset = unpack("Q<", $data);
             $self->{_offsets}->{$id}->{end} = $offset; # Stores the end offset for ID
 
-            # Uncomment these to validates offset (slow)
-            #seek($fh, $offset + 2, SEEK_SET);
-            #read($fh, $data, $idlen);
-
-            #$self->throw("Invalid offset in MMI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
-
         }
-        close($ih);
+        CORE::close($ih);
 
     }
+
+}
+
+sub _header {
+
+    my $self = shift;
+    my $id = shift;
+
+    my $entry = $self->{_offsets}->{$id};
+
+    return($entry) if (defined $entry && exists $entry->{seqOffset});
+    return if (!defined $id || !defined $entry);
+
+    my ($fh, $data, $start, $idLen,
+        $length, $seqOffset, $seqBytes);
+    $fh = $self->{_fh};
+    $start = $entry->{start};
+
+    # Record layout:
+    # +0                     len_transcript_id (uint16_t)
+    # +2                     transcript_id     (char[len_transcript_id])
+    # +2+idLen               len_seq           (uint32_t)
+    # +2+idLen+4             seq               (uint8_t[(len_seq+1)/2])
+    # +2+idLen+4+seqBytes    n_reads           (uint32_t)
+    # +2+idLen+4+seqBytes+4  reads
+    # Only the two variable-length fields have to be read; every other address is
+    # arithmetic, so this is done once per transcript and the addresses are kept
+    CORE::seek($fh, $start, SEEK_SET);
+    CORE::read($fh, $data, 2);
+    $idLen = unpack("S<", $data);
+
+    CORE::seek($fh, $idLen, SEEK_CUR);
+    CORE::read($fh, $data, 4);
+    $length = unpack("L<", $data);
+
+    $seqOffset = $start + 2 + $idLen + 4;
+    $seqBytes = ($length + ($length % 2)) / 2;
+
+    $entry->{length} = $length;
+    $entry->{seqOffset} = $seqOffset;
+    $entry->{seqBytes} = $seqBytes;
+    $entry->{countOffset} = $seqOffset + $seqBytes;
+    $entry->{readsOffset} = $seqOffset + $seqBytes + 4;
+
+    $self->{_lengths}->{$id} = $length;
+
+    return($entry);
 
 }
 
@@ -112,7 +155,7 @@ sub read {
 
     if (defined $seqid) {
 
-        if (exists $self->{_offsets}->{$seqid}->{start}) { seek($fh, $self->{_offsets}->{$seqid}->{start}, SEEK_SET); }
+        if (exists $self->{_offsets}->{$seqid}->{start}) { CORE::seek($fh, $self->{_offsets}->{$seqid}->{start}, SEEK_SET); }
         else { return; }
 
     }
@@ -120,8 +163,8 @@ sub read {
     $offset = tell($fh);
 
     # Checks whether MMEOF marker has been reached
-    read($fh, $eightbytes, 7);
-    seek($fh, $offset, SEEK_SET);
+    CORE::read($fh, $eightbytes, 7);
+    CORE::seek($fh, $offset, SEEK_SET);
 
     if ($eightbytes eq EOF || eof($fh)) {
 
@@ -131,31 +174,44 @@ sub read {
 
     }
 
-    read($fh, $data, 2); #read id length
+    CORE::read($fh, $data, 2); #read id length
     $idlen = unpack("S<", $data);
 
-    read($fh, $data, $idlen);
+    CORE::read($fh, $data, $idlen);
     $id = substr($data, 0, -1);
+
+    # A duplicate ID re-assigns the start offset, so any addresses previously
+    # derived from the old one must be dropped
+    if (exists $self->{_offsets}->{$id} &&
+        exists $self->{_offsets}->{$id}->{seqOffset} &&
+        $self->{_offsets}->{$id}->{start} != $offset) {
+
+        delete(@{$self->{_offsets}->{$id}}{qw(length seqOffset seqBytes countOffset readsOffset)});
+        delete($self->{_lengths}->{$id});
+        delete($self->{_streamOffsets}->{$id});
+        delete($self->{_streamStarts}->{$id});
+
+    }
 
     $self->{_offsets}->{$id}->{start} = $offset;
 
-    read($fh, $data, 4);
+    CORE::read($fh, $data, 4);
     $length = unpack("L<", $data);
 
-    read($fh, $data, ($length + ($length % 2)) / 2);
+    CORE::read($fh, $data, ($length + ($length % 2)) / 2);
     $data = unpack("H*", $data);
     $data =~ tr/43210/NTGCA/;
     $sequence = substr($data, 0, $length);
 
-    read($fh, $data, 4);
+    CORE::read($fh, $data, 4);
     $mappedreads = unpack("L<", $data);
 
     for (1 .. $mappedreads) {
 
         my ($start, $end, $nMutations, @mutations);
-        read($fh, $data, 12);
+        CORE::read($fh, $data, 12);
         ($start, $end, $nMutations) = unpack("L<*", $data);
-        read($fh, $data, 4 * $nMutations);
+        CORE::read($fh, $data, 4 * $nMutations);
         @mutations = unpack("L<*", $data);
 
         push(@reads, [ $start, $end, \@mutations ]);
@@ -180,29 +236,27 @@ sub readStream {
     my ($fh, $data);
     $fh = $self->{_fh};
 
-    if (exists $self->{_streamOffsets}->{$id}) { seek($fh, $self->{_streamOffsets}->{$id}, SEEK_SET); }
-    else {
+    if (!exists $self->{_streamOffsets}->{$id}) {
 
-        my ($idLen, $length);
+        my $entry = $self->_header($id);
 
-        seek($fh, $self->{_offsets}->{$id}->{start}, SEEK_SET);
-        read($fh, $data, 2); #read id length
-        $idLen = unpack("S<", $data);
-        seek($fh, $idLen, SEEK_CUR);
-        read($fh, $data, 4);
-        $length = unpack("L<", $data);
-        seek($fh, ($length + ($length % 2)) / 2 + 4, SEEK_CUR);
+        return if (!defined $entry);
 
-        $self->{_streamStarts}->{$id} = tell($fh);
+        $self->{_streamStarts}->{$id} = $entry->{readsOffset};
+        $self->{_streamOffsets}->{$id} = $entry->{readsOffset};
 
     }
+
+    # Consecutive reads on the same transcript are already sequential, so
+    # seeking every time only flushes the PerlIO buffer for nothing
+    CORE::seek($fh, $self->{_streamOffsets}->{$id}, SEEK_SET) if (tell($fh) != $self->{_streamOffsets}->{$id});
 
     if (tell($fh) < $self->{_offsets}->{$id}->{end}) {
 
         my ($start, $end, $nMutations, @mutations);
-        read($fh, $data, 12);
+        CORE::read($fh, $data, 12);
         ($start, $end, $nMutations) = unpack("L<*", $data);
-        read($fh, $data, 4 * $nMutations);
+        CORE::read($fh, $data, 4 * $nMutations);
         @mutations = unpack("L<*", $data);
 
         $self->{_streamOffsets}->{$id} = tell($fh);
@@ -300,9 +354,9 @@ sub _updatereadscount {
 
     if ($self->{_lastoffset}) {
 
-        seek($fh, $self->{_lastoffset}, SEEK_SET);
+        CORE::seek($fh, $self->{_lastoffset}, SEEK_SET);
         print $fh pack("L<", $self->{_mappedreads});
-        seek($fh, 0, SEEK_END);
+        CORE::seek($fh, 0, SEEK_END);
 
         $self->{_mappedreads} = 0;
 
@@ -321,7 +375,7 @@ sub buildIndex {
     my ($fh, $eightbytes);
     $fh = $self->{_fh};
 
-    seek($fh, 0, SEEK_SET);
+    CORE::seek($fh, 0, SEEK_SET);
 
     while ($eightbytes ne EOF && !eof($fh)) {
 
@@ -329,28 +383,39 @@ sub buildIndex {
             $length, $nReads);
         $offset = tell($fh);
 
-        read($fh, $data, 2); #read id length
+        CORE::read($fh, $data, 2); #read id length
         $idLen = unpack("S<", $data);
 
-        read($fh, $data, $idLen);
+        CORE::read($fh, $data, $idLen);
         $id = substr($data, 0, -1);
+
+        if (exists $self->{_offsets}->{$id} &&
+            exists $self->{_offsets}->{$id}->{seqOffset} &&
+            $self->{_offsets}->{$id}->{start} != $offset) {
+
+            delete(@{$self->{_offsets}->{$id}}{qw(length seqOffset seqBytes countOffset readsOffset)});
+            delete($self->{_lengths}->{$id});
+            delete($self->{_streamOffsets}->{$id});
+            delete($self->{_streamStarts}->{$id});
+
+        }
 
         $self->{_offsets}->{$id}->{start} = $offset;
 
-        read($fh, $data, 4);
+        CORE::read($fh, $data, 4);
         $length = unpack("L<", $data);
 
-        seek($fh, ($length + ($length % 2)) / 2, SEEK_CUR);
+        CORE::seek($fh, ($length + ($length % 2)) / 2, SEEK_CUR);
 
-        read($fh, $data, 4);
+        CORE::read($fh, $data, 4);
         $nReads = unpack("L<", $data);
 
         for (1 .. $nReads) {
 
             my ($start, $end, $nMutations);
-            read($fh, $data, 12);
+            CORE::read($fh, $data, 12);
             ($start, $end, $nMutations) = unpack("L<*", $data);
-            seek($fh, 4 * $nMutations, SEEK_CUR);
+            CORE::seek($fh, 4 * $nMutations, SEEK_CUR);
 
         }
 
@@ -358,8 +423,8 @@ sub buildIndex {
 
         if (!eof($fh)) {
 
-            read($fh, $eightbytes, 7);
-            seek($fh, -7, SEEK_CUR);
+            CORE::read($fh, $eightbytes, 7);
+            CORE::seek($fh, -7, SEEK_CUR);
 
         }
 
@@ -385,7 +450,7 @@ sub _writeIndex {
 
     }
 
-    close($ih);
+    CORE::close($ih);
 
 }
 
@@ -403,9 +468,9 @@ sub close {
 
         if ($self->{mode} eq "w+") {
 
-            seek($fh, -7, SEEK_END);
-            read($fh, $eof, 7);
-            seek($fh, 0, SEEK_END);
+            CORE::seek($fh, -7, SEEK_END);
+            CORE::read($fh, $eof, 7);
+            CORE::seek($fh, 0, SEEK_END);
 
         }
 
@@ -436,22 +501,13 @@ sub length {
 
     return if (!defined $id || !exists $self->{_offsets}->{$id});
 
-    if (!exists $self->{_lengths}->{$id}) {
+    return($self->{_lengths}->{$id}) if (exists $self->{_lengths}->{$id});
 
-        my ($fh, $data, $idLen, $length);
-        $fh = $self->{_fh};
-        seek($fh, $self->{_offsets}->{$id}->{start}, SEEK_SET);
-        read($fh, $data, 2); #read id length
-        $idLen = unpack("S<", $data);
-        seek($fh, $idLen, SEEK_CUR);
-        read($fh, $data, 4);
-        $length = unpack("L<", $data);
+    my $entry = $self->_header($id);
 
-        $self->{_lengths}->{$id} = $length;
+    return if (!defined $entry);
 
-    }
-
-    return($self->{_lengths}->{$id});
+    return($entry->{length});
 
 }
 
@@ -462,22 +518,22 @@ sub sequence {
 
     return if (!defined $id || !exists $self->{_offsets}->{$id});
 
-    my ($fh, $data, $idLen, $length);
+    my ($fh, $data, $entry, $cached);
+    $cached = exists $self->{_offsets}->{$id}->{seqOffset};
+    $entry = $self->_header($id);
+
+    return if (!defined $entry);
+
+    # _header() leaves the filehandle on the sequence block, so a seek is only
+    # needed when the addresses came from the cache
     $fh = $self->{_fh};
-    seek($fh, $self->{_offsets}->{$id}->{start}, SEEK_SET);
-    read($fh, $data, 2); #read id length
-    $idLen = unpack("S<", $data);
-    seek($fh, $idLen, SEEK_CUR);
-    read($fh, $data, 4);
-    $length = unpack("L<", $data);
+    CORE::seek($fh, $entry->{seqOffset}, SEEK_SET) if ($cached);
 
-    $self->{_lengths}->{$id} = $length;
-
-    read($fh, $data, ($length + ($length % 2)) / 2);
+    CORE::read($fh, $data, $entry->{seqBytes});
     $data = unpack("H*", $data);
     $data =~ tr/43210/NTGCA/;
-    
-    return(substr($data, 0, $length));
+
+    return(substr($data, 0, $entry->{length}));
 
 }
 
@@ -488,20 +544,22 @@ sub readCount {
 
     return if (!defined $id || !exists $self->{_offsets}->{$id});
 
-    my ($fh, $data, $idLen, $length);
+    my ($fh, $data, $entry, $cached);
+    $cached = exists $self->{_offsets}->{$id}->{seqOffset};
+    $entry = $self->_header($id);
+
+    return if (!defined $entry);
+
     $fh = $self->{_fh};
-    seek($fh, $self->{_offsets}->{$id}->{start}, SEEK_SET);
-    read($fh, $data, 2); #read id length
-    $idLen = unpack("S<", $data);
-    seek($fh, $idLen, SEEK_CUR);
-    read($fh, $data, 4);
-    $length = unpack("L<", $data);
 
-    $self->{_lengths}->{$id} = $length;
+    # Cached addresses allow seeking straight to the read count, otherwise the
+    # filehandle already sits on the sequence block, which is cheaper to read
+    # through than to seek past
+    if ($cached) { CORE::seek($fh, $entry->{countOffset}, SEEK_SET); }
+    else { CORE::read($fh, $data, $entry->{seqBytes}); }
 
-    read($fh, $data, ($length + ($length % 2)) / 2);
-    read($fh, $data, 4);
-    
+    CORE::read($fh, $data, 4);
+
     return(unpack("L<", $data));
 
 }

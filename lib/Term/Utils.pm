@@ -1,19 +1,20 @@
 package Term::Utils;
 
 use strict;
+use POSIX ();
+
 use Core::Mathematics;
 use Core::Utils;
 
 use base qw(Exporter);
 
-our @EXPORT = qw(termsize getCursorPos setCursorPos formatlongtext);
+our @EXPORT = qw(termsize getCursorPos setCursorPos formatlongtext isForeground);
 
 sub termsize {
     
     my ($lines, $columns);
     
-    if (defined $ENV{LINES} &&
-        defined $ENV{COLUMNS}) {
+    if (defined $ENV{LINES} && defined $ENV{COLUMNS}) {
         
         $lines = $ENV{LINES};
         $columns = $ENV{COLUMNS};
@@ -54,6 +55,8 @@ sub termsize {
 sub getCursorPos {
 
     my ($x, $y);
+
+    return(0, 0) if (!isForeground());
 
     if (my $stty = which("stty")) {
 
@@ -149,7 +152,7 @@ sub setCursorPos {
 
     my ($row, $col) = @_;
 
-    print "\033[$row;$col\H";
+    print "\033[$row;${col}H";
 
 }
 
@@ -205,6 +208,24 @@ sub _getc {
         }
 
     }
+
+}
+
+sub isForeground {
+
+    # A background job (started with "&") still has the terminal as its STDOUT,
+    # so -t STDOUT alone is not enough to decide whether it may drive the cursor.
+    # Querying the cursor position requires putting the terminal in raw mode and
+    # reading the reply back; doing either from a background process group raises
+    # SIGTTOU/SIGTTIN and the kernel stops the job. Only the foreground process
+    # group owns the terminal, so test for that.
+    return if (!-t STDOUT);
+
+    my $pgrp = eval { POSIX::tcgetpgrp(fileno(STDOUT)) };
+
+    return if (!defined $pgrp || $pgrp <= 0);
+
+    return($pgrp == getpgrp() ? 1 : 0);
 
 }
 

@@ -1,7 +1,7 @@
 package Graphics::Chart;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 
 use base qw(Core::Base);
@@ -26,7 +26,7 @@ sub new {
                    legendSort       => [],
                    legendColors     => {},
                    colorScale       => "discrete",
-		   colorScaleLimits => [],
+		           colorScaleLimits => [],
                    colorPalette     => "YlGnBu",
                    invertPalette    => 0,
                    xLimit           => [],
@@ -49,6 +49,7 @@ sub new {
                    background      => 1,
                    flipCoords      => 0,
                    yScale          => "natural",
+                   aspectRatio     => undef,
                    _nFillValues    => 0 }, \%parameters);
 
     $self->throw("Cannot create a generic Graphics::Chart object") if ($class eq "Graphics::Chart");
@@ -68,6 +69,7 @@ sub _validate {
 
     $self->throw("Data ARRAY is empty") if (!@{$self->{data}});
     $self->throw("No data label defined for fill") if ($self->{legend} && !defined $self->{fill});
+    $self->throw("aspectRatio must be a positive number > 0") if (defined $self->{aspectRatio} && (!isnumeric($self->{aspectRatio}) || $self->{aspectRatio} <= 0));
     $self->throw("Invalid colorScale value \"" . $self->{colorScale} . "\" (allowed: \"discrete\" and \"gradient\")") if ($self->{colorScale} !~ /^(?:discrete|gradient)$/);
     $self->throw("Invalid colorPalette value \"" . $self->{colorPalette} . "\"") if ($self->{colorPalette} !~ /^(?:$palettes)$/);
     $self->throw("Invalid Y-axis scale \"" . $self->{yScale} . "\"") if ($self->{yScale} !~ /^(?:natural|log(?:2|10)?)$/);
@@ -233,7 +235,7 @@ sub _generateRcode {
 
         }
 
-        if ($isFillNumeric || $self->{_nFillValues} < 12) {
+        if ($isFillNumeric || $self->{_nFillValues} <= 12) {
 
             $Rcode = ($self->{colorScale} eq "discrete" ? "scale_" . $self->{_paletteType} . "_brewer" : "scale_" . $self->{_paletteType} . "_distiller") . "(palette='" . $self->{colorPalette} . "'";
 
@@ -277,6 +279,8 @@ sub _generateRcode {
     }
     else { $Rcode .= ", legend.position='none'"; }
 
+    $Rcode .= ", aspect.ratio=" . $self->{aspectRatio} if (defined $self->{aspectRatio});
+    
     $Rcode .= ", axis.title.x=" . ($self->{xTitle} ? "element_text(size=" . $self->{axisTitleSize} . ", margin=margin(t=10))" : "element_blank()") .
               ", axis.title.y=" . ($self->{yTitle} ? "element_text(size=" . $self->{axisTitleSize} . ", margin=margin(r=10))" : "element_blank()") .
               ", plot.margin=margin(10,0,0,0))"; # This adds a bit of margin to the top of the plot

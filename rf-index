@@ -23,7 +23,7 @@ use HTTP::Tiny;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO::XML;
 use Net::DB::MySQL;

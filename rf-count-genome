@@ -13,7 +13,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use lib $Bin . "/lib";
 
 use Core::Utils;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Process::Queue;
 use Core::Statistics;
 use Data::IO::Sequence;
@@ -53,7 +53,6 @@ do {
 
     GetOptions( "h|help"                     => \$help,
                 "br|baseRC=s"                => \$baseRC,
-                "t|tmp-dir=s"                => \$tmpdir,
                 "o|output-dir=s"             => \$output,
                 "ow|overwrite"               => \$overwrite,
                 "t5|trim-5prime=s"           => \$bam_trim5,
@@ -246,7 +245,7 @@ foreach my $sample (uniq(@ARGV)) {
 
     die "  [!] Error: Specified sample file \"$sample\" doesn't exist\n\n" if (!-e $sample);
 
-    ($file, $path, $extension) = fileparse($sample, qr/\.[^.]*/);
+    ($file, $path, $extension) = fileparse($sample, qr/\.[bs]am$/i);
     ($format, $sorted, $missingMD) = guessTypeAndSorting($sample);
 
     if (!$libraryType) {
@@ -499,6 +498,7 @@ if (my @missingMD = grep { $_->{missingMD} } @qcounter) {
                                   id      => $sample->{file} );
 
         $sample->{path} = $path;
+        $sample->{indexed} = 0;
 
     }
 
@@ -889,7 +889,7 @@ sub count {
             next if ($start < 0 || (!$mutcount && !$covonly && $realStrand eq "+" && $start - 1 < 0));
             next if ($mutcount && $cov < $discardshorter);
             next if ($mutcount && $editdist / $cov > $maxmut);
-            next if ($mutcount && median(map { unpack("C*", $_) - 33 } split(//, substr($row[10], $clip5, $truelen))) < $medianqual); # Check median read's quality
+            next if ($mutcount && medianQual($row[10], $clip5, $truelen) < $medianqual); # Check median read's quality
             #next if ($po && $row[1] & 1 && $row[1] & 8); # Read is one of a pair, but one mate is unmapped
             #next if ($pp && $row[1] & 1 && !($row[1] & 2)); # Read is one of a pair, but pair is not properly mapped
             next if ((($row[5] =~ m/^\d+S/ && $realStrand eq "+") || ($row[5] =~ m/\d+S$/ && $realStrand eq "-")) && !$mutcount && !$covonly); # Discard read in RT-count mode, if it has soft/hard clipping at 5'-end
@@ -973,7 +973,7 @@ sub count {
                     if ($row !~ m/NM:i:0/) {
 
                         my ($muts, $missingMD, $lowQual, @uniqmutations);
-                        ($muts, $lowQual, $missingMD) = parsemd(\@row, clonearrayref($gaps), $realStrand);
+                        ($muts, $lowQual, $missingMD) = parsemd(\@row, [@{$gaps}], $realStrand);
 
                         if ($missingMD) {
 
@@ -1005,7 +1005,7 @@ sub count {
 
                         }
 
-                        if ($noCovLowQual) { map { $coverage{$realStrand}->[$_ - $blockData{"start"}]-- } @$lowQual; }
+                        if ($noCovLowQual) { $coverage{$realStrand}->[$_ - $blockData{"start"}]-- for @$lowQual; }
 
                     }
 
@@ -1048,7 +1048,7 @@ sub count {
                 foreach my $gap (@$gaps) {
 
                     $lastEnd = $lastStart + $gap->[0];
-                    map { $coverage{$realStrand}->[$_]++ } $lastStart .. $lastEnd;
+                    $coverage{$realStrand}->[$_]++ for ($lastStart .. $lastEnd);
                     $lastStart = $lastEnd + $gap->[1] + 1;
 
                 }
@@ -1056,10 +1056,10 @@ sub count {
                 $lastEnd = $start + $covWithGaps - 1;
                 $lastEnd += $sample->{trim5} if (!$mutcount && !$covonly && $realStrand eq "+");
 
-                map { $coverage{$realStrand}->[$_]++ } $lastStart .. $lastEnd;
+                $coverage{$realStrand}->[$_]++ for ($lastStart .. $lastEnd);
 
             }
-            else { map { $coverage{$realStrand}->[$_]++ } $start .. $start + $cov - 1; }
+            else { $coverage{$realStrand}->[$_]++ for ($start .. $start + $cov - 1); }
 
         }
 
@@ -1190,196 +1190,7 @@ sub guessTypeAndSorting {
 
 }
 
-sub parsemd { # SAM MD flag parser
 
-    my ($row, $gaps, $strand) = @_;
-
-    my ($md, $llen, $realStart, $lastGapEnd,
-        @pos, @quals, @lowQual, %posMap);
-    $realStart = $row->[3] - 1;
-    $llen = $realStart;
-    $lastGapEnd = $realStart;
-
-    return([], [], 1) if (@{$row} < 11);
-
-    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
-
-    return([], [], 1) if (!defined $md);
-
-    %posMap = ref2read($row);
-    @quals = split(//, $row->[10]);
-    $md = uc($md);
-
-    while($md =~ m/^(\d+)/) {
-
-        my ($len, $next);
-        $len = $1;
-        $md =~ s/^$len//;
-
-        while (@$gaps && $llen + $len > $lastGapEnd + $gaps->[0]->[0]) {
-
-            my $gap = shift(@$gaps); 
-            $llen += $gap->[1];
-            $lastGapEnd += $gap->[0] + $gap->[1] + 1; 
-
-        }
-
-        while($md =~ m/^(\D)/) {
-
-            $next = $1;
-
-            if ($next eq "^") { # Deletion
-
-                my ($del, $start, $end, $win,
-                    $real, $disttodel, %collapsed);
-
-                $md =~ s/^\^//;
-                $md =~ m/^([ACGNT]+)/;
-                $del = $1;
-
-                if (!$nodel && length($del) <= $maxdel) { # Count unambiguously mapped deletions as mutations
-
-                    my ($before, $after, @truedel);
-
-                    # Extract a window of 20 nt (+/- 10nt) centered on the deletion
-                    $start = $len + $llen - 1 - $blockData{"start"} >= 9 ? $len + $llen - 1 - 9 : $blockData{"start"};
-                    $end = $len + $llen - 1 + length($del) + 10 < $transcripts{$realid{$row->[2]}} ? $len + $llen - 1 + length($del) + 10 : $transcripts{$realid{$row->[2]}} - 1;
-                    $win = substr($blockData{"sequence"}, $start - $blockData{"start"}, $end - $start + 1);
-                    $disttodel = $len + $llen >= 10 ? 10 : $len + $llen;
-                    $real = substr($blockData{"sequence"}, $start - $blockData{"start"}, $disttodel) . substr($blockData{"sequence"}, $start + $disttodel + length($del) - $blockData{"start"}, $end - $start - $disttodel - length($del) + 1);
-
-                    # Slide the deletion along sequence, and build hash table
-                    push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
-
-                    if (@{$collapsed{$real}} > 1) { # Deletion is not unambiguously mapped
-                    
-                        if (!$noambiguous) {
-
-                            my $shift = @{$collapsed{$real}} - 1;
-                            my $truedel = $leftalign ? ($strand eq "+" ? min(@{$collapsed{$real}}) : max(@{$collapsed{$real}})) :
-                                                       ($strand eq "+" ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}}));
-                            $before = $truedel - length($del);
-                            $after = $truedel + 1;
-                            @truedel = $strand eq "+" ? ($rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel))) :
-                                                        ($rightdel ? ($before + 1) : $leftdel ? ($truedel) : ($before + 1 .. $truedel));
-                            push(@pos, @truedel); #if (($evalsurround &&
-                                                  #    ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
-                                                  #    ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
-                                                  #   !$evalsurround);
-
-                        }
-
-                    }
-                    else {
-
-                        $before = $collapsed{$real}->[0] - length($del);
-                        $after = $collapsed{$real}->[0] + 1;
-                        @truedel = $strand eq "+" ? ($rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]))) :
-                                                    ($rightdel ? ($before + 1) : $leftdel ? ($collapsed{$real}->[0]) : ($before + 1 .. $collapsed{$real}->[0]));
-                        push(@pos, @truedel); # if (($evalsurround &&
-                                              #    ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
-                                              #    ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
-                                              #   !$evalsurround);
-
-                    }
-
-                }
-
-                $len += length($del);
-                $md =~ s/^$del//;
-
-            }
-            elsif ($next =~ m/^([ACGNT])$/) {
-
-                my ($readBase, $realNext);
-                $readBase = substr($row->[9], $posMap{$llen + $len}, 1);
-                $realNext = $next;
-
-                if ($next ne "N" && $readBase ne "N") {
-
-                    if ($strand eq "-") {
-
-                        $readBase = dnarevcomp($readBase);
-                        $next = dnarevcomp($next);
-
-                    }
-
-                    # Include the mutation if both the mutated base and the bases immediately surroundinding
-                    # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
-                    if (unpack("C*", $quals[$posMap{$llen + $len}]) - 33 >= $minqual &&
-                        (($evalsurround &&
-                        ((exists $posMap{$llen + $len - 1} && unpack("C*", $quals[$posMap{$llen + $len - 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len - 1}) &&
-                        ((exists $posMap{$llen + $len + 1} && unpack("C*", $quals[$posMap{$llen + $len + 1}]) - 33 >= $minqual) || !exists $posMap{$llen + $len + 1})) ||
-                        !$evalsurround) &&
-                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) { push(@pos, $len + $llen); }
-                    else { push(@lowQual, $len + $llen); }
-
-                    $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
-
-                }
-
-                $md =~ s/^$realNext//;
-                $len++;
-
-            }
-
-        }
-
-        $llen += $len;
-
-    }
-
-    return(\@pos, \@lowQual, 0);
-
-}
-
-sub parsecigar {
-
-    my $cigar = shift;
-
-    my ($cov, $truelen, $last, $lastMatch,
-        $clip5, @ins, @gaps);
-    $cov = $truelen = $last = $lastMatch = $clip5 = 0;
-
-    while ($cigar =~ m/^(\d+[SH])/) { 
-
-        my $clipsh = $1;    
-        $cigar =~ s/^$clipsh//;
-        $clipsh =~ s/[SH]$//;
-        $clip5 += $clipsh;
-        
-    }
-
-    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
-
-        my ($n, $op) = ($1, $2);
-
-        if ($op eq "N") {
-
-            push(@gaps, [$lastMatch - 1, $n]);
-            $lastMatch = 0;
-
-        }
-
-        $last += $n if ($op =~ m/^[DNM=X]$/);
-
-        if ($op =~ m/^[DM=X]$/) {
-
-            $cov += $n;
-            $lastMatch += $n;
-
-        }
-
-        $truelen += $n if ($op =~ m/^[MI=X]$/);
-        push(@ins, $last - 1) if ($op eq "I"); # Relative position of the inserted nucleotide
-
-        $cigar =~ s/^$n$op//;
-
-    }
-
-    return($clip5, $cov, $truelen, $last, \@ins, \@gaps);
-
-}
 
 sub editdist {
 
@@ -1449,55 +1260,266 @@ sub rmconsecutive {
 
 }
 
-sub ref2read { # Reference to read relative position
+
+sub parsecigar {
+
+    my $cigar = shift;
+
+    my ($cov, $truelen, $last, $lastMatch,
+        $clip5, @ins, @gaps);
+    $cov = $truelen = $last = $lastMatch = $clip5 = 0;
+
+    # Scanned in place with \G instead of repeatedly chopping the string with an
+    # interpolated s///, which recompiled a regex for every CIGAR operation
+    while ($cigar =~ m/\G(\d+)[SH]/gc) { $clip5 += $1; }
+
+    while ($cigar =~ m/\G(\d+)([MIDNSHP=X])/gc) {
+
+        my ($n, $op) = ($1, $2);
+
+        if ($op eq "N") {
+
+            push(@gaps, [$lastMatch - 1, $n]);
+            $lastMatch = 0;
+            $last += $n;
+
+        }
+        elsif ($op eq "M" || $op eq "=" || $op eq "X") {
+
+            $cov += $n;
+            $lastMatch += $n;
+            $last += $n;
+            $truelen += $n;
+
+        }
+        elsif ($op eq "D") { $cov += $n; $lastMatch += $n; $last += $n; }
+        elsif ($op eq "I") { $truelen += $n; push(@ins, $last - 1); }
+
+    }
+
+    return($clip5, $cov, $truelen, $last, \@ins, \@gaps);
+
+}
+
+# Walks the CIGAR once and returns the aligned blocks as [refStart, refEnd, delta],
+# where a reference position p inside a block maps to read position p + delta.
+# The previous version built one hash entry per aligned base, i.e. 150 inserts for
+# a 150 nt read, to serve the handful of lookups parsemd() actually makes.
+# Use refToRead() below to query the result.
+sub alignedBlocks {
 
     my $row = shift;
 
-    my ($rpos, $qpos, $cigar, $lastrpos,
-        $lastqpos, @ops, %pos, %ops);
+    my ($cigar, $rpos, $qpos, @blocks);
     $cigar = $row->[5];
-    $rpos = $lastrpos = $row->[3] - 1;
-    $qpos = $lastqpos = 0;
-    %ops = ( "M" => [1, 1],
-             "I" => [1, 0],
-             "D" => [0, 1],
-             "N" => [0, 1],
-             "S" => [1, 0],
-             "H" => [0, 0],
-             "P" => [0, 0],
-             "=" => [1, 1],
-             "X" => [1, 1] );
+    $rpos = $row->[3] - 1;
+    $qpos = 0;
 
-    while($cigar =~ m/^(\d+)([MIDNSHP=X])/) {
+    while ($cigar =~ m/\G(\d+)([MIDNSHP=X])/gc) {
 
         my ($n, $op) = ($1, $2);
-        push(@ops, [$n, $op]);
-        $cigar =~ s/^$n$op//;
+
+        if ($op eq "M" || $op eq "=" || $op eq "X") {
+
+            push(@blocks, [$rpos, $rpos + $n - 1, $qpos - $rpos]);
+            $qpos += $n;
+            $rpos += $n;
+
+        }
+        elsif ($op eq "I" || $op eq "S") { $qpos += $n; }
+        elsif ($op eq "D" || $op eq "N") { $rpos += $n; }
 
     }
 
-    for (@ops) {
+    return(\@blocks);
 
-        my ($n, $op) = @{$_};
-        next if (!$ops{$op}->[0] &&
-                 !$ops{$op}->[1]);
+}
 
-        $qpos += $n if ($ops{$op}->[0]);
-        $rpos += $n if ($ops{$op}->[1]);
+# Maps a single reference position through the blocks built by alignedBlocks(),
+# returning undef when the position is not covered by the alignment
+sub refToRead {
 
-        if ($ops{$op}->[0] &&
-            $ops{$op}->[1]) {
+    my ($blocks, $refPos) = @_;
 
-            if (my $diff = $qpos - $lastqpos) { $pos{$lastrpos + $_} = $lastqpos + $_ for (0 .. $diff - 1); }
+    for my $block (@{$blocks}) {
+
+        return if ($refPos < $block->[0]);
+        return($refPos + $block->[2]) if ($refPos <= $block->[1]);
+
+    }
+
+    return;
+
+}
+
+# median() validates every element through isnumeric(), which calls isreal() and
+# isinf() per value. Quality scores come straight out of unpack("C*") so they are
+# integers by construction.
+sub medianQual {
+
+    my ($qual, $offset, $length) = @_;
+
+    my @q = sort { $a <=> $b } unpack("C*", substr($qual, $offset, $length));
+
+    return(@q % 2 ? $q[$#q / 2] - 33
+                  : ($q[@q / 2 - 1] + $q[@q / 2]) / 2 - 33);
+
+}
+
+
+sub parsemd { # SAM MD flag parser
+
+    my ($row, $gaps, $strand) = @_;
+
+    my ($md, $llen, $realStart, $lastGapEnd,
+        @pos, @lowQual, $blocks, $qual);
+    $realStart = $row->[3] - 1;
+    $llen = $realStart;
+    $lastGapEnd = $realStart;
+
+    return([], [], 1) if (@{$row} < 11);
+
+    for (10 .. $#{$row}) { if ($row->[$_] =~ m/^MD:Z:(.+)$/) { $md = $1; last; } }
+
+    return([], [], 1) if (!defined $md);
+
+    $blocks = alignedBlocks($row);
+    $qual = $row->[10];
+    $md = uc($md);
+
+    # The MD spec allows any [A-Z] as a reference base, so aligners can emit IUPAC
+    # codes (R, Y, M, ...) for ambiguous reference positions. Anything that is not
+    # A/C/G/T is normalized to N here, so that it is still consumed as one
+    # reference base below: a token that fell through the dispatch would leave $len
+    # un-incremented, shifting every subsequent position of the read 5'-ward
+    $md =~ s/[^ACGT\d^]/N/g;
+
+    pos($md) = 0;
+
+    while ($md =~ m/\G(\d+)/gc) {
+
+        my ($len, $next);
+        $len = $1;
+
+        while (@$gaps && $llen + $len > $lastGapEnd + $gaps->[0]->[0]) {
+
+            my $gap = shift(@$gaps); 
+            $llen += $gap->[1];
+            $lastGapEnd += $gap->[0] + $gap->[1] + 1; 
 
         }
 
-        $lastqpos = $qpos;
-        $lastrpos = $rpos;
+        while ($md =~ m/\G(\D)/gc) {
+
+            $next = $1;
+
+            if ($next eq "^") { # Deletion
+
+                my ($del, $start, $end, $win,
+                    $real, $disttodel, %collapsed);
+
+                $md =~ m/\G([ACGNT]+)/gc;
+                $del = $1;
+
+                if (!$nodel && length($del) <= $maxdel) { # Count unambiguously mapped deletions as mutations
+
+                    my ($before, $after, @truedel);
+
+                    # Extract a window of 20 nt (+/- 10nt) centered on the deletion
+                    $start = $len + $llen - 1 - $blockData{"start"} >= 9 ? $len + $llen - 1 - 9 : $blockData{"start"};
+                    $end = $len + $llen - 1 + length($del) + 10 < $transcripts{$realid{$row->[2]}} ? $len + $llen - 1 + length($del) + 10 : $transcripts{$realid{$row->[2]}} - 1;
+                    $win = substr($blockData{"sequence"}, $start - $blockData{"start"}, $end - $start + 1);
+                    $disttodel = $len + $llen >= 10 ? 10 : $len + $llen;
+                    $real = substr($blockData{"sequence"}, $start - $blockData{"start"}, $disttodel) . substr($blockData{"sequence"}, $start + $disttodel + length($del) - $blockData{"start"}, $end - $start - $disttodel - length($del) + 1);
+
+                    # Slide the deletion along sequence, and build hash table
+                    push(@{$collapsed{substr($win, 0, $_) . substr($win, $_ + length($del), length($win) - length($del) - $_)}}, $start + $_ + length($del) - 1) for (0 .. length($win) - length($del));
+
+                    if (@{$collapsed{$real}} > 1) { # Deletion is not unambiguously mapped
+                    
+                        if (!$noambiguous) {
+
+                            my $shift = @{$collapsed{$real}} - 1;
+                            my $truedel = $leftalign ? ($strand eq "+" ? min(@{$collapsed{$real}}) : max(@{$collapsed{$real}})) :
+                                                       ($strand eq "+" ? max(@{$collapsed{$real}}) : min(@{$collapsed{$real}}));
+                            $before = $truedel - length($del);
+                            $after = $truedel + 1;
+                            @truedel = $strand eq "+" ? ($rightdel ? ($truedel) : ($leftdel ? ($before + 1) : ($before + 1 .. $truedel))) :
+                                                        ($rightdel ? ($before + 1) : $leftdel ? ($truedel) : ($before + 1 .. $truedel));
+                            push(@pos, @truedel); #if (($evalsurround &&
+                                                  #    ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
+                                                  #    ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
+                                                  #   !$evalsurround);
+
+                        }
+
+                    }
+                    else {
+
+                        $before = $collapsed{$real}->[0] - length($del);
+                        $after = $collapsed{$real}->[0] + 1;
+                        @truedel = $strand eq "+" ? ($rightdel ? ($collapsed{$real}->[0]) : ($leftdel ? ($before + 1) : ($before + 1 .. $collapsed{$real}->[0]))) :
+                                                    ($rightdel ? ($before + 1) : $leftdel ? ($collapsed{$real}->[0]) : ($before + 1 .. $collapsed{$real}->[0]));
+                        push(@pos, @truedel); # if (($evalsurround &&
+                                              #    ((exists $posMap{$before} && unpack("C*", $quals[$posMap{$before}]) - 33 >= $minqual) || !exists $posMap{$before}) &&
+                                              #    ((exists $posMap{$after} && unpack("C*", $quals[$posMap{$after}]) - 33 >= $minqual) || !exists $posMap{$after})) ||
+                                              #   !$evalsurround);
+
+                    }
+
+                }
+
+                $len += length($del);
+
+            }
+            else {
+
+                # $realNext is gone: it existed only to consume the original
+                # (pre-revcomp) character with s///, which \G scanning already did
+                my ($readBase, $readPos);
+                $readPos = refToRead($blocks, $llen + $len);
+
+                die "\n\n  [!] Error: MD tag and CIGAR disagree for read \"" . $row->[0] . "\" (position: " . ($llen + $len + 1) . ")\n\n" if (!defined $readPos);
+
+                $readBase = substr($row->[9], $readPos, 1);
+
+                if ($next ne "N" && $readBase ne "N") {
+
+                    if ($strand eq "-") {
+
+                        $readBase = dnarevcomp($readBase);
+                        $next = dnarevcomp($next);
+
+                    }
+
+                    # Include the mutation if both the mutated base and the bases immediately surroundinding
+                    # have a quality score >= minqual, and the mutated base is not a N in the reference or in the read
+                    my $before = $evalsurround ? refToRead($blocks, $llen + $len - 1) : undef;
+                    my $after  = $evalsurround ? refToRead($blocks, $llen + $len + 1) : undef;
+
+                    if (ord(substr($qual, $readPos, 1)) - 33 >= $minqual &&
+                        (($evalsurround &&
+                        ((defined $before && ord(substr($qual, $before, 1)) - 33 >= $minqual) || !defined $before) &&
+                        ((defined $after  && ord(substr($qual, $after,  1)) - 33 >= $minqual) || !defined $after)) ||
+                        !$evalsurround) &&
+                        (($onlyMut && $onlyMut{$next . $readBase}->{take}) || !$onlyMut)) { push(@pos, $len + $llen); }
+                    else { push(@lowQual, $len + $llen); }
+
+                    $onlyMut{$next . $readBase}->{count}++ if ($onlyMut);
+
+                }
+
+                $len++;
+
+            }
+
+        }
+
+        $llen += $len;
 
     }
 
-    return(%pos);
+    return(\@pos, \@lowQual, 0);
 
 }
 
@@ -1554,15 +1576,14 @@ sub help {
 
  |
  +- Mutation count mode options
-    -om or --only-mut                <string>     Only the specified mutations will be counted
+    -om  or --only-mut               <string>     Only the specified mutations will be counted
                                                   Note: mutations must be provided in the form [original]2[mutated]. For example, "A2T" (or "A>T",
                                                         or "A:T") will only count mutation events in which a reference A base has been sequenced as
                                                         a T. IUPAC codes are also accepted. Multiple mutations must be provided as a comma (or semi-colon)
                                                         separated list (e.g. A2T;C:N,G>A). When specified, this parameter automatically disables insertion
                                                         and deletion count
-    -ds or --discard-shorter         <int>        Discards reads spanning less than this number of bases, excluding clipped bases (unless -ic is specified)
-                                                  (Default: 1)
-    -q  or --min-quality                          Minimum quality score value to consider a mutation (Phred+33, Default: 20)
+    -ds  or --discard-shorter        <int>        Discards reads spanning less than this number of bases, excluding clipped bases (Default: 1)
+    -q   or --min-quality                         Minimum quality score value to consider a mutation (Phred+33, Default: 20)
     -ncl or --no-cov-low-qual                     If a mutated base (or one of the surrounding bases, if -es is specified) does not exceed the -mq minimum
                                                   quality threshold, that base will be considered as non covered
     -es or --eval-surrounding                     When considering a mutation, also evaluate the quality of surrounding bases (+/- 1nt)
@@ -1586,4 +1607,3 @@ sub help {
 HELP
 
 }
-

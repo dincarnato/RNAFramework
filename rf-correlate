@@ -25,7 +25,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::Sequence::Utils;
@@ -423,7 +423,7 @@ sub correlate {
             $uSeq = scalar(uniq(map { $_->sequence() } @entries));
             $uLen = scalar(uniq(map { $_->length() } @entries));
 
-            if ((!$ignoreseq && $uSeq > 1) || ($ignoreseq & $uLen > 1)) {
+            if ((!$ignoreseq && $uSeq > 1) || ($ignoreseq && $uLen > 1)) {
 
                 $partResults{diffseq}++;
                 $partResults{failed}++;
@@ -594,7 +594,7 @@ sub file2ranks {
     die "\n\n  [!] Error: Sorting failed for sample \"$sample\"\n\n" if ($ret);
 
     open($fh, "<", "${output}tmp/.$sample.tmp.sorted.txt") or die "\n\n [!] Error: Unable to open temporary sorted numbered value files for sample \"$sample\" ($!)\n\n";
-    open(my $wh, ">", "${output}tmp/.$sample.tmp.ranked.txt") or die "\n\n [!] Error: Unable to write temporary ranked value file for sample \"$sample\" ($!)\n\n";
+    open($wh, ">", "${output}tmp/.$sample.tmp.ranked.txt") or die "\n\n [!] Error: Unable to write temporary ranked value file for sample \"$sample\" ($!)\n\n";
     select((select($wh), $|=1)[0]);
 
     $n = 1;

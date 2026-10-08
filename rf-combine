@@ -25,7 +25,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO;
@@ -168,7 +168,7 @@ $_->join() for(@pool);
 print "\n\n[+] Combination statistics:\n" .
       "\n  [*] Combined transcripts:  " . $results{combined} .
       "\n  [*] Discarded transcripts: " . $results{failed} . " total" .
-      "\n                             " . ($results{failed} - $results{diffseq} - $results{diffscore} - $results{diffnorm} - $results{difftool} - $results{nominvalues} - $results{lowcorr}) . " XML parsing failed" .
+      "\n                             " . ($results{failed} - $results{diffseq} - $results{diffscore} - $results{diffnorm} - $results{diffwin} - $results{diffoffset} - $results{difftool} - $results{nominvalues} - $results{lowcorr}) . " XML parsing failed" .
       "\n                             " . $results{nominvalues} . " no common bases, or not enough values for correlation calculation" .
       "\n                             " . $results{lowcorr} . " correlation too low" .
       "\n                             " . $results{difftool} . " mismatch between analysis tools" .
@@ -195,8 +195,8 @@ sub combine {
             $norm, $xmlio, $mean1, $stdev1,
             $mean2, $stdev2, $attributes, $offset,
             $win, $remap, $tool, $reactive2,
-            $algorithm, $xml, $nbases, $length,
-            @values1, @values2);
+            $xml, $nbases, $length, $normIndependent, 
+            $minNormFactor, @values1, @values2);
 
         { lock($progressBar);
           $progressBar->update(1); }
@@ -210,7 +210,8 @@ sub combine {
                 no warnings;
 
                 my ($sequence2, $scoring2, $norm2, $win2,
-                    $offset2, $remap2, $tool2, $algorithm2);
+                    $offset2, $remap2, $tool2, $minNormFactor2, 
+                    $normIndependent2);
 
                 $xmlref = RF::Data::IO::XML->new(file => $file);
                 $id = $xmlref->id() if ($id eq "__XML__");
@@ -222,7 +223,8 @@ sub combine {
                 $offset2 = $xmlref->offset();
                 $remap2 = $xmlref->remap();
                 $reactive2 = $xmlref->reactive();
-                $algorithm2 = $xmlref->algorithm();
+                $minNormFactor2 = $xmlref->minNormFactor() // 0;
+                $normIndependent2 = $xmlref->normIndependent();
 
                 $tool = $tool2 if (!defined $tool);
                 $sequence = $sequence2 if (!defined $sequence);
@@ -231,7 +233,8 @@ sub combine {
                 $win = $win2 if (!defined $win);
                 $offset = $offset2 if (!defined $offset);
                 $remap = $remap2 if (!defined $remap);
-                $algorithm = $algorithm2 if (!defined $algorithm);
+                $minNormFactor = $minNormFactor2 // 0 if (!defined $minNormFactor);
+                $normIndependent = $normIndependent2 if (!defined $normIndependent);
                 $reactive .= $reactive2;
 
                 if ($tool ne $tool2) {
@@ -243,36 +246,32 @@ sub combine {
 
                 }
 
-                if ($tool ne "rf-modcall") {
+                if ($scoring ne $scoring2) {
 
-                    if ($scoring ne $scoring2) {
+                    lock(%results);
+                    $results{diffscore}++;
 
-                        lock(%results);
-                        $results{diffscore}++;
+                    die;
 
-                        die;
+                }
 
-                    }
+                if ($norm ne $norm2 || ($norm eq $norm2 && $remap != $remap2) || 
+                    $minNormFactor != $minNormFactor2 ||
+                    $normIndependent != $normIndependent2) {
 
-                    if ($norm ne $norm2 ||
-                        ($norm eq $norm2 &&
-                         $remap != $remap2)) {
+                    lock(%results);
+                    $results{diffnorm}++;
 
-                        lock(%results);
-                        $results{diffnorm}++;
+                    die;
 
-                        die;
+                }
 
-                    }
+                if ($offset != $offset2) {
 
-                    if ($offset != $offset2) {
+                    lock(%results);
+                    $results{diffoffset}++;
 
-                        lock(%results);
-                        $results{diffoffset}++;
-
-                        die;
-
-                    }
+                    die;
 
                 }
 
@@ -294,35 +293,12 @@ sub combine {
 
                 }
 
-                $algorithm = "combined" if ($algorithm ne $algorithm2);
-
             };
 
             last if ($@);
 
-            if ($tool eq "rf-norm") {  # rf-norm
-
-                my @reactivity = $xmlref->reactivity();
-                push(@values1, \@reactivity);
-                #push(@{$values1[$-[0]]}, $reactivity[$-[0]]) while($sequence =~ m/[$reactive2]/g);
-
-            }
-            else { # rf-modcall
-
-                my (@score, @ratio);
-                @score = $xmlref->score();
-                @ratio = $xmlref->ratio();
-                push(@values1, \@score);
-                push(@values2, \@ratio);
-
-                #for (0 .. $#score) {
-
-                #    push(@{$values1[$_]}, $score[$_]);
-                #    push(@{$values2[$_]}, $ratio[$_]);
-
-                #}
-
-            }
+            my @reactivity = $xmlref->reactivity();
+            push(@values1, \@reactivity);
 
         }
 
@@ -341,31 +317,14 @@ sub combine {
 
         foreach my $i (1 .. $#values1) { @commonidx1 = grep { isnumeric($values1[$i]->[$_]) } @commonidx1; }
 
-        if ($tool eq "rf-modcall") {
-
-            $nbases = @{$values1[0]};
-            @commonidx2 = grep { isnumeric($values2[0]->[$_]) } 0 .. $#{$values2[0]};
-
-            foreach my $i (1 .. $#values2) { @commonidx2 = grep { isnumeric($values2[$i]->[$_]) } @commonidx2; }
-
-        }
-        else {
-
-            $reactive = join("", sort(uniq(split(//, $reactive))));
-            ($nbases) = $sequence =~ s/([$reactive])/$1/g;
-
-        }
+        $reactive = join("", sort(uniq(split(//, $reactive))));
+        ($nbases) = $sequence =~ s/([$reactive])/$1/g;
 
         if ((defined $minvalues || @commonidx1 < 2) && !$ignoreNaNs) {
 
             if (($minvalues < 1 && @commonidx1 / $nbases < $minvalues) ||
                 ($minvalues >= 1 && @commonidx1 < $minvalues) ||
-                @commonidx1 < 2 ||
-                ($tool eq "rf-modcall" &&
-                 (($minvalues < 1 &&
-                    @commonidx2 / $nbases < $minvalues) ||
-                    ($minvalues >= 1 &&
-                     @commonidx2 < $minvalues)))) {
+                @commonidx1 < 2) {
 
                 lock(%results);
                 $results{nominvalues}++;
@@ -379,9 +338,7 @@ sub combine {
 
         if ($mincorr > -1) {
 
-            if (!correlateall(\@values1, \@commonidx1) ||
-                ($tool eq "rf-modcall" &&
-                 !correlateall(\@values2, \@commonidx2))) {
+            if (!correlateall(\@values1, \@commonidx1)) {
 
                 lock(%results);
                 $results{lowcorr}++;
@@ -394,8 +351,6 @@ sub combine {
         }
 
         ($mean1, $stdev1) = combineall(@values1);
-
-        if ($tool eq "rf-modcall") { ($mean2, $stdev2) = combineall(@values2); }
 
         #for (@profile) {
         #
@@ -437,31 +392,17 @@ sub combine {
         $xml = Data::XML->new( heading   => 1,
                                indent    => 0,
                                autoclose => 1 );
+        $attributes = { combined        => 1,
+                        reactive        => $reactive,
+                        scoring         => $scoring,
+                        norm            => $norm,
+                        win             => $win,
+                        offset          => $offset,
+                        remap           => $remap,
+                        tool            => $tool,
+                        normIndependent => $normIndependent };
 
-        if ($tool eq "rf-norm") {
-
-            $attributes = { combined => "TRUE",
-                            reactive => $reactive,
-                            scoring  => $scoring,
-                            norm     => $norm,
-                            win      => $win,
-                            offset   => $offset,
-                            remap    => $remap,
-                            tool     => $tool };
-
-        }
-        else {
-
-            $mean2 = join(",", @{$mean2});
-            $stdev2 = join(",", @{$stdev2});
-            $mean2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
-            $stdev2 =~ s/((?:[\w\.]+,){60})/$1\n/g;
-
-            $attributes = { combined => "TRUE",
-                            win      => $win,
-                            tool     => $tool };
-
-        }
+        $attributes->{minNormFactor} = $minNormFactor if ($minNormFactor);
 
         $xml->opentag("data", $attributes);
         $xml->opentag("transcript", { id     => $id,
@@ -470,45 +411,15 @@ sub combine {
         $xml->addtext($sequence);
         $xml->closelasttag();
 
-        if ($tool eq "rf-norm") {
+        $xml->opentag("reactivity");
+        $xml->addtext($mean1);
+        $xml->closelasttag();
 
-            $xml->opentag("reactivity");
-            $xml->addtext($mean1);
+        if ($stdev) { # Report stdev
+
+            $xml->opentag("reactivity-error");
+            $xml->addtext($stdev1);
             $xml->closelasttag();
-
-            if ($stdev) { # Report stdev
-
-                $xml->opentag("reactivity-error");
-                $xml->addtext($stdev1);
-                $xml->closelasttag();
-
-            }
-
-        }
-        else {
-
-            $xml->opentag("score");
-            $xml->addtext($mean1);
-            $xml->closelasttag();
-
-            if ($stdev) { # Report stdev
-
-                $xml->opentag("score-error");
-                $xml->addtext($stdev1);
-                $xml->closelasttag();
-
-            }
-
-            $xml->opentag("ratio");
-            $xml->addtext($mean2);
-            $xml->closelasttag();
-
-            if ($stdev) { # Report stdev
-
-                $xml->opentag("ratio-error");
-                $xml->addtext($stdev2);
-
-            }
 
         }
 

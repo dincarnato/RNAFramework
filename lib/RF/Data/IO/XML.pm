@@ -12,13 +12,12 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ (map { "_" . $_ => undef } qw(id sequence length tool algorithm
-                                                 keep maxdist scoring norm reactive
-                                                 win offset remap max pseudo maxumut
-                                                 maxmutrate tosmaller combined structure)),
+    $self->_init({ (map { "_" . $_ => undef } qw(id sequence length tool scoring norm 
+                                                 reactive win offset remap max pseudo 
+                                                 maxumut maxmutrate combined structure
+                                                 normIndependent minNormFactor)),
                    (map { "_" . $_            => [],
-                          "_" . $_ . "-error" => [] } qw(reactivity probability shannon score
-                                                         ratio)) }, \%parameters);
+                          "_" . $_ . "-error" => [] } qw(reactivity)) }, \%parameters);
 
     $self->_validate();
     $self->_openfh();
@@ -71,11 +70,7 @@ sub _readxml {
 
     $self->throw("Sequence and reactivity have unequal lengths") if (@{$self->{_reactivity}} && length($self->{_sequence}) != @{$self->{_reactivity}});
     $self->throw("Sequence and reactivity-error have unequal lengths") if (@{$self->{"_reactivity-error"}} && length($self->{_sequence}) != @{$self->{"_reactivity-error"}});
-    $self->throw("Sequence and probability have unequal lengths") if (@{$self->{_probability}} && length($self->{_sequence}) != @{$self->{_probability}});
-    $self->throw("Sequence and Shannon entropy have unequal lengths") if (@{$self->{_shannon}} && length($self->{_sequence}) != @{$self->{_shannon}});
-    $self->throw("Sequence and score have unequal lengths") if (@{$self->{_score}} && length($self->{_sequence}) != @{$self->{_score}});
-    $self->throw("Sequence and ratio have unequal lengths") if (@{$self->{_ratio}} && length($self->{_sequence}) != @{$self->{_ratio}});
-
+    
 }
 
 sub id { return($_[0]->{_id}); }
@@ -86,17 +81,11 @@ sub length { return($_[0]->{_length}); }
 
 sub tool { return($_[0]->{_tool}); }
 
-sub algorithm { return($_[0]->{_algorithm}); }
-
-sub keep { return(defined $_[0]->{_keep} ? $_[0]->{_keep} : $_[0]->{_reactive}); }
-
-sub maxdist { return($_[0]->{_maxdist}); }
-
 sub scoring { return($_[0]->{_scoring}); }
 
 sub norm { return($_[0]->{_norm}); }
 
-sub reactive { return(defined $_[0]->{_reactive} ? $_[0]->{_reactive} : $_[0]->{_keep}); }
+sub reactive { return($_[0]->{_reactive}); }
 
 sub window { return($_[0]->{_win}); }
 
@@ -112,20 +101,14 @@ sub maxuntreatedmut { return($_[0]->{_maxumut}); }
 
 sub maxmutationrate { return($_[0]->{_maxmutrate}); }
 
-sub tosmaller { return($_[0]->{_tosmaller}); }
+sub normIndependent { return($_[0]->{_normIndependent}); }
+
+sub minNormFactor { return($_[0]->{_minNormFactor}); }
 
 sub combined { return($_[0]->{_combined}); }
 
 sub reactivity { return(wantarray() ? @{$_[0]->{_reactivity}} : $_[0]->{_reactivity}); }
 
 sub reactivity_error { return(wantarray() ? @{$_[0]->{"_reactivity-error"}} : $_[0]->{"_reactivity-error"}); }
-
-sub probability { return(wantarray() ? @{$_[0]->{_probability}} : $_[0]->{_probability}); }
-
-sub shannon { return(wantarray() ? @{$_[0]->{_shannon}} : $_[0]->{_shannon}); }
-
-sub score { return(wantarray() ? @{$_[0]->{_score}} : $_[0]->{_score}); }
-
-sub ratio { return(wantarray() ? @{$_[0]->{_ratio}} : $_[0]->{_ratio}); }
 
 1;

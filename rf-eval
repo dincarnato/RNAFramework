@@ -25,7 +25,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO::Sequence;
 use Graphics::Chart::Barplot;
@@ -478,8 +478,8 @@ sub _plotROC {
 
     my @data = @_;
 
-    my ($plot, $roc, @id, @tp, @fp);
-
+    my ($nSamples, $plot, $roc, @id, @tp, @fp);
+    $nSamples = @data / 5;
     $plot = Graphics::Image->new( file   => "${output}plots/roc.pdf",
                                   width  => 6,
                                   height => 5,
@@ -509,7 +509,9 @@ sub _plotROC {
                                           labelTextSize   => 12,
                                           legendTitleSize => 14,
                                           legendTextSize  => 12,
+                                          aspectRatio     => 1,
                                           colorPalette    => "Paired",
+                                          colorScale      => $nSamples > 12 ? "gradient" : "discrete",
                                           xTitle          => "False Positive Rate",
                                           yTitle          => "True Positive Rate" );
     $plot->plot([$roc]);
@@ -574,7 +576,8 @@ sub _plotMetricSummary {
                                               labelTextSize   => 12,
                                               xLabelAngle     => 90,
                                               legendTitleSize => 14,
-                                              legendTextSize  => 12 );
+                                              legendTextSize  => 12,
+                                              aspectRatio     => 1 );
 
     $plot->plot([$summary]);
 

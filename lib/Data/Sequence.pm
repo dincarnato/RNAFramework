@@ -1,22 +1,7 @@
-#!/usr/bin/perl
-
-##
-# Chimaera Framework
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 package Data::Sequence;
 
 use strict;
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 
@@ -28,22 +13,18 @@ sub new {
     my %parameters = @_;
     
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ id          => undef,
-                   gi          => undef,
-                   gb          => undef,
-                   name        => undef,
-                   sequence    => undef,
-                   accession   => undef,
-                   start       => undef,
-                   end         => undef,
-                   version     => undef,
-                   locus       => undef,
-                   orientation => 5,
-                   description => undef,
-                   type        => "DNA",
-                   circular    => 0,
-                   references  => [],
-                   _length     => undef }, \%parameters);
+    $self->_init({ id            => undef,
+                   fullId        => undef,
+                   description   => undef,
+                   sequence      => undef,
+                   start         => undef,
+                   end           => undef,
+                   orientation   => 5,
+                   type          => "AUTO",
+                   maskIUPAC     => 0,
+                   circular      => 0,
+                   references    => [],
+                   _length       => undef }, \%parameters);
     
     if ($class =~ m/^Data::Sequence::\w+$/) { return($self); }
     else {
@@ -61,9 +42,13 @@ sub _validate {
     
     my $self = shift;
 
-    $self->throw("Sequence contains invalid characters") if (defined $self->{sequence} &&
-                                                             !isseq($self->{sequence}, "-"));
-    $self->throw("Invalid sequence type \"" . $self->{type} . "\"") unless ($self->{type} =~ m/^((D|R)N|A)A$/i);
+    $self->throw("Sequence contains invalid characters") if (defined $self->{sequence} && !isseq($self->{sequence}, "-"));
+    $self->throw("Invalid sequence type \"" . $self->{type} . "\"") unless ($self->{type} =~ m/^(?:(?:D|R)NA|AA|AUTO)$/i);
+    
+    # A fullId passed to the constructor is split into id and description; an id
+    # passed without a fullId has the fullId derived from it
+    if (defined $self->{fullId} && !defined $self->{id}) { $self->fullId($self->{fullId}); }
+    else { $self->fullId(); }
 
     
 }
@@ -72,19 +57,29 @@ sub _fixproperties {
     
     my $self = shift;
     
-    $self->{type} = uc($self->{type});
+    $self->{type} = uc($self->{type}) if (defined $self->{type});
     $self->{orientation} = uc($self->{orientation});
-    
-    $self->{sequence} = uc($self->{sequence}) if ($self->{type} eq "AA");
     
     if (defined $self->{sequence}) {
         
-        if (isdna($self->{sequence}, "-")) { $self->{type} = "DNA"; }
-        elsif (isrna($self->{sequence}, "-")) { $self->{type} = "RNA"; }
-        else { $self->{type} = "AA"; }
+        # "AUTO" asks for the type to be guessed from the sequence itself. The
+        # IUPAC tests have to come before the fallback to AA: isdna()/isrna()
+        # only accept ACGT(U)N, so a reference carrying degenerate bases would
+        # otherwise be called a protein, and maskIUPAC would then be skipped on
+        # exactly the sequences it exists for
+        if (!defined $self->{type} || $self->{type} eq "AUTO") {
+            
+            if (isdna($self->{sequence}, "-")) { $self->{type} = "DNA"; }
+            elsif (isrna($self->{sequence}, "-")) { $self->{type} = "RNA"; }
+            elsif (isiupac($self->{sequence}, "-")) { $self->{type} = $self->{sequence} =~ m/U/i ? "RNA" : "DNA"; }
+            else { $self->{type} = "AA"; }
+            
+        }
+    
         
         if ($self->{type} eq "AA") {
             
+            $self->{sequence} = uc($self->{sequence});
             $self->{orientation} =~ tr/53/NC/ if (defined $self->{orientation});
             $self->{orientation} = "N" unless ($self->{orientation} =~ m/^[NC]$/);
             
@@ -98,6 +93,13 @@ sub _fixproperties {
         
         $self->{_length} = length($self->{sequence});
         
+        # The degenerate codes are listed explicitly, exactly as in 2.9.7, rather
+        # than masked through a negated character class: a whitelist cannot mask a
+        # base it was not meant to touch, it preserves case by construction, and
+        # it leaves alignment gaps alone. Two sequential substitutions must not be
+        # used here, as each would see the other's output
+        $self->{sequence} =~ tr/BDHKMNRSVWYbdhkmnrsvwy/NNNNNNNNNNNnnnnnnnnnnn/ if ($self->{type} ne "AA" && $self->{maskIUPAC});
+        
     }
     
 }
@@ -107,20 +109,59 @@ sub id {
     my $self = shift;
     my $id = shift;
     
-    $self->{id} = $id if (defined $id);
+    if (defined $id) {
+        
+        $self->{id} = $id;
+        $self->{fullId} = $self->{id} . " " . $self->{description} if (defined $self->{description});
+        
+    }
     
     return($self->{id});
     
 }
 
-sub name {
+sub fullId {
     
     my $self = shift;
-    my $name = shift;
+    my $fullId = @_ ? shift : undef;
     
-    $self->{name} = $name if (defined $name);
+    if (defined $fullId) {
+        
+        my @id = split(" ", $fullId);
+        $self->{id} = shift(@id);
+        $self->{description} = join(" ", @id);
+        $self->{fullId} = $fullId;
+            
+    }
+    elsif (!defined $self->{fullId}) {
+        
+        if (defined $self->{id}) {
+            
+            $self->{fullId} = $self->{id};
+            $self->{fullId} .= " " . $self->{description} if (defined $self->{description});
+            
+        }
+        
+    }
     
-    return($self->{name});
+    return($self->{fullId});
+    
+}
+
+
+sub description {
+    
+    my $self = shift;
+    my $description = shift;
+    
+    if (defined $description) {
+        
+        $self->{description} = $description;
+        $self->{fullId} = $self->{id} . " " . $self->{description} if (defined $self->{id});
+        
+    }
+    
+    return($self->{description});
     
 }
 
@@ -129,47 +170,15 @@ sub sequence {
     my $self = shift;
     my $sequence = shift;
     
-    if (isseq($sequence, "-")) {
+    if (defined $sequence &&
+        isseq($sequence, "-")) {
     
-        $self->{sequence} = uc($sequence);    
+        $self->{sequence} = $sequence;
         $self->_fixproperties();
         
     }
     
     return($self->{sequence});
-    
-}
-
-sub accession {
-    
-    my $self = shift;
-    my $accession = shift;
-    
-    $self->{accession} = $accession if (defined $accession);
-    
-    return($self->{accession});
-    
-}
-
-sub gi {
-    
-    my $self = shift;
-    my $gi = shift;
-    
-    $self->{gi} = $gi if (defined $gi);
-    
-    return($self->{gi});
-    
-}
-
-sub gb {
-    
-    my $self = shift;
-    my $gb = shift;
-    
-    $self->{gb} = $gb if (defined $gb);
-    
-    return($self->{gb});
     
 }
 
@@ -195,28 +204,6 @@ sub end {
     
 }
 
-sub version {
-    
-    my $self = shift;
-    my $version = shift;
-    
-    $self->{version} = $version if (defined $version);
-    
-    return($self->{version});
-    
-}
-
-sub locus {
-    
-    my $self = shift;
-    my $locus = shift;
-    
-    $self->{locus} = $locus if (defined $locus);
-    
-    return($self->{locus});
-    
-}
-
 sub orientation {
     
     my $self = shift;
@@ -230,17 +217,6 @@ sub orientation {
     }
     
     return($self->{orientation});
-    
-}
-
-sub description {
-    
-    my $self = shift;
-    my $description = shift;
-    
-    $self->{description} = $description if (defined $description);
-    
-    return($self->{description});
     
 }
 
@@ -289,13 +265,12 @@ sub extract {
     
     my ($sequence);
     
-    $self->throw("Start/end values must be positive integers") unless (ispositive($start) &&
-                                                                       ispositive($end) &&
-                                                                       isint($start) &&
-                                                                       isint($end));
+    $self->throw("Start/end values must be positive integers") unless (ispositive($start) && ispositive($end) &&
+                                                                       isint($start) && isint($end));
     
-    if ($start > $self->length() ||
-        $end > $self->length()) {
+    if ($start <= $self->length() &&
+        $end <= $self->length() &&
+        $start <= $end) {
         
         $sequence = substr($self->sequence(), $start - 1, $end - $start + 1);
         

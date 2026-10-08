@@ -64,10 +64,10 @@ sub loadPackage {
 
     return(1) if (exists $INC{$module});
 
-    my $eval = do { local $SIG{__DIE__} = sub {};
-                    local $@;
-                    eval { require $module; };
-                    $@; };
+    $eval = do { local $SIG{__DIE__} = sub {};
+                 local $@;
+                 eval { require $module; };
+                 $@; };
 
     return() if ($eval);
 

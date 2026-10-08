@@ -11,33 +11,72 @@ sub new {
     my %parameters = @_;
 
     my $self = $class->SUPER::new(%parameters);
-    $self->_init({ tmpdir      => "/tmp/",
-                   _madetmpdir => 0,
-                   _randId     => "$$." . randalphanum(0x16) }, \%parameters);
+    $self->_init({ tmpdir       => "/tmp/",
+                   logDir       => undef,
+                   _pid         => $$,
+                   _rmOnDestroy => [],
+                   _randId      => "$$." . randalphanum(0x16) }, \%parameters);
 
-    $self->_makeTmpDir();
+    $self->_makeDir("tmpdir", 1);
+    $self->_makeDir("logDir") if (defined $self->{logDir});
 
     return($self);
 
 }
 
-sub _makeTmpDir {
+sub logDir {
 
     my $self = shift;
+    my $logDir = shift;
 
-    $self->throw("Provided path to temporary directory does not point to a folder") if (-e $self->{tmpdir} && !-d $self->{tmpdir});
+    if (defined $logDir) {
 
-    if (defined $self->{tmpdir} && !-e $self->{tmpdir}) {
-
-        my $error = mktree($self->{tmpdir}, "755");
-
-        $self->throw("Unable to create temporary directory (" . $error . ")") if (defined $error);
-
-        $self->{_madetmpdir} = 1;
+        $self->{logDir} = $logDir;
+        $self->_makeDir("logDir");
 
     }
 
-    $self->{tmpdir} =~ s/\/?$/\//; # Adds the trailing /
+    return($self->{logDir});
+
+}
+
+sub _makeDir {
+
+    my $self = shift;
+    my $dirId = shift;
+    my $rmOnDestroy = shift;
+
+    my $dir = $self->{$dirId};
+
+    $self->throw("Provided path to temporary directory does not point to a folder") if (-e $dir && !-d $dir);
+
+    if (defined $dir && !-e $dir) {
+
+        my $error = mktree($dir, "755");
+
+        $self->throw("Unable to create temporary directory ($error)") if (defined $error);
+
+        push(@{$self->{_rmOnDestroy}}, $dir) if ($rmOnDestroy);
+
+    }
+
+    $self->{$dirId} =~ s/\/?$/\//; # Adds the trailing /
+
+}
+
+sub _writeLogs {
+
+    my $self = shift;
+    my $filename = shift;
+    my $log = shift;
+
+    if (defined $self->{logDir}) {
+
+        open(my $lh, ">>", $self->{logDir} . $filename) or $self->throw("Unable to write \"$filename\" log file ($!)");
+        print $lh "$log\n";
+        close($lh);
+
+    }
 
 }
 
@@ -45,11 +84,13 @@ sub DESTROY {
 
     my $self = shift;
 
-    if ($self->{_madetmpdir}) {
+    return if ($self->{_pid} != $$);
 
-        my $error = rmtree($self->{tmpdir});
+    foreach my $dir (@{$self->{_rmOnDestroy}}) {
 
-        $self->throw("Failed to remove temporary directory (" . $error . ")") if (defined $error);
+        my $error = rmtree($dir);
+
+        $self->throw("Failed to remove directory \"$dir\" ($error)") if (defined $error);
 
     }
 

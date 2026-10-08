@@ -23,7 +23,7 @@ use Getopt::Long qw(:config no_ignore_case);
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use RF::Data::IO::RC;
 use RF::Data::RC;
@@ -88,9 +88,9 @@ if ($command eq "index") {
 
     for (@rc) {
 
-        my $rc = RF::Data::IO::RC->new( file       => $rc[$_] =~ m/\.rc$/ ? $rc[$_] : $rc[$_] . ".plus.rc",
+        my $rc = RF::Data::IO::RC->new( file       => $_ =~ m/\.rc$/ ? $_ : "$_.plus.rc",
                                         buildindex => 1,
-                                        index      => $rc[$_] . ".rci" );
+                                        index      => "$_.rci" );
 
     }
 

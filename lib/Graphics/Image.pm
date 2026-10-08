@@ -1,7 +1,7 @@
 package Graphics::Image;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Interface::Math::R;
 

@@ -26,7 +26,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::Sequence::Utils;
@@ -42,13 +42,16 @@ my ($minCov, $output, $help, $overwrite,
     $maxScore, $ignoreLower, $maxUntreatedMut, $maxMutRate, 
     $treated, $untreated, $denatured, $threads, $rfnorm,
     $index, $whitelist, $medianCoverage, $runNorm,
-    @ctrlFiles, @treatFiles, @denatFiles, @files, @pool, 
-    %io, %commonReact, %fileMap);
+    $normIndependent, $minNormFactor,
+    @ctrlFiles, @treatFiles, @denatFiles, @files, @pool,
+    @normBases, %io, %commonReact, %fileMap, %reactiveBases,
+    %byBase);
 
 my $common : shared;
 my @ids : shared;
 my %tmpReact : shared;
 my %commonNorm : shared;
+my $diffSeq : shared;
 
 do {
 
@@ -59,6 +62,8 @@ do {
                 "ow|overwrite"                   => \$overwrite,
                 "sm|scoring-method=s"            => \$scoreMethod,
                 "nm|norm-method=s"               => \$normMethod,
+                "ni|norm-independent"            => \$normIndependent,
+                "mn|min-norm-factor=s"           => \$minNormFactor,
                 "rb|reactive-bases=s"            => \$reactiveBases,
                 "pc|pseudocount=s"	             => \$pseudoCount,
                 "s|max-score=s"                  => \$maxScore,
@@ -81,6 +86,7 @@ do {
 help() if ($help);
 
 $common = 0;
+$diffSeq = 0;
 $threads ||= 1;
 $output ||= "norm_factors.txt";
 $scoreMethod ||= 1;
@@ -102,8 +108,17 @@ die "\n  [!] Error: Provided RCI index file does not exist\n\n" if (defined $ind
 die "\n  [!] Error: No treated sample RC file provided\n\n" if (!defined $treated);
 for (@treatFiles, @ctrlFiles, @denatFiles) { die "\n [!] Error: Provided file \"$_\" does not exist\n\n" if (!-e $_); }
 die "\n  [!] Error: Invalid scoring method\n\n" if ($scoreMethod !~ /^[1-4]$/);
-die "\n  [!] Error: Invalid normalization method\n\n" if ($normMethod !~ /^[1-3]$/);
+die "\n  [!] Error: Invalid normalization method\n\n" if ($normMethod !~ /^[1-4]$/);
 die "\n  [!] Error: Normalization methods 1 and 3 cannot be used with scoring method 2\n\n" if ($scoreMethod == 2 && $normMethod =~ /^[13]$/);
+die "\n  [!] Error: Normalization method 4 requires scoring method 3 or 4\n\n" if ($normMethod == 4 && $scoreMethod !~ /^[34]$/);
+
+if (defined $minNormFactor) {
+
+    die "\n  [!] Error: Minimum normalization factor must be > 0\n\n" if (!isnumeric($minNormFactor) || $minNormFactor <= 0);
+    die "\n  [!] Error: Minimum normalization factor requires normalization method 4 (Mitchell et al., 2023)\n\n" if ($normMethod != 4);
+
+}
+
 die "\n  [!] Error: Scoring method $scoreMethod requires an untreated control\n\n" if (!defined $untreated && $scoreMethod =~ /^[13]$/);
 die "\n  [!] Error: Unequal number of treated and control files\n\n" if (@ctrlFiles > 1 && @treatFiles != @ctrlFiles);
 die "\n  [!] Error: Unequal number of treated and denatured files\n\n" if (@denatFiles > 1 && @treatFiles != @denatFiles);
@@ -124,7 +139,8 @@ if ($runNorm) {
 
 }
 
-$reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($reactiveBases))))))));
+$reactiveBases = $reactiveBases =~ /^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($reactiveBases))))))));
+%reactiveBases = map { $_ => 1 } split("", $reactiveBases);
 
 if ($scoreMethod !~ /^[24]$/) {
 
@@ -153,7 +169,8 @@ else {
 
 @files = (@treatFiles, @ctrlFiles, @denatFiles);
 
-die "\n  [!] Error: Provided RC files have unequal sizes\n\n" if (scalar(uniq(map { -s $_ } @files)) != 1);
+# Note: the RC files are deliberately NOT required to hold the same transcripts. Only
+# transcripts present in every file, with matching sequences, are used (see getCoveredBases)
 
 print "\n[+] Loading RC files...";
 
@@ -204,6 +221,7 @@ print "\n[+] Calculating raw reactivities for bases covered across all samples..
 $_->join() for (@pool);
 
 print " " . $common . " bases selected.";
+print "\n  [!] Warning: $diffSeq transcript(s) skipped due to mismatching sequences between samples\n" if ($diffSeq);
 
 # It looks like, working with a shared hash of arrays from this point on would use exponentially
 # more memory. To address this, we make a deep copy of %commonReact and free the shared hash
@@ -213,79 +231,207 @@ undef(%tmpReact);
 
 die "\n\n  [!] Error: No bases covered across all samples\n\n" if (!$common);
 
+# Factors are calculated over all reactive bases pooled together, or independently
+# for each of them when --norm-independent is specified. Partitioning happens here
+# so that each method below can stay agnostic of which of the two it is doing
+@normBases = $normIndependent ? split(//, $reactiveBases) : ("__ALL__");
+
+foreach my $file (keys %commonReact) {
+
+    push(@{$byBase{$file}->{$normIndependent ? $_->[2] : "__ALL__"}}, $_) for (@{$commonReact{$file}});
+
+}
+
+open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
+select((select($wh), $|=1)[0]);
+
 if ($normMethod =~ /^[13]$/) {
 
     print "\n[+] Selecting bases for normalization...";
 
     foreach my $file (keys %commonReact) {
 
-        my @norm = $normMethod == 1 ? norm_28(@{$commonReact{$file}}) : boxplot(@{$commonReact{$file}});
+        foreach my $base (@normBases) {
 
-        die "\n\n  [!] Error: Normalization failed on sample " . (fileparse($file, ".rc"))[0] . "\n\n" if (!@norm);
+            my ($react, @norm);
+            $react = $byBase{$file}->{$base} || [];
 
-        $commonNorm{$_}++ for (@norm);
+            next if (!@{$react});
 
-    }
+            @norm = $normMethod == 1 ? norm_28(@{$react}) : boxplot(@{$react});
 
-    $common = scalar(grep { $commonNorm{$_} == @treatFiles } keys %commonNorm);
-    print " $common selected.";
+            die "\n\n  [!] Error: Normalization failed on sample " . (fileparse($file, ".rc"))[0] . ($normIndependent ? " (base $base)" : "") . "\n\n" if (!@norm);
 
-    if ($common) {
-
-        print "\n[+] Normalization factors:\n";
-
-        open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
-        select((select($wh), $|=1)[0]);
-
-        print $wh "#Experiment\tNorm factor\n";
-
-        foreach my $file (sort keys %commonReact) {
-
-            my ($sample, $factor, @norm);
-            $sample = (fileparse($file, ".rc"))[0];
-            @norm = map { $_->[1] } grep { exists $commonNorm{$_->[0]} && $commonNorm{$_->[0]} == @treatFiles } @{$commonReact{$file}};
-            $factor = mean(@norm);
-
-            print "\n  [*] $sample: $factor";
-            print $wh join("\t", $sample, $factor) . "\n";
-
-            runNorm($file, $factor) if ($runNorm);
+            $commonNorm{$_}++ for (@norm);
 
         }
 
-        close($wh);
+    }
+
+    # Keys are unique per transcript position, hence per base, so the intersection
+    # across samples works unchanged whether or not bases were partitioned
+    $common = scalar(grep { $commonNorm{$_} == @treatFiles } keys %commonNorm);
+    print " $common selected.";
+
+    die "\n\n  [!] Error: No bases left for normalization\n\n" if (!$common);
+
+    print "\n[+] Normalization factors:\n";
+    print $wh "#Experiment\t" . ($normIndependent ? join("\t", @normBases) : "Norm factor") . "\n";
+
+    foreach my $file (sort keys %commonReact) {
+
+        my ($sample, %factor);
+        $sample = (fileparse($file, ".rc"))[0];
+
+        foreach my $base (@normBases) {
+
+            my (@norm);
+            @norm = map { $_->[1] } grep { exists $commonNorm{$_->[0]} && $commonNorm{$_->[0]} == @treatFiles } @{$byBase{$file}->{$base} || []};
+
+            next if (!@norm);
+
+            $factor{$base} = [ mean(@norm) ];
+
+        }
+
+        reportFactors($wh, $sample, $file, \%factor);
 
     }
-    else { die "\n\n  [!] Error: No bases left for normalization\n\n"; }
+
+}
+elsif ($normMethod == 4) {
+
+    print "\n[+] Normalization factors:\n";
+    print $wh "#Experiment\t" . ($normIndependent ? join("\t", @normBases) : "Norm factor") . "\n";
+
+    foreach my $file (sort keys %commonReact) {
+
+        my ($sample, %factor);
+        $sample = (fileparse($file, ".rc"))[0];
+
+        foreach my $base (@normBases) {
+
+            my ($react, $factor);
+            $react = $byBase{$file}->{$base} || [];
+
+            next if (!@{$react});
+
+            $factor = mitchell(@{$react});
+
+            next if (!defined $factor);
+
+            if (defined $minNormFactor && $factor < $minNormFactor) {
+
+                warn "\n  [!] Warning: normalization factor for " . ($normIndependent ? "base $base in " : "") . "sample $sample (" . sprintf("%.2e", $factor) . ") is below --min-norm-factor\n";
+
+                next;
+
+            }
+
+            $factor{$base} = [ $factor ];
+
+        }
+
+        reportFactors($wh, $sample, $file, \%factor);
+
+    }
 
 }
 else {
 
     print "\n[+] Normalization factors:\n";
-
-    open(my $wh, ">", $output) or die "\n  [!] Error: Unable to write output file ($!)\n\n";
-    select((select($wh), $|=1)[0]);
-
-    print $wh "#Experiment\tNorm factor #1\tNorm factor #2\n";
+    print $wh "#Experiment\t" . ($normIndependent ? join("\t", @normBases) : "Norm factor #1\tNorm factor #2") . "\n";
 
     foreach my $file (sort keys %commonReact) {
 
-        my ($sample, @norm);
+        my ($sample, %factor);
         $sample = (fileparse($file, ".rc"))[0];
-        @norm = winsor_90(@{$commonReact{$file}});
-        
-        print "\n  [*] $sample: " . join(",", @norm);
-        print $wh join("\t", $sample, @norm) . "\n";
 
-        runNorm($file, join(",", @norm)) if ($runNorm);
+        foreach my $base (@normBases) {
+
+            my ($react, @norm);
+            $react = $byBase{$file}->{$base} || [];
+
+            next if (!@{$react});
+
+            @norm = winsor_90(@{$react});
+
+            next if (@norm != 2);
+
+            $factor{$base} = \@norm;
+
+        }
+
+        reportFactors($wh, $sample, $file, \%factor);
 
     }
 
-    close($wh);
+}
+
+close($wh);
+
+print "\n\n[+] All done.\n\n";
+
+##
+#  Prints the factors for one sample, and hands them to rf-norm in the form it
+#  expects: a bare value when bases are pooled, or a base:value list when they are
+#  normalized independently. A base with no usable factor is simply left out, and
+#  rf-norm falls back to calculating it per transcript
+##
+
+sub reportFactors {
+
+    my ($wh, $sample, $file, $factor) = @_;
+
+    die "\n\n  [!] Error: Failed to calculate normalization factor for sample $sample\n\n" if (!keys %{$factor});
+
+    if ($normIndependent) {
+
+        print "\n  [*] $sample: " . join(", ", map { $_ . ":" . (exists $factor->{$_} ? join(":", @{$factor->{$_}}) : "n/a") } @normBases);
+        print $wh join("\t", $sample, map { exists $factor->{$_} ? join(",", @{$factor->{$_}}) : "NaN" } @normBases) . "\n";
+
+        # rf-norm expects "<base>:<factor>", or "<base>:<5th>:<95th>" for 90% Winsorizing
+        runNorm($file, join(",", map { $_ . ":" . join(":", @{$factor->{$_}}) } grep { exists $factor->{$_} } @normBases)) if ($runNorm);
+
+    }
+    else {
+
+        print "\n  [*] $sample: " . join(",", @{$factor->{"__ALL__"}});
+        print $wh join("\t", $sample, @{$factor->{"__ALL__"}}) . "\n";
+
+        runNorm($file, join(",", @{$factor->{"__ALL__"}})) if ($runNorm);
+
+    }
 
 }
 
-print "\n\n[+] All done.\n\n";
+sub mitchell { # Mitchell et al., 2023 (Mustoe lab)
+
+    my @reactivity = @_;
+
+    return if (!@reactivity);
+
+    # Unlike the selection-based methods above, this one cannot return a set of
+    # bases to be averaged: the factor is the larger of two different statistics,
+    # so it is calculated here and returned directly, as winsor_90() does
+    my ($avg, $p90, $p95, $p75, @sorted,
+        @sortedHigh);
+    @sorted = sort {$a <=> $b} map { $_->[1] } @reactivity;
+    @sortedHigh = grep { $_ > 0.001 } @sorted;
+    $p90 = max(0, round(@sorted * 0.9) - 1);
+    $p95 = max(0, round(@sorted * 0.95) - 1);
+    $avg = mean(@sorted[$p90 .. $p95]);
+
+    if (@sortedHigh) {
+
+        $p75 = max(0, round(@sortedHigh * 0.75) - 1);
+        $avg = max($avg, $sortedHigh[$p75]);
+
+    }
+
+    return($avg ? $avg : undef);
+
+}
 
 sub runNorm {
 
@@ -311,6 +457,8 @@ sub runNorm {
 
     $outDir .= "_normfactor";
     $cmd .= " -o $outDir";
+    $cmd .= " -ni" if ($normIndependent);
+    $cmd .= " -mn $minNormFactor" if (defined $minNormFactor);
     $cmd .= " -il" if ($scoreMethod =~ /^[13]$/);
     $cmd .= " -mm $maxMutRate" if ($scoreMethod =~ /^[34]$/);
     $cmd .= " -mu $maxUntreatedMut" if ($scoreMethod == 3);
@@ -327,7 +475,7 @@ sub getCoveredBases {
     TRANSCRIPT:
     while (1) {
 
-        my ($id, @refCov, @i, @alli, %entries);
+        my ($id, $sequence, @refCov, @i, @alli, %entries);
 
         { lock(@ids);
           $id = shift(@ids) if (@ids); }
@@ -343,6 +491,7 @@ sub getCoveredBases {
         }
 
         $entries{$files[0]} = $io{$files[0]}->read($id);
+        $sequence = $entries{$files[0]}->sequence();
 
         next if ($entries{$files[0]}->mediancoverage() < $medianCoverage);
 
@@ -354,6 +503,17 @@ sub getCoveredBases {
         foreach my $file (@files[1 .. $#files]) {
 
             if (my $entry = $io{$file}->read($entries{$files[0]}->id())) {
+
+                # Same ID in two RC files does not guarantee the same reference. A mismatch
+                # would silently align one sample's positions against another's
+                if ($entry->sequence() ne $sequence) {
+
+                    lock($diffSeq);
+                    $diffSeq++;
+
+                    next TRANSCRIPT;
+
+                }
 
                 next TRANSCRIPT if ($entry->mediancoverage() < $medianCoverage);
 
@@ -369,7 +529,7 @@ sub getCoveredBases {
 
         }
 
-        @i = grep { substr($entries{$files[0]}->sequence(), $_, 1) =~ /^[$reactiveBases]$/ } @alli;
+        @i = grep { $reactiveBases{substr($sequence, $_, 1)} } @alli;
 
         if (@i) { 
         
@@ -388,11 +548,11 @@ sub getCoveredBases {
             @treatCounts = $treatEntry->counts();
             @treatCov = $treatEntry->coverage();
 
-            if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount)] } @i; }
-            elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_]] } @i; }
+            if ($scoreMethod == 1) { @react = map { ["$id:$_", log($treatCounts[$_] + $pseudoCount), substr($sequence, $_, 1)] } @i; }
+            elsif ($scoreMethod == 2) { @react = map { ["$id:$_", $treatCounts[$_], substr($sequence, $_, 1)] } @i; }
             elsif ($scoreMethod =~ /^[34]$/) { 
                 
-                @react = grep { $_->[1] <= $maxMutRate } map { ["$id:$_", $treatCounts[$_] / $treatCov[$_]] } @i;
+                @react = grep { $_->[1] <= $maxMutRate } map { ["$id:$_", $treatCounts[$_] / $treatCov[$_], substr($sequence, $_, 1)] } @i;
 
                 next TRANSCRIPT if (!@react); 
                 
@@ -416,7 +576,7 @@ sub getCoveredBases {
 
                     @ctrlCounts = map { log($ctrlCounts[$_] + $pseudoCount) } @i;
                     @ctrlCounts = map { $_ / $cMean } @ctrlCounts;
-                    @react = map { [ $react[$_]->[0], $react[$_]->[1] / $tMean ] } 0 .. $#react;
+                    @react = map { [ $react[$_]->[0], $react[$_]->[1] / $tMean, $react[$_]->[2] ] } 0 .. $#react;
                     
                     if ($ignoreLower) {
 
@@ -428,7 +588,7 @@ sub getCoveredBases {
 
                     next TRANSCRIPT if (!@react);
 
-                    @react = map { [ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore) ] } 0 .. $#react;
+                    @react = map { [ $react[$_]->[0], min(max(0, $react[$_]->[1] - $ctrlCounts[$_]), $maxScore), $react[$_]->[2] ] } 0 .. $#react;
 
                 }
                 elsif ($scoreMethod == 3) {
@@ -469,10 +629,10 @@ sub getCoveredBases {
 
                         }
 
-                        @react = map { [ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / $denatRatio[$_]) ] } 0 .. $#react;
+                        @react = map { [ $react[$_]->[0], max(0, ($react[$_]->[1] - $ctrlRatio[$_]) / $denatRatio[$_]), $react[$_]->[2] ] } 0 .. $#react;
 
                     }
-                    else { @react = map { [ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]) ] } 0 .. $#react; }
+                    else { @react = map { [ $react[$_]->[0], max(0, $react[$_]->[1] - $ctrlRatio[$_]), $react[$_]->[2] ] } 0 .. $#react; }
                     
                 }
 
@@ -494,9 +654,10 @@ sub boxplot {
     return if (!@reactivity);
 
     my ($avg, $perc75, $perc25, $iqrange, 
-        $max, $p10, $outliers);
-    $perc75 = percentile([ map { $_->[1] } @reactivity ], 0.75);
-    $perc25 = percentile([ map { $_->[1] } @reactivity ], 0.25);
+        $max, $p10, $outliers, @sortedReact);
+    @sortedReact = reverse map { $_->[1] } @reactivity;
+    $perc75 = percentile(\@sortedReact, 0.75, 1);
+    $perc25 = percentile(\@sortedReact, 0.25, 1);
     $iqrange = $perc75 - $perc25;      # Interquartile range
     $max = $perc75 + ($iqrange * 1.5); # Above this value, data points are considered outliers
     $p10 = @reactivity < 100 && @reactivity >= 50 ? 10 : round(@reactivity * 0.1);
@@ -531,9 +692,10 @@ sub winsor_90 {  # 90% Winsorizing
 
     return if (!@reactivity);
 
-    my ($percentile5, $percentile95);
-    $percentile5 = percentile([ map { $_->[1] } @reactivity ], 0.05) || 0; # 5th percentile
-    $percentile95 = percentile([ map { $_->[1] } @reactivity ], 0.95); # 95th percentile
+    my ($percentile5, $percentile95, @sortedReact);
+    @sortedReact = reverse map { $_->[1] } @reactivity;
+    $percentile5 = percentile(\@sortedReact, 0.05, 1) || 0; # 5th percentile
+    $percentile95 = percentile(\@sortedReact, 0.95, 1); # 95th percentile
 
     return($percentile5, $percentile95);
 
@@ -567,14 +729,21 @@ sub help {
  -p  or --processors          <int>                 Number of processors to use (Default: 1)
  -o  or --output              <string>              Output file normalization factors will be reported to (Default: norm_factors.txt)
  -ow or --overwrite                                 Overwrites output file (if it already exists)
- -sm or --scoring-method      <int>                 Specifies the score calculation method (1-2, Default: 1): [1] Ding et al., 2014
+ -sm or --scoring-method      <int>                 Specifies the score calculation method (1-4, Default: 1): [1] Ding et al., 2014
                                                                                                               [2] Rouskin et al., 2014
                                                                                                               [3] Siegfried et al., 2014
                                                                                                               [4] Zubradt et al., 2016
- -nm or --norm-method         <int>                 Specifies the normalization method (1-3, Default: 1): [1] 2-8%
+ -nm or --norm-method         <int>                 Specifies the normalization method (1-4, Default: 1): [1] 2-8%
                                                                                                           [2] 90% Winsorizing
                                                                                                           [3] Box-plot
+                                                                                                          [4] Mitchell et al., 2023
                                                     Note: 2-8% and Box-plot normalization methods cannot be used with Rouskin scoring method.
+                                                    Note: Mitchell normalization method requires Siegfried or Zubradt scoring method.
+ -ni or --norm-independent                          Calculates one normalization factor per reactive base, instead of a single factor across all of them
+                                                    Note: 90% Winsorizing yields two factors per base, reported as "<5th>,<95th>".
+                                                          Factors are passed on to rf-norm as a "<base>:<factor>" list. Bases for which no factor could be
+                                                          calculated are reported as NaN, and are left to rf-norm to normalize per transcript
+ -mn or --min-norm-factor     <float>               Bases whose normalization factor falls below this value are not passed on to rf-norm (>0, requires "-nm 4")
  -rb or --reactive-bases      <string>              Reactive bases to consider for signal normalization (Default: all)
                                                     Note: IUPAC codes are allowed
  -mc or --min-coverage        <int>                 Discards any base with coverage below this threshold (>=1, Default: 10)
@@ -601,4 +770,3 @@ sub help {
 HELP
 
 }
-

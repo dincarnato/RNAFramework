@@ -4,7 +4,6 @@ package Core::Utils;
 
 use strict;
 use Carp;
-use Core::Mathematics;
 use Cwd qw(getcwd);
 use Fcntl qw(F_GETFL SEEK_SET);
 use File::Find qw(finddepth);
@@ -13,10 +12,14 @@ use File::Basename;
 use Scalar::Util qw(reftype);
 use threads::shared;
 
+# The () is to avoid automatic exports as this would cause an 
+# issue since Core::Mathematics itself imports Core::Utils
+use Core::Mathematics ();
+
 use base qw(Exporter);
 
 our ($VERSION, @EXPORT);
-$VERSION = "2.9.7";
+$VERSION = "2.9.8";
 @EXPORT = qw(is checkparameters blessed clonehashref
              clonearrayref clonefh uriescape uriunescape
              unquotemeta striptags questionyn uniq
@@ -100,10 +103,10 @@ sub _exception {
         foreach my $caller (@stack) {
 
             my ($package, $file, $line, $subroutine) = @{$caller};
-            $message .= "\n    [*] Package:    " . $package .
-                        "\n        File:       " . $file .
-                        "\n        Line:       " . $line .
-                        "\n        Subroutine: " . $subroutine . "\n";
+            $message .= "\n    [*] Package:    $package" .
+                        "\n        File:       $file" .
+                        "\n        Line:       $line" .
+                        "\n        Subroutine: $subroutine\n";
 
         }
 
@@ -230,7 +233,7 @@ sub mergeDataStructs {
 
     Core::Utils::throw("Parameters must be a HASH reference") if (ref($params) ne "HASH");
 
-    $params = checkparameters({ scalarMergeFunc => sub { return(isnumeric(@_) ? $_[0] + $_[1] : join("", @_)); },
+    $params = checkparameters({ scalarMergeFunc => sub { return(Core::Mathematics::isnumeric(@_) ? $_[0] + $_[1] : join("", @_)); },
                                 arrayMergeFunc  => \&_mergeArray,
                                 hashMergeFunc   => \&_mergeHash }, $params);
 
@@ -459,7 +462,7 @@ sub ncores {
     if ($^O eq "darwin") { chomp($ncores = `sysctl -n hw.ncpu`); }
     elsif ($^O eq "linux") { chomp($ncores = `grep -c -P '^processor\\s+:' /proc/cpuinfo`); }
 
-    if (!isint($ncores) || $ncores < 1) {
+    if (!Core::Mathematics::isint($ncores) || $ncores < 1) {
 
         Core::Utils::warn("Unable to determine number of available processors/cores");
 

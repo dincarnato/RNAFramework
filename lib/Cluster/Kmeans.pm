@@ -3,10 +3,9 @@
 package Cluster::Kmeans;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use List::Util qw(shuffle);
-use Data::Dumper;
 
 use base qw(Core::Base);
 

@@ -1,11 +1,10 @@
 package Interface::ViennaRNA;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO::Sequence;
 use Data::Sequence::Structure;
-#use Data::Sequence::Structure::Ensemble;
 use Data::Sequence::Utils;
 use RNA::Utils;
 
@@ -18,7 +17,7 @@ sub new {
 
     my $self = $class->SUPER::new(%parameters);
     $self->_init({ RNAfold       => which("RNAfold"),
-                   #RNAsubopt     => which("RNAsubopt"),
+                   RNAsubopt     => which("RNAsubopt"),
                    RNAalifold    => which("RNAalifold"),
                    RNAplot       => which("RNAplot"),
                    ssPseudoknots => 0,
@@ -35,7 +34,49 @@ sub _validate {
     my $self = shift;
 
     for (qw(RNAfold RNAsubopt RNAalifold RNAplot)) { $self->throw($_ . " is not executable (" . $self->{$_} . ")") if (defined $self->{$_} && !-x $self->{$_}); }
+    $self->throw("Parameter ssPseudoknots must be BOOL") if (!isbool($self->{ssPseudoknots}));
 
+}
+
+##
+#  Removes the temporary input files (the FASTA and SHAPE files we write
+#  ourselves). The files the executables write themselves are not covered here:
+#  they are removed by the call that generated them (see _outFile())
+##
+
+sub _cleanTmpFiles {
+
+    my $self = shift;
+
+    unlink(glob($self->{tmpdir} . "." . $self->{_randId} . "*"));
+
+}
+
+##
+#  Reports the diagnostics an executable printed, raising an exception on the
+#  fatal ones. ViennaRNA v2.7.0 replaced its logging API, changing the prefix of
+#  these messages from "ERROR: " to "[ERROR]", so the severity is matched either
+#  bracketed or followed by a colon. INFO and DEBUG messages are left alone
+##
+ 
+sub _checkRet {
+ 
+    my $self = shift;
+    my ($program, $ret) = @_;
+ 
+    while ($ret =~ m/^\[?(ERROR|FATAL|WARNING)[\]:][ \t]*(.*)$/gm) {
+ 
+        my ($level, $message) = ($1, $2);
+        $message =~ s/^\s+|\s+$//g;
+
+        next if (!length($message));
+        next if ($program eq "RNAsubopt" && $level eq "ERROR" && $message =~ m/^Added \d+ bps$/);
+ 
+        if ($level eq "WARNING") { $self->warn($program . " threw a warning (" . $message . ")"); }
+        else { $self->throw($program . " threw an exception (" . $message . ")"); }
+ 
+    }
+ 
 }
 
 sub fold {
@@ -64,11 +105,6 @@ sub fold {
 
     $ret = `$command 2>&1`;
 
-    unlink(glob($self->{tmpdir} . $id . "*"));
-
-    while ($ret =~ m/^ERROR: (.+?)\n/g) { $self->throw("RNAfold threw an exception (" . $1 . ")"); }
-    while ($ret =~ m/^WARNING: (.+?)\n/g) { $self->warn("RNAfold threw a warning (" . $1 . ")"); }
-
     for (split(/\n/, $ret)) {
 
         if ($_ =~ m/^([\.\(\)]+) \(\s*([\d\.-]+)\)$/) { ($structure, $energy) = ($1, $2); }
@@ -77,8 +113,18 @@ sub fold {
 
     }
 
-    %bpprobs = $self->_parseDpFile() if ($parameters->{partitionFunction} ||
-                                         $parameters->{MEA});
+    %bpprobs = $self->_parseDpFile() if (defined $structure &&
+                                         ($parameters->{partitionFunction} ||
+                                          $parameters->{MEA}));
+
+    unlink($self->_outFile("_dp.ps"));
+    $self->_cleanTmpFiles();
+
+    $self->_checkRet("RNAfold", $ret);
+
+    # RNAfold failed to backtrack a structure (this typically happens when a hard
+    # constraint cannot be enforced), so there is nothing to return
+    return() if (!defined $structure);
 
     $fold = Data::Sequence::Structure->new( sequence          => dna2rna($sequence),
                                             structure         => $structure,
@@ -118,13 +164,22 @@ sub alifold {
     $self->_makeAliInputFile($alignment);
     $self->_makeAliShapeFile($alignment, $parameters->{reactivity});
 
+    # Note: unlike RNAfold, RNAalifold takes the hard constraint on STDIN and the
+    # alignment as a file argument. Neither -C=<file> nor --constraint=<file> work:
+    # the constraint is silently ignored
+    if (defined $parameters->{constraint}) {
+
+        $command .= " -C";
+        $command .= " --enforceConstraint" if ($parameters->{enforceConstraint});
+
+        $self->_makeAliConstraintFile($alignment, $parameters->{constraint});
+
+        $command .= " < '" . $self->{tmpdir} . $id . ".constraint'";
+
+    }
+
     $ret = `$command 2>&1`;
     @ret = split(/\n/, $ret);
-
-    unlink(glob($self->{tmpdir} . $id . "*"));
-
-    while ($ret =~ m/^ERROR: (.+?)\n/g) { $self->throw("RNAalifold threw an exception (" . $1 . ")"); }
-    while ($ret =~ m/^WARNING: (.+?)\n/g) { $self->warn("RNAalifold threw a warning (" . $1 . ")"); }
 
     for (0 .. $#ret) {
 
@@ -132,7 +187,7 @@ sub alifold {
 
             $sequence = $ret[$_ + 1];
             $sequence =~ s/_/-/g;
-            ($structure, $energy, $sci) = $ret[$_ + 2] =~ m/^([.\(\)]+)\s\(\s*([-\d\.]+).+?\[sci = ([\d\.]+)\]/;
+            ($structure, $energy, $sci) = $ret[$_ + 2] =~ m/^([.\(\)]+)\s\(\s*([-\d\.]+).+?\[sci = ([-\d\.]+)\]/;
 
         }
         elsif ($ret[$_] =~ m/^([\.\(\)]+) \{.+? MEA=[\d\.]+\}$/) { $mea = $1; }
@@ -140,9 +195,15 @@ sub alifold {
 
     }
 
-    %bpprobs = $self->_parseAliDpFile() if ($parameters->{partitionFunction} || $parameters->{MEA});
+    %bpprobs = $self->_parseAliDpFile() if (defined $structure &&
+                                            ($parameters->{partitionFunction} || $parameters->{MEA}));
 
-    unlink($id . "_0001_ali.out");
+    unlink($self->_outFile("_0001_dp.ps"), $self->_outFile("_0001_ali.out"));
+    $self->_cleanTmpFiles();
+
+    $self->_checkRet("RNAalifold", $ret);
+
+    return() if (!defined $structure);
 
     $fold = Data::Sequence::Structure->new( sequence          => $sequence,
                                             structure         => $structure,
@@ -165,7 +226,9 @@ sub plot {
 
     if (!$self->{_version}) {
 
-        my $ver = `RNAplot --version`;
+        $self->throw("No path provided to RNAplot executable") if (!defined $self->{RNAplot});
+
+        my $ver = `$self->{RNAplot} --version`;
         chomp($ver);
 
         if ($ver =~ /^RNAplot (\d+)\.(\d+)\.(\w+)/) {
@@ -236,10 +299,11 @@ sub plot {
     $ret = `$command 2>&1`;
     @ret = split(/\n/, $ret);
 
-    while ($ret =~ m/^ERROR: (.+?)\n/g) { $self->throw("RNAplot threw an exception (" . $1 . ")"); }
-    while ($ret =~ m/^WARNING: (.+?)\n/g) { $self->warn("RNAplot threw a warning (" . $1 . ")"); }
+    $self->_checkRet("RNAplot", $ret);
 
-    open(my $fh, "<", "$id\_ss.svg") or $self->throw("Unable to open RNAplot's SVG file ($!)");
+    my $svgFile = $self->_outFile("_ss.svg");
+
+    open(my $fh, "<", $svgFile) or $self->throw("Unable to open RNAplot's SVG file ($!)");
     open(my $wh, ">", $output) or $self->throw("Unable to write output SVG file ($!)");
     select((select($wh), $|=1)[0]);
 
@@ -270,7 +334,7 @@ SVG
 
                 my ($react, $color);
                 $react = shift(@reactivity);
-                $color = isnan($react) ? $colors{"none"} : ($react <= 0.4 ? $colors{"low"} : ($react < 0.7 ? $colors{"mid"} : $colors{"high"})); 
+                $color = isnan($react) ? $colors{"none"} : ($react <= 0.4 ? $colors{"low"} : ($react < 0.8 ? $colors{"mid"} : $colors{"high"})); 
                 
                 $x += 4;
                 $y -= 4;
@@ -292,11 +356,11 @@ SVG
         print $wh <<SVG;
 <g transform="translate($tx, $ty) scale($scale)" class="legend">
   <rect x="0" y="0" width="12" height="12" fill="$colors{high}" stroke="black" />
-  <text x="18" y="10" class="nucleotide">0.7+</text>
+  <text x="18" y="10" class="nucleotide">0.8+</text>
   <rect x="0" y="14" width="12" height="12" fill="$colors{mid}" stroke="black" />
-  <text x="18" y="24" class="nucleotide">0.4-0.7</text>
+  <text x="18" y="24" class="nucleotide">0.4 - 0.8</text>
   <rect x="0" y="28" width="12" height="12" fill="$colors{low}" stroke="black" />
-  <text x="18" y="38" class="nucleotide">0-0.4</text>
+  <text x="18" y="38" class="nucleotide">0 - 0.4</text>
   <rect x="0" y="42" width="12" height="12" fill="$colors{none}" stroke="black" />
   <text x="18" y="52" class="nucleotide">No data</text>
 </g>
@@ -310,61 +374,82 @@ SVG
     close($wh);
     close($fh);
 
-    unlink(glob($self->{tmpdir} . $id . "*"));
+    unlink($svgFile);
+    $self->_cleanTmpFiles();
 
 }
 
-# sub subopt {
+##
+#  Suboptimal/sampled structures prediction (RNAsubopt)
 #
-#     my $self = shift;
-#     my ($sequence, $parameters) = $self->_checkFoldParams(@_);
+#  subopt( <sequence>, { sampleSize        => <INT>,   # -p            (stochastic backtracking, 0 to disable)
+#                        deltaEnergy       => <REAL>,  # -e            (energy range, kcal/mol)
+#                        zuker             => <BOOL>,  # -z            (Zuker's suboptimal structures)
+#                        withProbabilities => <BOOL>,  # --stochBT_en  (also report energies/probabilities)
+#                        ... } )
 #
-#     $self->throw("No path provided to RNAsubopt executable") if (!defined $self->{RNAsubopt});
+#  Returns an ARRAY (or an ARRAY ref in scalar context) of HASH refs:
 #
-#     my ($id, $command, $ret, $ensemble,
-#         @structures, @energies, @probs);
-#     $id = "." . $self->{_randId}; # With the leading . the dp file will be hidden
-#     $command = $self->{RNAsubopt} . " -C --shape='" . $self->{tmpdir} . $id . ".shape'" .
-#                " --infile='" . $self->{tmpdir} . $id . ".fasta' -T " . $parameters->{temperature} .
-#                " --shapeMethod='Dm" . $parameters->{slope} . "b" . $parameters->{intercept} . "'" .
-#                " --stochBT_en=" . $parameters->{sampleSize};
-#     $command .= " --maxBPspan=" . $parameters->{maxBPspan} if ($parameters->{maxBPspan});
-#     $command .= " --noClosingGU" if ($parameters->{noClosingGU});
-#     $command .= " --noLP" if ($parameters->{noLonelyPairs});
-#     $command .= " --enforceConstraint" if ($parameters->{enforceConstraint});
-#     $command .= " -N" if ($parameters->{nonRedundant});
-#     $command .= " --sorted" if ($parameters->{sorted});
-#
-#     $self->_makeInputFile($sequence, $parameters->{constraint});
-#     $self->_makeShapeFile($parameters->{reactivity});
-#
-#     $ret = `$command 2>&1`;
-#
-#     unlink(glob($self->{tmpdir} . $id . "*"));
-#
-#     while ($ret =~ m/^ERROR: (.+?)\n/g) { $self->throw("RNAsubopt threw an exception (" . $1 . ")"); }
-#     while ($ret =~ m/^WARNING: (.+?)\n/g) { $self->warn("RNAsubopt threw a warning (" . $1 . ")"); }
-#
-#     for (split(/\n/, $ret)) {
-#
-#         my @line = split(" ", $_);
-#
-#         next if (@line < 3);
-#
-#         push(@structures, $line[0]);
-#         push(@energies, $line[1]);
-#         push(@probs, $line[2]);
-#
-#     }
-#
-#     $ensemble = Data::Sequence::Structure::Ensemble->new( sequence      => dna2rna($sequence),
-#                                                           structures    => \@structures,
-#                                                           energies      => \@energies,
-#                                                           probabilities => \@probs );
-#
-#     return($ensemble);
-#
-# }
+#  { structure   => <dot-bracket structure>,
+#    energy      => <REAL, or undef if not reported by RNAsubopt>,
+#    probability => <REAL, or undef if not reported by RNAsubopt> }
+##
+
+sub subopt {
+
+    my $self = shift;
+    my ($sequence, $parameters) = $self->_checkFoldParams(@_);
+
+    $self->throw("No path provided to RNAsubopt executable") if (!defined $self->{RNAsubopt});
+
+    my ($id, $command, $ret, @structures);
+    $id = "." . $self->{_randId};
+    $command = $self->{RNAsubopt} . " -C --shape='" . $self->{tmpdir} . $id . ".shape'" .
+               " --infile='" . $self->{tmpdir} . $id . ".fasta' -T " . $parameters->{temperature} .
+               " --shapeMethod='Dm" . $parameters->{slope} . "b" . $parameters->{intercept} . "'";
+    $command .= " --maxBPspan=" . $parameters->{maxBPspan} if ($parameters->{maxBPspan});
+    $command .= " --noClosingGU" if ($parameters->{noClosingGU});
+    $command .= " --noLP" if ($parameters->{noLonelyPairs});
+    $command .= " --enforceConstraint" if ($parameters->{enforceConstraint});
+    $command .= " -e " . $parameters->{deltaEnergy} if (defined $parameters->{deltaEnergy});
+    $command .= " -z" if ($parameters->{zuker});
+    $command .= $parameters->{withProbabilities} ? " --stochBT_en=" . $parameters->{sampleSize} : " -p " . $parameters->{sampleSize} if ($parameters->{sampleSize});
+    $command .= " -N" if ($parameters->{nonRedundant});
+    $command .= " --sorted" if ($parameters->{sorted});
+
+    $self->_makeInputFile($sequence, $parameters->{constraint});
+    $self->_makeShapeFile($parameters->{reactivity});
+
+    $ret = `$command 2>&1`;
+
+    $self->_cleanTmpFiles();
+
+    $self->_checkRet("RNAsubopt", $ret);
+
+    foreach my $line (split(/\n/, $ret)) {
+
+        my @line = split(" ", $line);
+        @line = grep { $_ ne "[" && $_ ne "]" } map { my $f = $_; $f =~ s/^\[|\]$//g; $f } @line;
+
+        next if (!@line || length($line[0]) != length($sequence) || !isdotbracket($line[0]));
+
+        # In Zuker's mode energies are reported within square brackets
+        for (@line[1 .. $#line]) {
+
+            s/^[\[\(\{]//;
+            s/[\]\)\}]$//;
+
+        }
+
+        push(@structures, { structure   => $line[0],
+                            energy      => @line > 1 && isnumeric($line[1]) ? $line[1] : undef,
+                            probability => @line > 2 && isnumeric($line[2]) ? $line[2] : undef });
+
+    }
+
+    return(wantarray() ? @structures : \@structures);
+
+}
 
 sub _checkFoldParams {
 
@@ -374,9 +459,12 @@ sub _checkFoldParams {
 
     $self->throw("Parameters must be an HASH reference") if (ref($parameters) ne "HASH");
 
-    $parameters = checkparameters({ reactivity        => [ ("NaN") x length($sequence) ],
-                                    constraint        => "." x length($sequence),
+    $self->throw("No sequence provided") if (!defined $sequence);
+
+    $parameters = checkparameters({ reactivity        => undef,
+                                    constraint        => undef,
                                     maxBPspan         => undef,
+                                    deltaEnergy       => undef,
                                     enforceConstraint => 0,
                                     noLonelyPairs     => 0,
                                     noClosingGU       => 0,
@@ -384,20 +472,32 @@ sub _checkFoldParams {
                                     MEA               => 0,
                                     sorted            => 0,
                                     nonRedundant      => 0,
+                                    zuker             => 0,
+                                    withProbabilities => 0,
                                     sampleSize        => 1000,
                                     slope             => 1.8,
                                     intercept         => -0.6,
                                     temperature       => 37 }, $parameters);
 
-    $self->throw("No sequence provided") if (!defined $sequence);
+    # Both reactivity and constraint can be explicitly passed as undef, in which
+    # case they default to an unconstrained folding with no experimental data
+    $parameters->{reactivity} = [ ("NaN") x length($sequence) ] if (!defined $parameters->{reactivity});
+    $parameters->{constraint} = "." x length($sequence) if (!defined $parameters->{constraint});
+
+    $self->throw("Reactivity must be an ARRAY ref") if (ref($parameters->{reactivity}) ne "ARRAY");
     $self->throw("Sequence contains invalid characters") if (!isna($sequence));
     $self->throw("Parameter maxBPspan span must be a positive INT") if ($parameters->{maxBPspan} &&
                                                                         (!isint($parameters->{maxBPspan}) ||
                                                                          !ispositive($parameters->{maxBPspan})));
+    $self->throw("Parameter deltaEnergy must be a positive REAL") if (defined $parameters->{deltaEnergy} &&
+                                                                      (!isreal($parameters->{deltaEnergy}) ||
+                                                                       !ispositive($parameters->{deltaEnergy})));
+    $self->throw("Parameter sampleSize must be a positive INT") if (!isint($parameters->{sampleSize}) ||
+                                                                    !ispositive($parameters->{sampleSize}));
 
-    for (qw(slope intercept temperature sampleSize)) { $self->throw("Parameter " . $_ . " must be numeric") if (!isnumeric($parameters->{$_})); }
-    for (qw(enforceConstraint noLonelyPairs noClosingGU
-            partitionFunction nonRedundant sorted MEA)) { $self->throw("Parameter " . $_ . " must be BOOL") if (!isbool($parameters->{$_})); }
+    for (qw(slope intercept temperature)) { $self->throw("Parameter " . $_ . " must be numeric") if (!isnumeric($parameters->{$_})); }
+    for (qw(enforceConstraint noLonelyPairs noClosingGU partitionFunction
+            nonRedundant sorted MEA zuker withProbabilities)) { $self->throw("Parameter " . $_ . " must be BOOL") if (!isbool($parameters->{$_})); }
 
     $self->throw("Constraint and sequence have different lengths") if (length($parameters->{constraint}) != length($sequence));
     $self->throw("Constraint contains invalid characters") if (!_isConstraint($parameters->{constraint}));
@@ -417,7 +517,7 @@ sub _checkAliFoldParams {
 
     $self->throw("Parameters must be an HASH reference") if (ref($parameters) ne "HASH");
 
-    $parameters->{reactivity} = ref($alignment) eq "ARRAY" ? [] : {} if (!exists $parameters->{reactivity});
+    $parameters->{reactivity} = ref($alignment) eq "ARRAY" ? [] : {} if (!defined $parameters->{reactivity});
 
     $self->throw("Alignment must be an ARRAY or HASH reference") if (ref($alignment) ne "ARRAY" && ref($alignment) ne "HASH");
     $self->throw("Reactivity must be an ARRAY or HASH reference") if (ref($parameters->{reactivity}) ne "ARRAY" && ref($parameters->{reactivity}) ne "HASH");
@@ -466,9 +566,11 @@ sub _checkAliFoldParams {
     %reactivity = map { $_ => $reactivity{$_} } grep { exists $alignment{$_} } keys %reactivity;
 
     $parameters = checkparameters({ maxBPspan          => undef,
+                                    constraint         => undef,
                                     mostInformativeSeq => 0,
                                     noLonelyPairs      => 0,
                                     noClosingGU        => 0,
+                                    enforceConstraint  => 0,
                                     partitionFunction  => 0,
                                     slope              => 1.8,
                                     intercept          => -0.6,
@@ -478,8 +580,15 @@ sub _checkAliFoldParams {
 
     $self->throw("Parameter maxBPspan span must be a positive INT") if ($parameters->{maxBPspan} && (!isint($parameters->{maxBPspan}) || !ispositive($parameters->{maxBPspan})));
 
+    if (defined $parameters->{constraint}) {
+
+        $self->throw("Constraint and alignment have different lengths") if (length($parameters->{constraint}) != $length);
+        $self->throw("Constraint contains invalid characters") if (!_isConstraint($parameters->{constraint}));
+
+    }
+
     for (qw(slope intercept temperature)) { $self->throw("Parameter " . $_ . " must be numeric") if (!isnumeric($parameters->{$_})); }
-    for (qw(noLonelyPairs noClosingGU MEA
+    for (qw(noLonelyPairs noClosingGU MEA enforceConstraint
             partitionFunction mostInformativeSeq)) { $self->throw("Parameter " . $_ . " must be BOOL") if (!isbool($parameters->{$_})); }
 
     $parameters->{reactivity} = \%reactivity;
@@ -493,11 +602,27 @@ sub _makeInputFile {
     my $self = shift;
     my ($sequence, $constraint) = @_;
 
-    my ($id, $nestedbp, $pkpairs, @unpaired);
+    my $id = "." . $self->{_randId};
+
+    $self->_writeFastaFile($id, $sequence, $self->_nestedConstraint($sequence, $constraint));
+
+}
+
+##
+#  ViennaRNA cannot handle pseudoknotted hard constraints, so crossing pairs are
+#  removed (and, if ssPseudoknots is set, their bases are forced single-stranded).
+#  Bases already marked as single-stranded ("x") are preserved
+##
+
+sub _nestedConstraint {
+
+    my $self = shift;
+    my ($sequence, $constraint) = @_;
+
+    my ($nestedbp, $pkpairs, @unpaired);
     push(@unpaired, $-[0]) while ($constraint =~ m/x/g);
     $constraint =~ s/x/./g;
     ($nestedbp, $pkpairs) = rmpseudoknots($sequence, $constraint);
-    $id = "." . $self->{_randId};
 
     if ($self->{ssPseudoknots}) {
 
@@ -512,7 +637,7 @@ sub _makeInputFile {
 
     substr($nestedbp, $_, 1) = "x" for (@unpaired);
 
-    $self->_writeFastaFile($id, $sequence, $nestedbp);
+    return($nestedbp);
 
 }
 
@@ -547,14 +672,31 @@ sub _makeShapeFile {
     my $self = shift;
     my $reactivity = shift;
 
-    my $id = "." . $self->{_randId};
-    @{$reactivity} = map { isnan($_) ? -999 : $_ } @{$reactivity};
+    my ($id, @reactivity);
+    $id = "." . $self->{_randId};
+    @reactivity = map { isnan($_) ? -999 : $_ } @{$reactivity}; # We work on a copy, to avoid altering the caller's reactivity profile
 
     open(my $wh, ">", $self->{tmpdir} . $id . ".shape") or $self->throw("Unable to write temporary SHAPE file (" . $! . ")");
     select((select($wh), $|=1)[0]);
 
-    print $wh ($_ + 1) . " " . $reactivity->[$_] . "\n" for (0 .. $#{$reactivity});
+    print $wh ($_ + 1) . " " . $reactivity[$_] . "\n" for (0 .. $#reactivity);
 
+    close($wh);
+
+}
+
+sub _makeAliConstraintFile {
+
+    my $self = shift;
+    my ($alignment, $constraint) = @_;
+
+    my ($id, $sequence);
+    $id = "." . $self->{_randId};
+    $sequence = $alignment->{(sort keys %{$alignment})[0]}; # Any sequence will do, they are all the same length
+
+    open(my $wh, ">", $self->{tmpdir} . $id . ".constraint") or $self->throw("Unable to write temporary constraint file (" . $! . ")");
+    select((select($wh), $|=1)[0]);
+    print $wh $self->_nestedConstraint($sequence, $constraint) . "\n";
     close($wh);
 
 }
@@ -584,14 +726,35 @@ sub _makeAliShapeFile {
 
 }
 
+##
+#  Returns the path of a file the executables name themselves (dot plots, ali.out,
+#  SVGs). These are always written relative to the current working directory, and
+#  never next to the --infile/--outfile paths, so they do not live in the
+#  interface's temporary directory unless the caller happens to be running there.
+#
+#  Their names only depend on the interface's random ID, so they are reused by
+#  every call on the same object. Each one is therefore an intermediate, to be
+#  consumed and then removed by the very call that generated it: a leftover would
+#  be silently mistaken for the output of a later call that failed to produce its own
+##
+
+sub _outFile {
+
+    my $self = shift;
+    my $suffix = shift;
+
+    return("." . $self->{_randId} . $suffix);
+
+}
+
 sub _parseDpFile {
 
     my $self = shift;
 
-    my ($id, %bpprobs);
-    $id = "." . $self->{_randId};
+    my ($file, %bpprobs);
+    $file = $self->_outFile("_dp.ps");
 
-    open(my $fh, "<", $id . "_dp.ps") or $self->throw("Unable to read base-pairing probabilities file (" . $! . ")");
+    open(my $fh, "<", $file) or $self->throw("Unable to read base-pairing probabilities file (" . $! . ")");
     while(<$fh>) {
 
         if ($_ =~ m/^(\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
@@ -610,8 +773,6 @@ sub _parseDpFile {
     }
     close($fh);
 
-    unlink($id . "_dp.ps");
-
     return(%bpprobs);
 
 }
@@ -620,10 +781,10 @@ sub _parseAliDpFile {
 
     my $self = shift;
 
-    my ($id, %bpprobs);
-    $id = "." . $self->{_randId};
+    my ($file, %bpprobs);
+    $file = $self->_outFile("_0001_dp.ps");
 
-    open(my $fh, "<", $id . "_0001_dp.ps") or $self->throw("Unable to read base-pairing probabilities file (" . $! . ")");
+    open(my $fh, "<", $file) or $self->throw("Unable to read base-pairing probabilities file (" . $! . ")");
     while(<$fh>) {
 
         if ($_ =~ m/hsb (\d+) (\d+) ([\d\.]+(?:e-\d+)?) ubox$/) {
@@ -641,8 +802,6 @@ sub _parseAliDpFile {
 
     }
     close($fh);
-
-    unlink($id . "_0001_dp.ps");
 
     return(%bpprobs);
 

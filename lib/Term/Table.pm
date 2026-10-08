@@ -1,7 +1,7 @@
 package Term::Table;
 
 use strict;
-use Core::Mathematics qw(:functions);
+use Core::Mathematics;
 use Term::Constants qw(:colors);
 use Term::Utils;
 

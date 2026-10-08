@@ -1,0 +1,1114 @@
+#!/usr/bin/env perl
+
+##
+# RF CovAlign
+# RNA Framework [http://www.rnaframework.com]
+#
+# Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+# Summary: Iteratively builds and refines structure-informed alignments of
+#          homologous sequences for covariation analysis
+#
+# This program is free software, and can be redistribute  and/or modified
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# Please see <http://www.gnu.org/licenses/> for more informations.
+##
+
+use strict;
+use File::Copy;
+use FindBin qw($Bin);
+use Getopt::Long qw(:config no_ignore_case);
+use POSIX qw(ceil);
+use Storable;
+
+use lib $Bin . "/lib";
+
+use Core::Mathematics;
+use Core::Statistics;
+use Core::Utils;
+use Data::IO::Sequence;
+use Data::Sequence::Utils;
+use Interface::Infernal;
+use Interface::Rscape;
+use RNA::Utils;
+use Term::Constants qw(:screen);
+use Term::Progress;
+use Term::Table;
+
+$|++;
+
+my ($help, $motifFile, $iterations, $dbfile, $enlargeMotif,
+    $dbio, $tmpDir, $threads, $incCompatiblePairs, $noGapsInCov,
+    $output, $infernal, $evalue, $minbpfrac, $groupMotifs,
+    $postolerance, $mincov, $seqfile, $seq, $motifIO,
+    $minlen, $rscape, $stopIfFirstZero, $rscapeEvalue, 
+    $skipRscape, $useHelixAggregatedEvalue, $onGenome, 
+    $evalueDecrease, $useEvalue, $bitScore, $bitScoreIncrease, 
+    $noiseEstimate, $originalBitScore, $originalEvalue, 
+    $decoySize, $minDecoySize, $overwrite, $logDir, 
+    $modelLogDir, $progressBar, $keepLogs, $nMotifs,
+    $stepsPerStruct, $maxSteps, $motifSteps, $motifDone,
+    $rscapeIntf, $infernalIntf, $alnDir, $imgDir, $coloredAln,
+    $htmlDir, $darkAln, %motifs, %sequences, %results);
+
+do {
+
+    local $SIG{__WARN__} = sub { };
+
+    GetOptions( "h|help"                        => \$help,
+                "s|sequenceFile=s"              => \$seqfile,
+                "m|motifFile=s"                 => \$motifFile,
+                "d|dbFile=s"                    => \$dbfile,
+                "gm|groupMotifs"                => \$groupMotifs,
+                "em|enlargeMotif=s"             => \$enlargeMotif,
+                "i|iterations=s"                => \$iterations,
+                "g|onGenome"                    => \$onGenome,
+                "D|iterativeEvalueDecrease=s"   => \$evalueDecrease,
+                "t|posTolerance=s"              => \$postolerance,
+                "mc|minQueryCov=s"              => \$mincov,
+                "ng|noGapsInCov"                => \$noGapsInCov,
+                "o|output=s"                    => \$output,
+                "p|processors=s"                => \$threads,
+                "E|evalue=s"	                => \$evalue,
+                "b|minBpFraction=s"             => \$minbpfrac,
+                "l|minLen=s"                    => \$minlen,
+		        "f|stopIfFirstZero"             => \$stopIfFirstZero,
+                "P|pathToInfernal=s"            => \$infernal,
+                "R|pathToRscape=s"              => \$rscape,
+                "r|skipRscape"                  => \$skipRscape,
+                "e|rscapeEvalue=s"              => \$rscapeEvalue,
+                "a|useHelixAggregatedEvalue"    => \$useHelixAggregatedEvalue,
+                "ow|overwrite"                  => \$overwrite,
+                "kl|keepLogs"                   => \$keepLogs,
+                "U|useEvalue"                   => \$useEvalue,
+                "T|bitScore=s"                  => \$bitScore,
+                "I|iterativeBitScoreIncrease=s" => \$bitScoreIncrease,
+                "N|noiseEstimate"               => \$noiseEstimate,
+                "ds|decoySize=s"                => \$decoySize,
+                "md|minDecoySize=s"             => \$minDecoySize,
+                "cp|includeCompatiblePairs"     => \$incCompatiblePairs,
+                "ca|coloredAln"                 => \$coloredAln,
+                "da|darkAln"                    => \$darkAln ) or help(1);
+
+}; 
+
+help() if ($help);
+
+$bitScore //= 20;
+$mincov ||= 0.75;
+$postolerance //= 1;
+$minbpfrac ||= 0.5;
+$minDecoySize ||= 1000;
+$threads ||= 1;
+$evalue ||= 10;
+$rscapeEvalue ||= 0.1;
+$decoySize ||= 0.1;
+$evalueDecrease //= 0;
+$enlargeMotif //= 0;
+$iterations ||= 10;
+$minlen ||= 100;
+$output ||= "rf_covalign/";
+
+$output =~ s/\/?$/\//;
+$infernal =~ s/\/?$/\// if (defined $infernal);
+$tmpDir = "${output}tmp/";
+$logDir = "${output}logs/";
+$alnDir = "${output}alignments/";
+$imgDir = "${output}images/";
+$htmlDir = "${output}html/";
+$originalEvalue = $evalue;
+$originalBitScore = $bitScore;
+$nMotifs = 0;
+
+die "\n  [!] Error: Number of processors must be an INT >= 1\n\n" if (!isint($threads) || $threads < 1);
+die "\n  [!] Error: E-value must be >= 0\n\n" if (!isnumeric($evalue) || !ispositive($evalue));
+die "\n  [!] Error: R-scape E-value must be >= 0\n\n" if (!isnumeric($rscapeEvalue) || !ispositive($rscapeEvalue));
+die "\n  [!] Error: Minimum motif length must be an INT >= 1\n\n" if (!isint($minlen) || $minlen < 1);
+die "\n  [!] Error: Motif extension must be a positive INT\n\n" if (!isint($enlargeMotif) || !ispositive($enlargeMotif));
+die "\n  [!] Error: Number of iterations must be an INT >= 1\n\n" if (!isint($iterations) || $iterations < 1);
+die "\n  [!] Error: Minimum base-pair fraction must be comprised between 0 and 1\n\n" if (!isnumeric($minbpfrac) || !inrange($minbpfrac, [0, 1]));
+die "\n  [!] Error: Minimum query coverage must be comprised between 0 and 1\n\n" if (!isnumeric($mincov) || !inrange($mincov, [0, 1]));
+die "\n  [!] Error: Position tollerance must be comprised between 0 and 1\n\n" if (!isnumeric($postolerance) || !inrange($postolerance, [0, 1]));
+die "\n  [!] Error: E-value decrease must be > 1\n\n" if (!isnumeric($evalueDecrease) || !ispositive($evalueDecrease) || ($evalueDecrease > 0 && $evalueDecrease <= 1));
+die "\n  [!] Error: No sequence file provided\n\n" if (!defined $seqfile);
+die "\n  [!] Error: Sequence file does not exist\n\n" if (!-e $seqfile);
+die "\n  [!] Error: No DB file provided\n\n" if (!defined $dbfile);
+die "\n  [!] Error: DB file does not exist\n\n" if (!-e $dbfile);
+die "\n  [!] Error: No motif file provided\n\n" if (!defined $motifFile);
+die "\n  [!] Error: Motif file does not exist\n\n" if (!-e $motifFile);
+die "\n  [!] Error: Bit score threshold must be >= 0\n\n" if (!ispositive($bitScore));
+die "\n  [!] Error: Bit score increase must be > 0\n\n" if (defined $bitScoreIncrease && (!isnumeric($bitScoreIncrease) || !ispositive($bitScoreIncrease)));
+die "\n  [!] Error: Bit score thresholds and -U are mutually exclusive\n\n" if ($useEvalue && defined $bitScoreIncrease);
+die "\n  [!] Error: Noise estimation cannot be used together with -U\n\n" if ($useEvalue && $noiseEstimate);
+die "\n  [!] Error: Decoy database size must be comprised between 0.1 [10\%] and 1\n\n" if (!isnumeric($decoySize) || !inrange($decoySize, [0.1, 1]));
+die "\n  [!] Error: Minimum decoy database size must be an INT >= 1\n\n" if (!isint($minDecoySize) || $minDecoySize < 1);
+die "\n  [!] Error: Parameters -cp and -a are mutually exclusive\n\n" if ($incCompatiblePairs && $useHelixAggregatedEvalue);
+die "\n  [!] Error: Paramter -da requires -ca\n\n" if ($darkAln && !$coloredAln);
+
+print "\n[+] Making output directory...";
+
+if (-e $output) {
+
+    if ($overwrite) {
+
+        my $error = rmtree($output);
+
+        die "\n\n  [!] Error: $error\n\n" if ($error);
+
+    }
+    else { die "\n\n  [!] Error: Output directory already exists." .
+               "\n      Please use -ow (or --overwrite) to overwrite output directory\n\n"; }
+
+}
+
+for my $dir ($tmpDir, $alnDir) { if (my $error = mktree($dir, "755")) { die "\n\n  [!] Error: Unable to create \"$dir\" output directory ($error)\n\n"; } }
+if (!$skipRscape && (my $error = mktree("${imgDir}tmp/", "755"))) { die "\n\n  [!] Error: Unable to create \"$imgDir\" output directory ($error)\n\n"; }
+
+# With -kl, everything the external programs print is kept under logs/, one
+# subfolder per model. Without it their output is simply discarded, since the
+# terminal is given over to the progress bar either way.
+if ($keepLogs) { if (my $error = mktree($logDir, "755")) { die "\n\n  [!] Error: Unable to create logs directory ($error)\n\n"; } }
+if ($coloredAln) { if (my $error = mktree($htmlDir, "755")) { die "\n\n  [!] Error: Unable to create html directory ($error)\n\n"; } }
+
+$motifIO = Data::IO::Sequence->new( file         => $motifFile,
+                                    lonelypairs  => 1 );
+
+$seq = Data::IO::Sequence->new(file => $seqfile)->read();
+
+die "\n\n  [!] Error: Unable to read sequence file\n\n" if (!defined $seq);
+
+print "\n[+] Initializing interfaces...";
+
+$infernalIntf = Interface::Infernal->new( (map { $_ => defined $infernal ? "${infernal}$_" : undef } qw(cmscan cmpress cmbuild cmsearch cmcalibrate cmalign)),
+                                          checkAllProgs => 1,
+                                          tmpdir        => $tmpDir );
+$rscapeIntf = Interface::Rscape->new( Rscape => defined $rscape ? $rscape : undef,
+                                      tmpdir => $tmpDir,
+                                      imgDir => "${imgDir}tmp/" ) if (!$skipRscape);
+
+print "\n\n  [!] Note: Using E-values. Bit score thresholds will be ignored...\n" if ($useEvalue);
+print "\n[+] Importing sequence database...";
+
+# The DB is read through a FASTA index, so a sequence can be pulled out by ID
+# without walking the file. If no index is next to the DB, samtools makes one if
+# it is installed, and failing that the reader builds one itself on the way past.
+if (!-e "${dbfile}.fai") {
+
+    print "\n[+] Indexing sequence database...";
+
+    if (my $samtools = which("samtools")) { 
+        
+        my $ret = `$samtools faidx $dbfile >/dev/null 2>&1`;
+
+        if ($? || !-e "${dbfile}.fai") {
+
+            $ret =~ s/^\s+|\s+$//g;
+
+            die "\n\n  [!] Error: samtools faidx failed" . ($ret ? " ($ret)\n\n" : "\n\n");
+
+        } 
+        
+    }
+    else {
+
+        my $tmpIO = Data::IO::Sequence->new( file       => $dbfile,
+                                             buildIndex => 1 );
+
+        while($tmpIO->read()) { }
+
+        $tmpIO->close();
+
+    }
+
+}
+
+die "\n\n  [!] Error: Unable to index sequence database\n\n" if (!-e "${dbfile}.fai");
+
+$dbio = Data::IO::Sequence->new(file => $dbfile);
+
+# The index already holds every ID and its length, so the DB itself never has to
+# be walked: the .fai is read straight off disk
+open(my $ih, "<", "${dbfile}.fai") or die "\n\n  [!] Error: Unable to read FASTA index ($!)\n\n";
+while(<$ih>) {
+
+    chomp;
+
+    my @row = split /\t/;
+
+    $sequences{$row[0]} = $row[1] if (@row >= 2);
+
+}
+close($ih);
+
+print " " . (keys %sequences) . " sequences indexed.";
+
+die "\n\n  [!] Error: Sequence database is empty\n\n" if (!keys %sequences);
+
+if ($noiseEstimate) {
+
+    my ($n, $max);
+    $n = 0;
+    $max = max($minDecoySize, round(scalar(keys %sequences) * $decoySize));
+
+    open(my $wh, ">", "${tmpDir}db.rev.fasta") or die "\n\n[!] Error: Unable to write reversed DB for noise estimation ($!)\n\n";
+    select((select($wh), $|=1)[0]);
+    foreach my $id (keys %sequences) {
+
+        $n++;
+        print $wh ">$id\n" . rev($dbio->read($id)->sequence()) . "\n";
+
+        last if ($n == $max);
+
+    }
+    close($wh);
+
+}
+
+print "\n[+] Importing motifs...";
+
+if (!$groupMotifs) {
+
+    while(my $motif = $motifIO->read()) {
+
+        my $motifId = $motif->id();
+        $motifs{$motifId}->{sequence} = $motif->sequence();
+        push(@{$motifs{$motifId}->{structure}}, $motif->structure());
+
+    }
+
+}
+else { # Group motifs
+
+    while(my $motif = $motifIO->read()) {
+
+        my $motifId = $motif->id();
+        $motifId =~ s/_c\d+$//; # Strips the conformation ID from rf-json2rc
+
+        push(@{$motifs{$motif->sequence()}->{id}}, $motifId);
+        push(@{$motifs{$motif->sequence()}->{structure}}, $motif->structure());
+
+    }
+
+    # Adjust motif IDs
+    foreach my $sequence (keys %motifs) {
+
+        my $id = join("_", uniq(@{$motifs{$sequence}->{id}}));
+        $motifs{$id} = { sequence  => $sequence,
+                         structure => $motifs{$sequence}->{structure} };
+
+        delete($motifs{$sequence});
+
+    }
+
+}
+
+$nMotifs = keys %motifs;
+print " $nMotifs imported.";
+
+die "\n\n  [!] Error: Motif file is empty\n\n" if (!$nMotifs);
+
+# Calculate increments of progress bar
+$stepsPerStruct = 3 + (1 - $skipRscape) + $useEvalue + $noiseEstimate;
+$maxSteps = 0;
+
+$maxSteps += $iterations * $stepsPerStruct * scalar(@{$motifs{$_}->{structure}}) + 2 for (keys %motifs);
+
+$progressBar = Term::Progress->new( max     => $maxSteps,
+                                    width   => 50,
+                                    colored => 1 );
+
+print "\n[+] Building alignments (this might take a while)...\n\n";
+
+$progressBar->init();
+
+MOTIF:
+foreach my $id (sort keys %motifs) {
+
+    # Whatever this motif costs, the bar advances by all of it: a motif that
+    # skips out early tops up the rest in the continue block below
+    $motifSteps = $iterations * $stepsPerStruct * scalar(@{$motifs{$id}->{structure}}) + 2;
+    $motifDone = 0;
+
+    my ($motif, $basename, $ret, $motiflen, $mstart, 
+        $mend, $seqnogaps, @lastCovarying, $lastIter, 
+        @nogaps, @mseq, @mstruct, @structNoGaps, @nBasePairs);
+
+    $motif = $motifs{$id};
+    @lastCovarying = ();
+    $basename = $tmpDir . $id;
+
+    # Each model gets its own logs subfolder
+    if ($keepLogs) {
+
+        $modelLogDir = "${logDir}${id}/";
+        $infernalIntf->logDir($modelLogDir);
+        $rscapeIntf->logDir($modelLogDir);
+
+    }
+
+    @mseq = split //, rna2dna($motif->{sequence});
+    @mstruct = map { [ split //, $_ ] } @{$motif->{structure}};
+    @nogaps = grep { $mseq[$_] ne "-" } 0 .. $#mseq;
+    @mseq = @mseq[@nogaps];
+    @mstruct = map { [ @$_[@nogaps] ] } @mstruct;
+    $seqnogaps = join("", @mseq);
+    @structNoGaps = map { join("", @$_) } @mstruct; 
+    @nBasePairs = map { my $s = $_; scalar(map { $_ } listpairs($s)) } @structNoGaps;
+    $motiflen = length($seqnogaps);
+    $mstart = index(rna2dna($seq->sequence()), $seqnogaps, 0);
+    $mend = $mstart + $motiflen - 1;
+
+    for(my $i = 0; $i < @nBasePairs; $i++) {
+
+        if (!$nBasePairs[$i]) {
+
+            $progressBar->status("Motif $id [#$i] has no base-pairs, will be skipped...");
+
+            splice(@nBasePairs, $i, 1);
+            splice(@structNoGaps, $i, 1);
+            $i--;
+
+        }
+
+    }
+
+    if (!@nBasePairs) {
+
+        $progressBar->status("Motif $id has no base-pairs, skipping...");
+
+        next MOTIF;
+
+    }
+
+    $progressBar->status("Looking for motif $id position in reference sequence");
+
+    if ($mstart == -1) {
+
+        if ($onGenome) {
+
+            $mstart = index(revcomp(rna2dna($seq->sequence())), $seqnogaps, 0);
+            $mend = $mstart + $motiflen - 1;
+
+        }
+
+        if ($mstart == -1) {
+
+            $progressBar->status("Cannot find motif $id in reference sequence file. Skipping...");
+
+            next MOTIF;
+
+        }
+
+    }
+    
+    $progressBar->status("Motif $id found at $mstart-$mend");
+
+    if ($motiflen < $minlen || $enlargeMotif) {
+
+        my ($enlarge, $enlargedseq, $uplen, @enlargedStruct);
+        $enlarge = max(round(($minlen - $motiflen) / 2), $enlargeMotif, 1);
+        $mstart = max(0, $mstart - $enlarge);
+        $mend = min($seq->length() - 1, $mend + $enlarge);
+        $enlargedseq = rna2dna(substr($seq->sequence(), $mstart, $mend - $mstart + 1));
+        $uplen = index($enlargedseq, $seqnogaps, 0);
+        @enlargedStruct = map { ("." x $uplen) . $_ . ("." x (length($enlargedseq) - $motiflen - $uplen)) } @structNoGaps;
+        $motif = { sequence  => $enlargedseq,
+                   structure => \@enlargedStruct };
+
+    }
+    else {
+
+        $motif = { sequence  => $seqnogaps,
+                   structure => \@structNoGaps };
+
+    }
+
+    $progressBar->status("Generating " . scalar(@nBasePairs) . " initial stockholm " . (@nBasePairs > 1 ? "files" : "file") . " for motif $id");
+    fasta2stockholm($id, $motif);
+
+    ITER:
+    foreach my $iter (1 .. $iterations) {
+
+        if ($iter == 1) {
+
+            $evalue = $originalEvalue;
+            $bitScore = $originalBitScore;
+
+        }
+        else {
+
+            $evalue /= $evalueDecrease if ($evalueDecrease);
+            $bitScore += $bitScoreIncrease if ($bitScoreIncrease);
+
+        }
+
+        my ($stockname, @commonRefIds, @selRefIds, %refIds);
+        $stockname = $iter > 1 ? $basename . "_" . ($iter - 1) : $basename;
+
+        # Every structure is searched and aligned independently. Nothing
+        # is deduplicated yet: only the reference IDs that survive
+        # selectValidAln in *all* structures are kept, and that intersection can
+        # only be taken once every struct has been through.
+        for my $i (0 .. $#nBasePairs) {
+
+            my ($cmsearchParams, @matches, %matches);
+            $cmsearchParams = { threads   => $threads,
+                                tableOut  => "${basename}.out",
+                                topOnly   => $onGenome ? 0 : 1,
+                                noHMMOnly => 1,
+                                $useEvalue ? ( evalue    => $evalue,
+                                               incEvalue => $evalue )
+                                           : ( bitScore  => $bitScore ) };
+
+            $progressBar->status("Building $id [#$i] covariance model [iteration #$iter]");
+            $infernalIntf->cmbuild("${stockname}_$i.stockholm", { cmFile => "${basename}_$i.cm" });
+
+            $motifDone++;
+            $progressBar->update(1);
+
+            if ($useEvalue) {
+
+                my $eta = formatTime($infernalIntf->cmcalibrate("${basename}_$i.cm", { forecast => 1 }));
+                $progressBar->status("Calibrating $id [#$i] covariance model (ETA: $eta) [iteration #$iter]");
+                $infernalIntf->cmcalibrate("${basename}_$i.cm", { threads => $threads });
+
+                $motifDone++;
+                $progressBar->update(1);
+
+            }
+            else {
+
+                $progressBar->status("Tweaking $id [#$i] covariance model ECM fields [iteration #$iter]");
+                $infernalIntf->fakeCmcalibrate("${basename}_$i.cm");
+
+            }
+
+            if ($noiseEstimate) {
+
+                $progressBar->status("Estimating $id [#$i] noise threshold in decoy DB");
+                my @noiseMatches = $infernalIntf->cmsearch("${basename}_$i.cm", "${tmpDir}db.rev.fasta", $cmsearchParams);
+
+                foreach my $match (@noiseMatches) {
+
+                    next if ($useEvalue && $match->{evalue} > $evalue);
+                    next if (($match->{modelTo} - $match->{modelFrom} + 1 - ($noGapsInCov ? $match->{modelGaps} : 0)) / ($mend - $mstart + 1) < $mincov);
+                    next if ($postolerance < 1 && !intersect([($mstart / $seq->length()) - $postolerance, ($mend / $seq->length()) + $postolerance],
+                                                             [($match->{targetFrom} / ($sequences{$match->{target}} - 1)), ($match->{targetTo} / ($sequences{$match->{target}} - 1))]));
+
+                    my $noiseThresh = ceil(($match->{bitScore} + 0.1) / 5) * 5; 
+                    $bitScore = max($bitScore, $noiseThresh);
+
+                }
+
+                $progressBar->status("Bit score threshold for $id [#$i] set to $bitScore [iteration #$iter]");
+                $cmsearchParams->{bitScore} = $bitScore;
+
+                unlink("${basename}.out");
+
+                $motifDone++;
+                $progressBar->update(1);
+
+            }
+
+            $progressBar->status("Searching DB with $id [#$i] covariance model [iteration #$iter]");
+            @matches = $infernalIntf->cmsearch("${basename}_$i.cm", $dbfile, $cmsearchParams);
+
+            $motifDone++;
+            $progressBar->update(1);
+
+            foreach my $match (@matches) {
+
+                next if ($useEvalue && $match->{evalue} > $evalue);
+                next if (($match->{modelTo} - $match->{modelFrom} + 1 - ($noGapsInCov ? $match->{modelGaps} : 0)) / ($mend - $mstart + 1) < $mincov);
+                next if ($postolerance < 1 && !intersect([($mstart / $seq->length()) - $postolerance, ($mend / $seq->length()) + $postolerance],
+                                                         [($match->{targetFrom} / ($sequences{$match->{target}} - 1)), ($match->{targetTo} / ($sequences{$match->{target}} - 1))]));
+
+                $matches{$match->{target}} = [$match->{targetFrom}, $match->{targetTo}, $match->{strand}, $match->{bitScore}] if (!exists $matches{$match->{target}} ||
+                                                                                                                                  $matches{$match->{target}}->[3] < $match->{bitScore});
+
+            }
+
+            unlink("${basename}.out");
+
+            if (!$useEvalue) { %matches = map { $_ => $matches{$_} } grep { $matches{$_}->[3] >= $bitScore } keys %matches; }
+
+            $progressBar->status(scalar(keys %matches) . " matches found for $id [#$i] [iteration #$iter]");
+
+            for (keys %matches) {
+
+                my $seqMatch = substr($dbio->read($_)->sequence(), $matches{$_}->[0], $matches{$_}->[1] - $matches{$_}->[0] + 1);
+                $matches{$_} = $onGenome && $matches{$_}->[2] eq "-" ? revcomp($seqMatch) : $seqMatch;
+
+            }
+
+            if (!keys %matches) {
+
+                $progressBar->status("No matches left for $id [#$i] [iteration #$iter]");
+
+                if ($iter == 1 || ($iter > 1 && !sum(@lastCovarying))) { next MOTIF; }
+                else {
+
+                    $progressBar->status("Stopping $id [#$i] at iteration #$iter [last covarying: " . join(",", @lastCovarying) . "]");
+
+                    last ITER;
+
+                }
+
+            }
+
+            open(my $wh, ">", "${basename}_$i.fasta") or die "\n\n  [!] Error: Unable to write sequences to FASTA file ($!)\n\n";
+            print $wh ">" . $_ . "\n" . $matches{$_} . "\n" for (keys %matches);
+            close($wh);
+
+            $infernalIntf->cmalign("${basename}_$i.cm", "${basename}_$i.fasta", { output  => "${basename}_${iter}_$i.stockholm",
+                                                                                  threads => $threads,
+                                                                                  noProb  => 1 });
+
+            $motifDone++;
+            $progressBar->update(1);
+
+            @selRefIds = selectValidAln("${basename}_${iter}_$i", $nBasePairs[$i]);
+
+            if (!@selRefIds) {
+
+                $progressBar->status("No sequences left for $id [#$i] after base-pair filtering [iteration #$iter]");
+
+                next MOTIF;
+
+            }
+
+            $refIds{$i} = { map { $_ => 1 } @selRefIds };
+
+        }
+
+        # Only the IDs that made it through every structure are carried forward
+        @commonRefIds = grep { my $refId = $_;
+                               scalar(grep { exists $refIds{$_}->{$refId} } keys %refIds) == scalar(keys %refIds) } keys %{$refIds{0}};
+
+        $progressBar->status(scalar(@commonRefIds) . " sequences in common between " . scalar(keys %refIds) . " $id structures [iteration #$iter]");
+
+        if (!@commonRefIds) {
+
+            $progressBar->status("No sequences left in common between $id structures [iteration #$iter]");
+
+            if ($iter == 1 || ($iter > 1 && !sum(@lastCovarying))) { next MOTIF; }
+            else { last ITER; }
+
+        }
+
+        # Each structure's alignment is reduced to those IDs, and duplicate
+        # sequences dropped. Which ID survives a duplicate does not matter, as
+        # the sequence it holds is the same either way.
+        for my $i (0 .. $#nBasePairs) {
+
+            if (!cleanAln("${basename}_${iter}_$i", \@commonRefIds)) {
+
+                $progressBar->status("No sequences left for $id [#$i] after deduplication [iteration #$iter]");
+
+                next MOTIF;
+
+            }
+
+        }
+
+        if (!$skipRscape) {
+
+            my (@tmpResults, @nCovarying);
+
+            for my $i (0 .. $#nBasePairs) {
+
+                my ($rscapeResults, $nCovaryingPairs, $nCovaryingHelices);
+
+                $progressBar->status("Calculating covariation for $id [#$i] [iteration #$iter]");
+                $rscapeResults = $rscapeIntf->Rscape("${basename}_${iter}_$i.stockholm", { twoSet      => 1,
+                                                                                           helixMethod => "lancaster",
+                                                                                           $useHelixAggregatedEvalue ? (helixEvalue => $rscapeEvalue) : (evalue => $rscapeEvalue) });
+                $nCovaryingPairs = scalar($rscapeResults->inStructurePairs());
+                $nCovaryingPairs += scalar($rscapeResults->compatiblePairs()) if ($incCompatiblePairs);
+                $nCovaryingHelices = scalar(grep { $_->evalue() < ($useHelixAggregatedEvalue ? $rscapeEvalue : 0.05) } $rscapeResults->helices());
+                $nCovarying[$i] = $useHelixAggregatedEvalue ? $nCovaryingHelices : $nCovaryingPairs;
+
+                $tmpResults[$i] = { pairs   => $nCovaryingPairs,
+                                    helices => $nCovaryingHelices };
+
+                $motifDone++;
+                $progressBar->update(1);
+
+            }
+
+            # Each structure is compared against its own previous count, not
+            # against the best of them: the run continues only while no structure
+            # has lost covariation. Staying level is fine.
+            my @decreased = grep { $nCovarying[$_] < $lastCovarying[$_] } 0 .. $#nCovarying if ($iter > 1);
+
+            if (@decreased ||
+                (($iter > 1 || ($stopIfFirstZero && $iter == 1)) && !sum(@nCovarying))) {
+
+                $progressBar->status("Stopping $id at iteration #$iter [covarying: " . join(",", @nCovarying) . ", previous: " . join(",", @lastCovarying) .
+                                     (@decreased ? ", decreased in #" . join(", #", @decreased) : "") . "]");
+
+                if (!exists $results{$id}) {
+
+                    $results{$id} = [ map { { pairs   => 0,
+                                              helices => 0 } } @nBasePairs ];
+
+                }
+
+                last ITER;
+
+            }
+
+            @lastCovarying = @nCovarying;
+            $results{$id} = \@tmpResults;
+
+        }
+
+        $lastIter = $iter;
+
+    }
+
+    unlink glob "${basename}_*.cm";
+
+    if ($lastIter) {
+
+        # One alignment per structure 
+        for my $i (0 .. $#nBasePairs) { 
+            
+            copy("${basename}_${lastIter}_$i.stockholm", "${alnDir}${id}_$i.stockholm") or die "\n\n  [!] Error: Failed to copy Stockholm file to output ($!)\n\n";
+            
+            if ($coloredAln) { stockholm2html("${id}_$i", $darkAln); }
+            if (!$skipRscape) { copy("${imgDir}tmp/${id}_${lastIter}_$i.pdf", "${imgDir}${id}_$i.pdf") or die "\n\n  [!] Error: Failed to copy consensus structure's PDF file to output ($!)\n\n"; }
+            
+        }
+
+        $progressBar->status("Cleaning up");
+        unlink glob "${basename}*";
+        unlink glob "${imgDir}tmp/$id*" if (!$skipRscape);
+
+    }
+
+}
+continue {
+
+    # Runs even when the body used "next MOTIF", so a skipped motif still
+    # accounts for the steps it never took
+    $progressBar->update($motifSteps - $motifDone) if ($motifSteps > $motifDone);
+    $motifDone = $motifSteps;
+
+}
+
+$progressBar->complete("Done") if (defined $progressBar);
+
+rmtree($tmpDir);
+
+if (!$skipRscape) {
+
+    rmtree("${imgDir}tmp");
+
+    if (keys %results) {
+
+        my ($sortBy, $n, $table, @head, @rows);
+        $sortBy = $useHelixAggregatedEvalue ? "helices" : "pairs";
+        $table = Term::Table->new(indent => 2);
+        @head = ("Motif");
+        push(@head, "Structure") if ($groupMotifs);
+        push(@head, "# significant pairs", "# significant helices");
+        $table->head(@head);
+
+        # One row per structure, since each has its own alignment
+        foreach my $id (keys %results) {
+
+            for my $i (0 .. $#{$results{$id}}) {
+
+                next if (!defined $results{$id}->[$i]);
+
+                my @row = ($id);
+                push(@row, $i) if ($groupMotifs);
+                push(@row, $results{$id}->[$i]->{pairs}, $results{$id}->[$i]->{helices});
+                push(@rows, \@row);
+
+            }
+
+        }
+
+        foreach my $row (sort { $b->[$sortBy eq "helices" ? 3 : 2] <=> $a->[$sortBy eq "helices" ? 3 : 2] } @rows) {
+
+            if ($row->[$sortBy eq "helices" ? 3 : 2]) {
+
+                $table->row(@{$row});
+                $n++;
+
+                last if ($n == 10);
+
+            }
+
+        }
+
+        print "\n\n";
+
+        if (!$n) { print "[!] No structure with covariation support. Please adjust the parameters and try again"; }
+        else { 
+
+            print "[+] Top $n structures with covariation support:\n\n";
+
+            $table->print(); 
+            
+        }
+
+    }
+    else { die "\n\n  [!] Error: Analysis failed. Check the logs\n\n"; }
+
+}
+
+print "\n\n[+] All done.\n\n";
+
+sub fasta2stockholm {
+
+    my ($id, $motif) = @_;
+
+    $_ =~ s/[^\(\)]/./g for (@{$motif->{structure}});
+
+    for my $i (0 .. $#{$motif->{structure}}) {
+
+        open(my $sh, ">", "${tmpDir}${id}_$i.stockholm") or die "\n\n  [!] Error: Unable to convert $id FASTA file to Stockholm format ($!)\n\n";
+        print $sh "# STOCKHOLM 1.0\n" .
+                "$id\t" . dna2rna($motif->{sequence}) . "\n" .
+                "#=GC SS_cons\t" . $motif->{structure}->[$i] . "\n" .
+                "//";
+        close($sh);
+
+    }
+
+}
+
+# Reduces an alignment to the given reference IDs and drops duplicate sequences.
+# Which ID survives a duplicate does not matter: the sequence it carries is the
+# same either way.
+sub cleanAln {
+
+    my ($basename, $refIds) = @_;
+
+    my ($maxlen, %keep, %stock, %seen);
+    $maxlen = 0;
+    %keep = map { $_ => 1 } @{$refIds};
+
+    open(my $sh, "<", "${basename}.stockholm") or die "\n\n  [!] Error: Unable to open $basename alignment file ($!)\n\n";
+    while (<$sh>) {
+
+        chomp();
+
+        if ($_ =~ m/^#/ && $_ !~ m/^#=GC/) { next; }
+        elsif ($_ =~ m/^(\/\/|\s*)$/) { next; }
+        else {
+
+            $_ =~ s/\s+/ /;
+            my @l = split " ";
+
+            if ($l[0] !~ m/^\#/) { $stock{$l[0]} .= $l[1]; }
+            else { $stock{$l[0] . " " . $l[1]} .= $l[2]; }
+
+        }
+
+    }
+    close($sh);
+
+    foreach my $id (keys %stock) {
+
+        next if ($id =~ m/^#/);
+
+        if (!exists $keep{$id} || exists $seen{$stock{$id}}) { delete($stock{$id}); }
+        else {
+
+            $seen{$stock{$id}} = 1;
+            $maxlen = max($maxlen, length($id));
+
+        }
+
+    }
+
+    $maxlen = max($maxlen, length($_)) for (grep { m/^#/ } keys %stock);
+
+    return if (!grep { $_ !~ m/^#/ } keys %stock);
+
+    open(my $wh, ">", "${basename}.stockholm") or die "\n\n  [!] Error: Unable to overwrite $basename alignment file ($!)\n\n";
+    print $wh "# STOCKHOLM 1.0\n" .
+              "#=GF AU Infernal 1.1.3\n\n";
+
+    for (sort grep { $_ !~ m/^#/ } keys %stock) { print $wh $_ . (" " x ($maxlen + 10 - length($_))) . $stock{$_} . "\n"; }
+
+    for my $tag ("#=GC SS_cons", "#=GC RF") {
+
+        print $wh $tag . (" " x ($maxlen + 10 - length($tag))) . $stock{$tag} . "\n" if (defined $stock{$tag});
+
+    }
+
+    print $wh "//\n";
+    close($wh);
+
+    return(scalar(grep { $_ !~ m/^#/ } keys %stock));
+
+}
+
+sub selectValidAln {
+
+    my ($basename, $nBasePairs) = @_;
+
+    my ($stockstruct, $maxlen, %stock);
+    $maxlen = 0;
+
+    open(my $sh, "<", "${basename}.stockholm") or die "\n\n  [!] Error: Unable to open $basename alignment file ($!)\n\n";
+    while (<$sh>) {
+
+        chomp();
+
+        if ($_ =~ m/^#/ && $_ !~ m/^#=GC/) { next; }
+        elsif ($_ =~ m/^(\/\/|\s*)$/) { next; }
+        else {
+
+            $_ =~ s/\s+/ /;
+            my @l = split " ";
+            if ($l[0] !~ m/^\#/) { $stock{$l[0]} .= $l[1]; }
+            else { $stock{$l[0] . " " . $l[1]} .= $l[2]; }
+
+        }
+
+
+    }
+    close($sh);
+
+    $stockstruct = $stock{"#=GC SS_cons"};
+    $stockstruct =~ s/[^\(\)<>\[\]\{\}]/./g;
+    $stockstruct =~ tr/<>[]{}/()()()/;
+    my @stockpairs = listpairs($stockstruct);
+
+    return if (scalar(@stockpairs) / $nBasePairs < $minbpfrac);
+
+    foreach my $id (keys %stock) {
+
+        $maxlen = max($maxlen, length($id));
+
+        next if ($id =~ m/^#/);
+
+        my $stockseq = uc($stock{$id});
+        $stockseq =~ s/[^ACGUN]/-/g;
+
+        my ($canonical, $noncanonical) = rmnoncanonical($stockseq, $stockstruct);
+
+        delete($stock{$id}) if (scalar(@{$canonical}) / $nBasePairs < $minbpfrac);
+
+    }
+
+    if (keys(%stock) > 3) { # more than just the sequence itself and the structure
+
+        open(my $sh, ">", "${basename}.stockholm") or die "\n\n  [!] Error: Unable to overwrite $basename alignment file ($!)\n\n";
+        print $sh "# STOCKHOLM 1.0\n" .
+                  "#=GF AU Infernal 1.1.3\n\n";
+
+        for (keys %stock) {
+
+            my $id = $_;
+            $id =~ s/\W/_/g; # replace all non-alphanumeric characters in sequence ids
+            print $sh $_ . (" " x ($maxlen + 10 - length($_))) . $stock{$_} . "\n" if ($_ !~ m/^#/);
+
+        }
+
+        print $sh "#=GC SS_cons" . (" " x ($maxlen + 10 - length("#=GC SS_cons"))) . $stock{"#=GC SS_cons"} . "\n";
+        print $sh "#=GC RF" . (" " x ($maxlen + 10 - length("#=GC RF"))) . $stock{"#=GC RF"} . "\n";
+        print $sh "//\n";
+        close($sh);
+
+        return(grep { $_ !~ /^#/ } keys %stock);
+
+    }
+
+    return;
+
+}
+
+sub stockholm2html {
+
+    my $id = shift;
+
+    my ($file, $struct, $cleanStruct, $structNoSpaces,
+        $helices, $html, $longestId, $outFile, @struct, 
+        @pairs, @bgColors, @txColors, %seq);
+    @bgColors = qw(#9e0142 #5e4fa2 #d53e4f #3288bd #f46d43 #66c2a5 #fdae61 #abdda4 #fee08b #e6f598);
+    @txColors = qw(white white white white black black black black black black);
+    $file = "${alnDir}$id.stockholm";
+    $outFile = "${htmlDir}$id.html";
+
+    open(my $fh, "<", $file) or die "\n\n  [!] Error: Unable to read Stockholm file \"$file\" ($!)\n";
+    while(<$fh>) {
+
+        chomp();
+
+        if (/^#=GC SS_cons/ || /^[^#\/]/) {
+
+            my @row = split " ";
+
+            next if (@row < 2);
+
+            # Sequences and consensus structure are appended, so that interleaved
+            # (multi-block) Stockholm files are read correctly
+            if ($row[1] eq "SS_cons") { $struct .= $row[2]; }
+            else { push(@{$seq{$row[0]}}, split(//, $row[1])); }
+
+        }
+
+    }
+    close($fh);
+
+    $longestId = max(map { length($_) } (keys %seq, "Structure"));
+    $cleanStruct = $struct;
+    $cleanStruct =~ s/[^\(\)\[\]\{\}<>]/./g;    # Pseudoknots (lowercase letters in WUSS) cannot be rendered
+    $cleanStruct =~ tr/<>[]{}/()()()/;          # In WUSS the bracket type only marks the nesting depth
+    $structNoSpaces = $cleanStruct;
+    $structNoSpaces =~ s/\(\.+\(/((/g while ($structNoSpaces =~ /\(\.+\(/);
+    $structNoSpaces =~ s/\)\.+\)/))/g while ($structNoSpaces =~ /\)\.+\)/);
+    $helices = (listhelices($structNoSpaces))[0];
+    @struct = split //, $cleanStruct;
+    @pairs = listpairs($cleanStruct);
+
+    $html = "<!DOCTYPE html>\n" .
+            "<html>\n" .
+            "<head>\n" .
+            "    <title>$id</title>\n" .
+            "    <style>\n" .
+            "        body { font-family: Helvetica, Arial, sans-serif;" .
+            ($darkAln ? "\n               background-color: #383e42;\n" .
+                        "               color: #ffffff; }\n" : " }\n");
+
+    while (my $helix = shift(@{$helices})) {
+
+        my ($helixId, $helixColor, $textColor, $nPairs);
+        $helixId = "h" . scalar(@{$helices});
+        $helixColor = shift(@bgColors);
+        $textColor = shift(@txColors);
+        $nPairs = scalar(@{$helix->{h5bases}});
+        $html .= "        ." . $helixId . " { background-color: " . $helixColor . "; color: " . $textColor . "; }\n";
+        $html .= "        .s" . $helixId . " { color: " . $helixColor . "; }\n" if (!$darkAln);
+
+        while ($nPairs) {
+
+            $nPairs--;
+
+            my ($i, $j) = @{shift(@pairs)};
+            $struct[$i] = "<span class=\"" . ($darkAln ? undef : "s") . $helixId . "\">" . $struct[$i] . "</span>";
+            $struct[$j] = "<span class=\"" . ($darkAln ? undef : "s") . $helixId . "\">" . $struct[$j] . "</span>";
+
+            foreach my $id (keys %seq) {
+
+                $seq{$id}->[$i] = "<span class=\"" . $helixId . "\">" . $seq{$id}->[$i] . "</span>";
+                $seq{$id}->[$j] = "<span class=\"" . $helixId . "\">" . $seq{$id}->[$j] . "</span>";
+
+            }
+
+        }
+
+        # Prevents the colors array from being exhausted
+        push(@bgColors, $helixColor);
+        push(@txColors, $textColor);
+
+    }
+
+    $html .= "    </style>\n" .
+             "</head>\n" .
+             "<body>\n" .
+             "    <h1>$id</h1>\n" .
+             "    <pre>\n";
+    $html .= "<strong>" . $_ . "</strong>" . (" " x ($longestId - length($_) + 5)) . join("", @{$seq{$_}}) . "\n" for (sort keys %seq);
+    $html .= "\n\n" .
+             "<strong>Structure</strong>" . (" " x ($longestId - length("Structure") + 5)) . join("", @struct) . "\n" .
+             "    </pre>\n" .
+             "</body>\n" .
+             "</html>\n";
+
+    open(my $wh, ">", $outFile) or die "\n\n  [!] Warning: Unable to write HTML alignment file \"$outFile\" ($!)\n";
+    select((select($wh), $|=1)[0]);
+    print $wh $html;
+    close($wh);
+
+}
+
+sub help {
+
+    print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
+
+    die <<HELP;
+
+ RF CovAlign (v$Core::Utils::VERSION)
+
+ Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
+ Summary: Iteratively builds and refines structure-informed alignments of
+          homologous sequences for covariation analysis
+
+ Usage:   rf-covalign [Options]
+
+ Options                                            Description
+ -p  or --processors                   <int>        Number of processors to use for Infernal processes (Default: 1)
+ -o  or --output                       <string>     Path to the output directory (Default: ./rf_covalign)
+ -ow or --overwrite                                 Overwrites the output directory (if it already exists)
+ -m  or --motifFile                    <string>     Path to the RNA structure motif's file (in Vienna format)
+ -d  or --dbFile                       <string>     Path to the DB file of potential homologs (in FASTA format)
+ -s  or --sequenceFile                 <string>     Path to the original sequence file (from which the motif has been extracted, in FASTA format)
+ -gm or --groupMotifs                               Motifs sharing the same sequence will be grouped and simultaneously used for alignment
+                                                    construction, retaining at each iteration only the sequences matched by all of them
+ -g  or --onGenome                                  Assumes that the covariance model is built by using a database of genomic sequences, hence
+                                                    matches on both genomic strands must be retained
+ -b  or --minBpFraction                <float>      Fraction of base-pairs that should be present in each sequence to retain it (Default: 0.5 [50%])
+ -mc or --minQueryCov                  <float>      Minimum query motif coverage (in case of truncated motifs) (Default: 0.75 [75%])
+ -ng or --noGapsInCov                               Gaps in the match between CM and target sequence are subtracted when calculating the query coverage
+ -t  or --posTolerance                 <float>      Maximum fractional tollerance for shift in position of the motif (Default: 1 [100%])
+                                                    Note: when working on genomic sequences (-g), it is advisable not to change this
+ -l  or --minLen                       <int>        If the provided motif is shorter than this length, it is first enlarged up to this length before
+                                                    performing the search, to maximize the chances of finding matches (Default: 100)
+ -em or --enlargeMotif                 <int>        Enlarges the motif by this number of bases in both directions before performing the search (Default: 0)
+                                                    Note: if --minLen > than the motif enlarged by --enlargeMotif in both directions, this parameter
+                                                          is ignored
+ -e  or --rscapeEvalue                 <float>      Threshold E-value for considering a base-pair to significantly covary (Default: 0.1)
+ -a  or --useHelixAggregatedEvalue                  At each iteration, the number of significantly covarying helices is evaluated instead of the number 
+                                                    of significantly covarying base-pairs (requires R-scape v2.0.0.q or greater)
+ -cp or --includeCompatiblePairs                    When calculating the number of significantly covarying base-pairs, also include the base-pairs that
+                                                    are compatible with (but abasent in) the provided structure
+ -i  or --iterations                   <int>        Number of iterations to perform to refine the covariance model (Default: 10)
+ -f  or --stopIfFirstZero                           If at the first iteration 0 covarying base-pairs are found, it stops immediately instead of going
+                                                    to the next iteration
+ -r  or --skipRscape                                Skips alignment evaluation step with R-scape
+ -P  or --pathToInfernal               <string>     Path to the folder containing Infernal executables (Default: assumes all executables are in PATH)
+ -R  or --pathToRscape                 <string>     Path to R-scape executable (Default: assumes R-scape is in PATH)
+ -kl or --keepLogs                                  Keeps the output of the external programs (cmbuild, cmsearch, cmcalibrate, cmalign, cmpress, R-scape) 
+                                                    under the logs/ subfolder of the output directory, one subfolder per model
+ -ca or --coloredAln                                Colored Stockholm alignments in HTLM format, with alignment columns colored by helix, are outputted
+                                                    under the html/ subfolder of the output directory
+ -da or --darkAln                                   Uses dark coloring scheme for colored Stockholms (requires -ca)
+
+ |
+ +- Bit score-based model building (default, faster)
+    -T  or --bitScore                   <float>      Bit score threshold for including a match (Default: 20)
+    -I  or --iterativeBitScoreIncrease  <float>      Bit score threshold (-T) will be increased at each iteration by this value (Default: 0)
+    -N  or --noiseEstimate                           A "decoy" database is generated by reversing a subset of the sequences in the DB file (controlled by -ds)
+                                                     and used to estimate a noise threshold for the bit score. The bit score at each iteration is then rounded 
+                                                     up to the nearest multiple of 5
+                                                     Note: the estimated bit score overrides the bit score threshold (-T)
+    -ds or --decoySize                  <float>      Fraction of sequences of the database to be reversed and used to build the decoy database (0.1-1, Default: 0.1)
+    -md or --minDecoySize               <int>        Minimum number of sequences to be included in the decoy database (>0, Default: 1000)
+                                                     Note: if this number is larger than the number of sequences in the original database, the whole database
+                                                           will be reversed and used as a decoy
+                                                        
+ |
+ +- E-value-based model building (slow, requires model calibration)
+    -U  or --useEvalue                               Selects matches by E-value instead of bit score (parameters -T and -I will be ignored)
+                                                     Note: bit scores are the default. E-value mode additionally requires the covariance model to
+                                                     be calibrated with cmcalibrate at every iteration, which is by far the slowest step of a run
+    -E  or --evalue                     <float>      Threshold E-value for including a match (Default: 10)
+    -D  or --iterativeEvalueDecrease    <float>      Threshold E-value (-E) will be decreased at each iteration by this fold (for example, if -E 10 and
+                                                     -D 2, the E-value threshold will become 5 at the second iteration, 2.5 at the third iteration, etc.)
+                                                     (>=2, Default: 0)
+
+
+HELP
+
+}
+

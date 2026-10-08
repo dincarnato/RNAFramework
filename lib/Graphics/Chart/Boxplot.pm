@@ -1,7 +1,7 @@
 package Graphics::Chart::Boxplot;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 

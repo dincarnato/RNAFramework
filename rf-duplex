@@ -14,7 +14,7 @@ use lib $Bin . "/lib";
 
 use Align::SmithWaterman;
 use Cluster::Kmeans;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO;
 use Data::IO::Sequence;
@@ -69,7 +69,6 @@ do {
                 "mp|min-prob=s"             => \$minProb,
                 "mss|min-sample-size=i"     => \$minSampleSize,
                 "f|fasta=s"                 => \$reference,
-                "p|processors=i"            => \$threads,
                 "wl|whitelist=s"            => \$whitelist,
                 "nv|no-use-vienna"          => \$noUseVienna,
                 "st|single-transcript"      => \$singleTranscript,
@@ -77,8 +76,8 @@ do {
                 "rmc|require-min-chimera"   => \$requireBpSupport,
                 "mcf|min-chimera-frac=s"    => \$minChimeraFrac,
                 "mi|max-iterations=i"       => \$maxIter,
-                "dc|dump-chimaeras"         => \$dumpChimaeras,
-                "do|dump-chimaeras-only"    => \$dumpChimaerasOnly,
+                "dc|dump-chimeras"          => \$dumpChimaeras,
+                "do|dump-chimeras-only"     => \$dumpChimaerasOnly,
                 "R|R-path=s"                => \$R,
                 "hm|heatmap"                => \$heatmap,
                 "lhm|log-heatmap"           => \$logHeatmap,
@@ -118,9 +117,6 @@ if (!$noUseVienna) {
 
     die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
         "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" unless (eval { require RNA; 1; });
-
-    $RNA::fold_constrained = 1;
-    $RNA::noLonelyPairs = 1;
 
 }
 
@@ -282,7 +278,7 @@ foreach my $sample (sort keys %samples) {
     mktree($output . $sample . "/plots/", "755") if ($makeImage);
     mktree($output . $sample . "/constraints/", "755") if ($makeConstraint);
     mktree($output . $sample . "/bpcounts/", "755") if ($evalStructures);
-    mktree($output . $sample . "/chimaeras/", "755") if ($dumpChimaeras);
+    mktree($output . $sample . "/chimeras/", "755") if ($dumpChimaeras);
     mktree($output . $sample . "/heatmaps/", "755") if ($heatmap);
 
     if (exists $samples{$sample}->{SAM} ||
@@ -422,7 +418,7 @@ sub processTranscript {
               mktree($output . $sample . "/plots/$initial", "755") if ($makeImage);
               mktree($output . $sample . "/constraints/$initial", "755") if ($makeConstraint);
               mktree($output . $sample . "/bpcounts/$initial", "755") if ($evalStructures);
-              mktree($output . $sample . "/chimaeras/$initial", "755") if ($dumpChimaeras);
+              mktree($output . $sample . "/chimeras/$initial", "755") if ($dumpChimaeras);
               mktree($output . $sample . "/heatmaps/$initial", "755") if ($heatmap);
 
           } }
@@ -465,7 +461,7 @@ sub processTranscript {
 
                 print CLRRET . "  [*] Transcript " . $id . ": dumping chimeras to file";
 
-                open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
+                open(my $th, ">", $output . $sample . "/chimeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
                 select((select($th), $|=1)[0]);
                 print $th "#" . join("\t", qw(start1 end1 start2 end2)) . "\n";
                 print $th join("\t", @$_) . "\n" for (@ranges);
@@ -633,7 +629,7 @@ sub processTranscript {
 
                 print CLRRET . "  [*] Transcript " . $id . ": dumping chimeras to file";
 
-                open(my $th, ">", $output . $sample . "/chimaeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
+                open(my $th, ">", $output . $sample . "/chimeras/" . uc(substr($id, 0, 1)) . "/" . $id . ".txt");
                 select((select($th), $|=1)[0]);
                 print $th "#" . join("\t", qw(start1 end1 start2 end2 cluster)) . "\n";
                 print $th join("\t", @$_[0..3,5]) . "\n" for (@clusteredRanges);
@@ -1060,29 +1056,35 @@ sub rangeDist {
 
     my ($x, $y) = @_;
 
-    my ($r1x, $r2x, $r1y, $r2y,
-        $i1, $i2);
-    $r1x = abs(diff(@{$x}[0..1])) + 1;
-    $r1y = abs(diff(@{$y}[0..1])) + 1;
-    $r2x = abs(diff(@{$x}[2..3])) + 1;
-    $r2y = abs(diff(@{$y}[2..3])) + 1;
-    $i1 = intersect([@{$x}[0..1]], [@{$y}[0..1]]);
-    $i2 = intersect([@{$x}[2..3]], [@{$y}[2..3]]);
+    # This is the K-means distance function, so it runs once per data point per
+    # centroid per iteration, plus all-pairs within each cluster when refine is
+    # enabled: it dominates the clustering stage. Beyond the isnumeric() checks,
+    # each call made 12 sub calls, 6 array slices and 4 anonymous arrayrefs to do
+    # arithmetic on 8 integers, so the whole computation is inlined here.
+    #
+    # The arms are intersected first: most pairs do not overlap at all, and the
+    # four widths are only needed for those that do.
+    my ($start1, $end1, $start2, $end2,
+        $r1x, $r1y, $r2x, $r2y, $over1, $over2);
 
-    if ($i1 && $i2) {
+    $start1 = $x->[0] > $y->[0] ? $x->[0] : $y->[0];
+    $end1 = $x->[1] < $y->[1] ? $x->[1] : $y->[1];
 
-        my ($ext1, $ext2, $over1, $over2);
-        $ext1 = abs(diff(@{$i1})) + 1;
-        $ext2 = abs(diff(@{$i2})) + 1;
-        $over1 = $ext1 / min($r1x, $r1y);
-        $over2 = $ext2 / min($r2x, $r2y);
+    return(1e308) if ($start1 > $end1);
 
-        if ($over1 >= $minOverlapFrac && $over2 >= $minOverlapFrac) { return(1 - ($over1 * $over2)); }
-        else { return(1e308); }
+    $start2 = $x->[2] > $y->[2] ? $x->[2] : $y->[2];
+    $end2 = $x->[3] < $y->[3] ? $x->[3] : $y->[3];
 
-    }
+    return(1e308) if ($start2 > $end2);
 
-    return(1e308);
+    $r1x = abs($x->[0] - $x->[1]) + 1;
+    $r1y = abs($y->[0] - $y->[1]) + 1;
+    $r2x = abs($x->[2] - $x->[3]) + 1;
+    $r2y = abs($y->[2] - $y->[3]) + 1;
+    $over1 = (abs($start1 - $end1) + 1) / ($r1x < $r1y ? $r1x : $r1y);
+    $over2 = (abs($start2 - $end2) + 1) / ($r2x < $r2y ? $r2x : $r2y);
+
+    return($over1 >= $minOverlapFrac && $over2 >= $minOverlapFrac ? 1 - ($over1 * $over2) : 1e308);
 
 }
 
@@ -1293,8 +1295,10 @@ sub foldChimeras {
 
         if (!$noUseVienna) {
 
-            my @fold = RNA::fold(join("GAAA", $seq1, $seq2), join("xxxx", ("<" x length($seq1)), (">" x length($seq2))));
-            RNA::free_arrays();
+            my ($fc, @fold);
+            $fc = RNA::fold_compound->new(join("GAAA", $seq1, $seq2));
+            $fc->hc_add_from_db(join("xxxx", ("<" x length($seq1)), (">" x length($seq2))), RNA::CONSTRAINT_DB_DEFAULT());
+            @fold = $fc->mfe();
             @pairs = listpairs($fold[0]);
 
         }
@@ -1325,14 +1329,14 @@ sub basePairsFromAln {
     my ($aligner, $aln, $qEnd, $rStart,
         $alnLen, @pairs);
 
-    my $aligner = Align::SmithWaterman->new( reference => $seq1,
-                                             query     => rev($seq2),
-                                             scoring   => { AT => 2,
-                                                            CG => 3,
-                                                            GT => 1 },
-                                             mismatch  => -1,
-                                             gOpen     => 0,
-                                             gExt      => -1 );
+    $aligner = Align::SmithWaterman->new( reference => $seq1,
+                                          query     => rev($seq2),
+                                          scoring   => { AT => 2,
+                                                         CG => 3,
+                                                         GT => 1 },
+                                          mismatch  => -1,
+                                          gOpen     => 0,
+                                          gExt      => -1 );
     $aligner->align();
     $aln = $aligner->read();
     $qEnd = length($seq2) - $aln->queryStart() - 1 + 4 + length($seq1); # the fake GAAA tetraloop + the first half of the chimera
@@ -1513,11 +1517,24 @@ sub mergeRanges {
     return($ranges[0]) if (@ranges == 1);
 
     my ($maxr1, $maxr2, $start1, $start2,
-        $halfmedianr1, $halfmedianr2, @r1, @r2);
-    $halfmedianr1 = round(median(map { abs(diff(@{$_}[0..1])) + 1 } @ranges) / 2);
-    $halfmedianr2 = round(median(map { abs(diff(@{$_}[2..3])) + 1 } @ranges) / 2);
-    $start1 = min(map { $_->[0] } @ranges);
-    $start2 = min(map { $_->[2] } @ranges);
+        $halfmedianr1, $halfmedianr2, @r1, @r2, @width1, @width2);
+
+    # Widths and start offsets are collected in a single pass: diff() and min()
+    # validate their arguments on every call, and there were four such passes
+    $start1 = $ranges[0]->[0];
+    $start2 = $ranges[0]->[2];
+
+    foreach my $range (@ranges) {
+
+        $start1 = $range->[0] if ($range->[0] < $start1);
+        $start2 = $range->[2] if ($range->[2] < $start2);
+        push(@width1, abs($range->[0] - $range->[1]) + 1);
+        push(@width2, abs($range->[2] - $range->[3]) + 1);
+
+    }
+
+    $halfmedianr1 = round(median(@width1) / 2);
+    $halfmedianr2 = round(median(@width2) / 2);
 
     foreach my $range (@ranges) {
 
@@ -1526,14 +1543,48 @@ sub mergeRanges {
 
     }
 
-    @r1 = map { defined $_ ? $_ : 0 } @r1;
-    @r2 = map { defined $_ ? $_ : 0 } @r2;
-
-    $maxr1 = round(mean(argmax(@r1))) + $start1;
-    $maxr2 = round(mean(argmax(@r2))) + $start2;
+    $maxr1 = round(meanArgmax(\@r1)) + $start1;
+    $maxr2 = round(meanArgmax(\@r2)) + $start2;
 
     return([ max(0, $maxr1 - $halfmedianr1), $maxr1 + $halfmedianr1,
              max(0, $maxr2 - $halfmedianr2), $maxr2 + $halfmedianr2 ]);
+
+}
+
+sub meanArgmax {
+
+    my $array = shift;
+
+    # Mean of the indices at which the maximum occurs, in one pass. Replaces
+    # mean(argmax(@array)), which validated the array, materialised every index
+    # of the maximum, then validated those too. Undefined entries count as zero,
+    # so the histogram holes need no separate fill pass.
+    my ($best, $sum, $count);
+    $best = defined $array->[0] ? $array->[0] : 0;
+    $sum = 0;
+    $count = 0;
+
+    for my $i (0 .. $#{$array}) {
+
+        my $value = defined $array->[$i] ? $array->[$i] : 0;
+
+        if ($value > $best) {
+
+            $best = $value;
+            $sum = $i;
+            $count = 1;
+
+        }
+        elsif ($value == $best) {
+
+            $sum += $i;
+            $count++;
+
+        }
+
+    }
+
+    return($count ? $sum / $count : undef);
 
 }
 
@@ -1678,7 +1729,7 @@ sub help {
                                                       will be used to speed-up time-comsuming operations such as read clustering and
                                                       base-pair analysis. This is useful, for example, for the analysis of COMRADES
                                                       experiments, in which a single target transcript is analyzed at a high sequencing depth
- -o  or --output-dir             <string>       Output directory (Default: rf_duplex/)
+ -o  or --output                 <string>       Output directory (Default: rf_duplex/)
  -ow or --overwrite                             Overwrites output directory (if the specified path already exists)
  -f  or --fasta                  <string>       Path to a FASTA file containing the reference transcripts
                                                 Note: Transcripts in this file must match transcripts in SAM/BAM file headers
@@ -1688,8 +1739,8 @@ sub help {
  -xr or --max-reads              <int>          Maximum number of chimeric reads to analyze for each transcript (>0, Default: 100000)
                                                 Note: all chimeric reads are first imported, then a random sample is extracted
  -c  or --constraint                            Generates a dot-bracket constraint file containing the inferred base-pairs whose probability
-                                                exceeds a given threshold (controlled by -ct or --constraint-theshold)
- -ct or --constraint-theshold    <float>        Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
+                                                exceeds a given threshold (controlled by -ct or --constraint-threshold)
+ -ct or --constraint-threshold   <float>       Sets the probability threshold to include a base-pair in the constraint (0.5-1, Default: 0.5)
  -dp or --dot-plot                              Calculates 
  -es or --eval-structures        <string>       Path to a folder of structure files (in .db or .ct format), for which the number of chimeric reads supporting
                                                 each base-pair will be calculated

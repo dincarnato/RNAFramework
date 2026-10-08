@@ -28,7 +28,7 @@ use threads::shared;
 use lib $Bin . "/lib";
 
 use Core::Utils;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Process::Queue;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
@@ -113,6 +113,7 @@ $tmpdir = $output . "/tmp/";
 die "\n  [!] Error: ViennaRNA package's Perl module RNA.pm is required." .
     "\n             Please ensure that ViennaRNA package v2.2.0 (or greater) is installed and try again\n\n" if (!$installed);
 
+die "\n  [!] Error: No input XML folder(s)/file(s) provided\n\n" if (!@samples);
 die "\n  [!] Error: No reference structures file provided\n\n" if (!defined $reference);
 die "\n  [!] Error: Reference structures file doesn't exist\n\n" if (!-e $reference);
 die "\n  [!] Error: Number of processors must be an integer greater than 0\n\n" if ($threads < 1);
@@ -416,8 +417,7 @@ sub calc {
 
     while (1) {
 
-        my ($test, $testio, $entry, $fmi,
-            $id);
+        my ($test, $testio, $fmi, $id);
 
         { lock(@tested);
           $test = shift(@tested) if (@tested); }
@@ -431,9 +431,9 @@ sub calc {
         if ($@) { $fmi = "NaN"; }
         else {
 
-            $entry = $testio->read();
-            $fmi = $mFMI ? mfmi($reference{$id}, $entry->structure(), $relaxed) :
-                           fmi($reference{$id}, $entry->structure(), $relaxed);
+            my $entry = $testio->read();
+            $fmi = defined $entry && $entry->can("structure") ? ($mFMI ? mfmi($reference{$id}, $entry->structure(), $relaxed) :
+                                                                         fmi($reference{$id}, $entry->structure(), $relaxed)) : "NaN";
 
         }
 

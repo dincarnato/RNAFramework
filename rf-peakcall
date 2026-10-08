@@ -25,7 +25,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO;
@@ -106,10 +106,11 @@ do {
                 "pc|pseudocount=s"      => \$pseudocount,
                 "md|merge-distance=i"   => \$mergedist,
                 "mcp|meta-coding-plot"  => \$metacoding,
-                "mo|min-orf-len=i"      => \$minorflen,
+                "mo|min-orf-length=i"   => \$minorflen,
                 "als|alt-start"         => \$altstart,
                 "ans|any-start"         => \$anystart,
-                "gc|genetic-code"       => \$gencode ) or help(1);
+                "gc|genetic-code"       => \$gencode,
+                "R|R-path=s"            => \$R ) or help(1);
 
 };
 
@@ -981,70 +982,6 @@ sub plotcoverage {
         }
 
         $plot->plot([ map { [ $_ ] } @plots ]);
-
-        # if ($control) {
-
-        #     my $ctrlPlot = Graphics::Chart::Linedot->new( x              => "fp",
-        #                                                   legend         => 1,
-        #                                                   data           => \@tp,
-        #                                                   dataLabels     => { fp => \@fp,
-        #                                                                       id => \@id },
-        #                                                   dataLabelType  => { fp => "numeric"},
-        #                                                   legendSort     => [ (grep { $_ ne "Overall" } sort(uniq(@id))), "Overall" ],
-        #                                                   fill           => "id",
-        #                                                   xLabelAngle    => 90,
-        #                                   plotDataPoints => 0,
-        #                                   colorPalette   => "Paired",
-        #                                   xTitle         => "False Positive Rate",
-        #                                   yTitle         => "True Positive Rate" );
-        #     $ccov = Graphics::Object::Path->new( fontsize    => 15,
-        #                                           height      => 1,
-        #                                           yrange      => [0, $maxy],
-        #                                           forceyrange => 1,
-        #                                           values      => $ctrl,
-        #                                           stroke      => "rgb(0, 100, 0)",
-        #                                           yname       => "Control (RPM)" );
-
-        # }
-
-        # $icov = Graphics::Object::Path->new( fontsize    => 15,
-        #                                      height      => 1,
-        #                                      yrange      => [0, $maxy],
-        #                                      forceyrange => 1,
-        #                                      values      => $ip,
-        #                                      stroke      => "rgb(55, 110, 174)",
-        #                                      yname       => "IP (RPM)" );
-
-        # $ruler = Graphics::Object::Ruler->new( fontsize => 15,
-        #                                        height   => 1,
-        #                                        labelMap => $metacodprofile ? { "0" => "TSS",
-        #                                                                        "7.5" => "Start",
-        #                                                                        "72.5" => "Stop",
-        #                                                                        "100"  => "TES" } : {},
-        #                                        range    => $metaprofile || $metacodprofile ? [0, 100] : [0, scalar(@{$ip})],
-        #                                        ticksby  => $metaprofile ? 10 : max(1, round(scalar(@{$ip}) / 10)),
-        #                                        name     => $metaprofile ? "Relative position (\%)" : ($metacodprofile ? undef : "Position (nt)"),
-        #                                        toend    => 1 );
-
-        # $image->addobjects($ccov) if ($control);
-        # $image->addobject($icov);
-
-        # if (($metaprofile || $metacodprofile) &&
-        #     @{$peak}) {
-
-        #     $pcov = Graphics::Object::Path->new( fontsize    => 15,
-        #                                          height      => 1,
-        #                                          values      => $peak,
-        #                                          stroke      => "rgb(0, 0, 0)",
-        #                                          yname       => "\% of peaks" );
-
-        #     $image->addobject($pcov);
-
-        # }
-
-        # $image->addobject($ruler);
-
-        # $io->write($image->xml());
 
     }
 

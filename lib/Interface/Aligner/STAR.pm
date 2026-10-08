@@ -1,7 +1,7 @@
 package Interface::Aligner::STAR;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;

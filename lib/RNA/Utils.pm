@@ -1,7 +1,9 @@
 package RNA::Utils;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Scalar::Util qw(looks_like_number);
+
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 
@@ -74,16 +76,14 @@ sub rnapair {
 
     my ($base1, $base2, $excludegu) = @_;
 
-    my $pairs = { A => "U",
-                  U => $excludegu ? "A" : "AG",
-                  G => $excludegu ? "C" : "CU",
-                  C => "G" };
+	my ($pair, %pairs);
+    %pairs = map { $_ => 1 } (qw(AU CG GC UA), ($excludegu ? () : qw(GU UG)));
+	$pair = uc($base1 . $base2);
+	$pair =~ tr/T/U/;
 
-    $_ = dna2rna(uc($_)) for ($base1, $base2);
+    return unless($pair =~ /^[ACGU]{2}$/);
 
-    return unless(isrna(join("", $base1, $base2)));
-
-    return(1) if ($pairs->{$base1} =~ m/$base2/);
+    return(1) if (exists $pairs{$pair});
 
     return();
 
@@ -93,18 +93,20 @@ sub rmnoncanonical {
 
 	my ($sequence, $pairs) = @_;
 
-	Core::Utils::throw("Sequence contains invalid characters") if (!isna($sequence, "-"));
+	_checkStructure($sequence, $pairs);
 
 	my (@pairs, @canonical, @noncanonical);
 
-	if (isdotbracket($pairs) &&
-		isdbbalanced($pairs)) { @pairs = listpairs($pairs); }
+	if (isdotbracket($pairs)) { @pairs = listpairs($pairs); }
 	elsif (ref($pairs) eq "ARRAY") { @pairs = @{$pairs}; }
-	else { Core::Utils::throw("Invalid structure"); }
 
-	@canonical = grep { rnapair(substr($sequence, $_->[0], 1), substr($sequence, $_->[1], 1)) } @pairs;
-	@noncanonical = grep { !rnapair(substr($sequence, $_->[0], 1), substr($sequence, $_->[1], 1)) } @pairs;
+	for my $bp (@pairs) { # single pass, rnapair() was previously evaluated twice per base-pair
 
+		if (rnapair(substr($sequence, $bp->[0], 1), substr($sequence, $bp->[1], 1))) { push(@canonical, $bp); }
+		else { push(@noncanonical, $bp); }
+
+	}
+	
 	return(\@canonical, \@noncanonical);
 
 }
@@ -113,8 +115,7 @@ sub listpairs {
 
     my $dotbracket = shift;
 
-    return() if (!isdotbracket($dotbracket) ||
-                 !isdbbalanced($dotbracket));
+    return() if (!isdotbracket($dotbracket) || !isdbbalanced($dotbracket));
 
     my (@dotbracket, @pairs, %pairs, %bpchars);
     @dotbracket = split(//, $dotbracket);
@@ -291,8 +292,7 @@ sub bpdistance {
     my $distance = length($reference);
     $distance -= 2 * _commonpairs($reference, $structure);
 
-    for (0 .. length($reference) - 1) { $distance-- if (substr($reference, $_, 1) eq "." &&
-                                                        substr($structure, $_, 1) eq "."); }
+    for (0 .. length($reference) - 1) { $distance-- if (substr($reference, $_, 1) eq "." && substr($structure, $_, 1) eq "."); }
 
     return($distance);
 
@@ -304,11 +304,9 @@ sub _commonpairs {
 
     my ($common, %reference);
 
-    return() if (!isdotbracket($reference) ||
-                 !isdbbalanced($reference) ||
-                 !isdotbracket($structure) ||
-                 !isdbbalanced($structure) ||
-                 length($reference) != length($structure));
+    return if (!isdotbracket($reference) || !isdbbalanced($reference) ||
+               !isdotbracket($structure) || !isdbbalanced($structure) ||
+               length($reference) != length($structure));
 
     for (listpairs($reference)) { $reference{$_->[0] . "-" . $_->[1]} = 1; }
 
@@ -349,8 +347,7 @@ sub rmlonelypairs {
 
     my $db = shift;
 
-    return if (!isdotbracket($db) ||
-               !isdbbalanced($db));
+    return if (!isdotbracket($db) || !isdbbalanced($db));
 
     my ($helices, $pkhelices, @db);
     ($helices, $pkhelices) = listhelices($db, 1);
@@ -386,10 +383,11 @@ sub rmpseudoknots {
 
 	my ($sequence, $pairs, $scoresub) = @_;
 
-	return unless($sequence);
+	return if (!$sequence);
 
-	Core::Utils::throw("Scoring function must be a CODE reference") if (defined $scoresub &&
-																		ref($scoresub) ne "CODE");
+	_checkStructure($sequence, $pairs);
+
+	Core::Utils::throw("Scoring function must be a CODE reference") if (defined $scoresub && ref($scoresub) ne "CODE");
 	$scoresub = \&Core::Mathematics::sum unless(defined $scoresub);
 
 	if (ref($pairs) eq "ARRAY") {
@@ -457,7 +455,7 @@ sub rmpseudoknots {
 
 			}
 
-			push(@r, $#pkpairs); # Patch to original code (missing last hairpin)
+			push(@r, $#pkpairs);
 			@r = sort {$a <=> $b} uniq(@r);
 
 			for my $i (0 .. $#r) {
@@ -471,9 +469,6 @@ sub rmpseudoknots {
 
 			}
 
-			# Bug 2 in original code (removed to patch)
-			#$tmp{$pkpairs[$_]->[0]} = $pkpairs[$_]->[1] for ($r[0] + 1 .. $#pkpairs);
-			#push(@stems, \%tmp);
 			for my $i (0 .. $#stems) {
 
 				for my $j (0 .. $#stems) {
@@ -503,51 +498,20 @@ sub rmpseudoknots {
 			}
 
 			@l = (0 .. $#stems);
-
-			# @sets are the combinations of compatible sets
-			# Bug 3 in original code
-			# Here the problem is that the code takes hairpin 1,
-			# then takes all the compatible hairpins with hairpin 1,
-			# but it doesn't consider that the hairpins that are compatible
-			# with hairpin 1, can be incompatible among each others
-			#while(@l) {
-			#
-			#	my (@v, @j, @s);
-			#	@s = grep { $_->{c} == 0 &&
-			#				$_->{i} == $l[0] } @compm;
-			#	@j = map {$_->{j}} @s;
-			#	@v = ($s[0]->{j});
-			#	#use Data::Dumper; print Dumper(\@s);exit;
-			#	for my $j (@j) {
-			#
-			#		push(@v, $j);
-			#		@l = grep { $_ != $j } @l;
-			#
-			#	}
-			#
-			#	push(@sets, \@v);
-			#
-			#}
-
-			# Patch to bug 3
 			@sets = _compatible_stems(@compm);
-			# unshift(@{$_}, $_->[0]) for (@sets); Unnecessary due to patch 4 & 5
-
-			# @lst are stem lengths
-			#push(@lst, scalar(keys %{$stems[$_]})) for (0 .. $#stems);
 
 			foreach my $stem (0 .. $#stems) { push(@lst, $scoresub->(map { $score[$_] } (keys %{$stems[$stem]}))); }
 
 			# @lst2 are cumulative stem lengts or H-bonds
 			for (0 .. $#sets) {
 
-				my @set = @{$sets[$_]}[0 .. $#{$sets[$_]}]; # 4. Patched from 1 .. $#{$sets[$_]
+				my @set = @{$sets[$_]}[0 .. $#{$sets[$_]}]; 
 				push(@lst2, sum(@lst[@set]));
 
 			}
 
 			($largest) = grep { $lst2[$_] == max(@lst2) } 0 .. $#lst2;
-			@largest = @{$sets[$largest]}[0 .. $#{$sets[$largest]}]; # 5. Patched from 1 .. $#{$sets[$largest]}
+			@largest = @{$sets[$largest]}[0 .. $#{$sets[$largest]}]; 
 			%addback = %{$stems[$largest[0]]};
 
 			if (@largest > 1) { %addback = (%addback, %{$stems[$largest[$_]]}) for (1 .. $#largest); }
@@ -576,8 +540,6 @@ sub rmpseudoknots {
 	}
 	elsif (isdotbracket($pairs)) {
 
-		Core::Utils::throw("Unbalanced dot-bracket structure") unless(isdbbalanced($pairs));
-
 		my (@pkpairs, @structure);
 
 		for my $helix (@{(listhelices($pairs, 1))[1]}) { push(@pkpairs, map { [$helix->{h5bases}->[$_], $helix->{h3bases}->[$_]]} 0 .. $#{$helix->{h5bases}}); }
@@ -596,7 +558,22 @@ sub _compatible_stems {
 
 	my @compm = @_;
 
-	my (@compatible, @incompatible);
+	my (@compatible, @incompatible, %incompatibleOf, %followerOf);
+
+	# The compatibility matrix has one entry per ordered pair of stems, and the
+ 	# traversal below used to grep the whole of it once per predecessor at every
+	# node. Indexing it once up front turns each of those scans into a lookup.
+	for my $entry (@compm) {
+
+		if ($entry->{c}) { push(@{$incompatibleOf{$entry->{i}}}, $entry->{j}); }
+		else { push(@{$followerOf{$entry->{i}}}, $entry->{j}); }
+
+	}
+
+	# Followers are always consumed in ascending order, so they are sorted once
+	# rather than on every visit
+	@{$_} = sort { $a <=> $b } @{$_} for (values %followerOf);
+	@{$_} = sort { $a <=> $b } @{$_} for (values %incompatibleOf);
 
 	local *_traverse = sub {
 
@@ -604,34 +581,36 @@ sub _compatible_stems {
 		my $current = $predecessors[-1];
 		my %seen = map { $_ => 1 } @predecessors;
 
-		# Search for successors that are incompatible with predecessors and
-		# add them to %seen so that they are discarded
-		if (@_) { # Changed to @_ instead of @_ > 1 (in case of issues change it back)
+		# Successors incompatible with any predecessor are marked as seen, so that they are discarded
+		for my $predecessor (@predecessors) { $seen{$_} = 1 for (@{$incompatibleOf{$predecessor} || []}); }
 
-			my (%incompatible);
+        # The first following compatible stem, then the first one incompatible
+		# with it
+		my (@followers, $first);
 
-			for my $k (0 .. $#predecessors) {
+		for my $j (@{$followerOf{$current} || []}) {
 
-				%incompatible = map { $_->{j} => 1 } (grep {$_->{i} == $predecessors[$k] &&
-							   					            $_->{c} == 1} @compm);
-				%seen = (%seen, %incompatible);
+			next if ($j <= $current || exists $seen{$j});
 
-			}
+			$first = $j;
+
+			last;
 
 		}
 
-		# Insert inside followers the first following compatible stem, or the first incompatible with this one
-		my @followers = (map { $_->{j} } sort {$a->{j} <=> $b->{j}} (grep { $_->{i} == $current &&
-																		    $_->{c} == 0 &&
-																		    !exists $seen{$_->{j}} &&
-																		    $_->{j} > $current } @compm))[0];
+		if (defined $first) {
 
-		if (@followers) {
+			@followers = ($first);
 
-			push(@followers, (map { $_->{j} } sort {$a->{j} <=> $b->{j}} (grep { $_->{i} == $followers[-1] &&
-																			     $_->{c} == 1 &&
-																			     !exists $seen{$_->{j}} &&
-																			     $_->{j} > $current } @compm))[0]);
+			for my $j (@{$incompatibleOf{$first} || []}) {
+
+				next if ($j <= $current || exists $seen{$j});
+
+				push(@followers, $j);
+
+				last;
+
+			}
 
 			_traverse(@predecessors, $_) for (@followers);
 
@@ -640,12 +619,60 @@ sub _compatible_stems {
 
 	};
 
-	@incompatible =  (sort {$a <=> $b} (map { $_->{j} } (grep {$_->{i} == 0 && $_->{c} == 1} @compm)))[0];
+	@incompatible = defined $incompatibleOf{0} ? ($incompatibleOf{0}->[0]) : ();
 	push(@incompatible, 0);
 
     _traverse($_) for (@incompatible);
 
 	return(@compatible);
+
+}
+
+sub _checkStructure {
+
+	my ($sequence, $pairs) = @_;
+
+	my $length = length($sequence);
+
+	if (ref($pairs) eq "ARRAY") {
+
+		my ($min, $max);
+
+		for my $pair (@{$pairs}) {
+
+			Core::Utils::throw("Base-pairs must be ARRAY refs") if (ref($pair) ne "ARRAY");
+			Core::Utils::throw("Base-pair must be ARRAY refs of 2 values") if (@{$pair} < 2);
+
+			for my $i (0, 1) {
+
+				my $base = $pair->[$i];
+
+				Core::Utils::throw("Base-pair indexes must be INT") if (!defined $base || !looks_like_number($base) || $base != int($base));
+
+				$min = $base if (!defined $min || $base < $min);
+				$max = $base if (!defined $max || $base > $max);
+
+			}
+
+		}
+
+		Core::Utils::throw("Base-pair indices must be >= 0") if (defined $min && $min < 0);
+		Core::Utils::throw("Base-pair index $max exceeds sequence length ($length)") if (defined $max && $max >= $length);
+
+		return;
+
+	}
+	else { 
+		
+		Core::Utils::throw("Structure and sequence have different lengths ($length != " . length($pairs) . ")") if (length($pairs) != $length);
+		Core::Utils::throw("Invalid structure") if (!isdotbracket($pairs));
+		Core::Utils::throw("Unbalanced dot-bracket structure") if (!isdbbalanced($pairs));
+
+		return;
+		
+	}
+
+	Core::Utils::throw("Invalid structure");
 
 }
 

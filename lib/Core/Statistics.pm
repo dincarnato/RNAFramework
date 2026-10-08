@@ -1,23 +1,9 @@
 #!/usr/bin/perl
 
-##
-# Chimaera Framework
-# Epigenetics Unit @ HuGeF [Human Genetics Foundation]
-#
-# Author:  Danny Incarnato (danny.incarnato[at]hugef-torino.org)
-#
-# This program is free software, and can be redistribute  and/or modified
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# any later version.
-#
-# Please see <http://www.gnu.org/licenses/> for more informations.
-##
-
 package Core::Statistics;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use List::Util qw(reduce);
 use POSIX;
@@ -26,15 +12,56 @@ use base qw(Exporter);
 
 our @EXPORT = qw(pearson spearman pearsonFromPartials calcPearsonPartials
                  dhyper phyper fisher percentile quantile padjust pchisq 
-                 qnorm pnorm dnorm pcombine gini ttest chisq fact
-                 binomialTest wilcoxonTest values2ranks distribution);
+                 qnorm pnorm dnorm pcombine gini ttest chisq fact logfact
+                 logFisher binomialTest wilcoxonTest values2ranks distribution);
 
 use constant EPS   => 3e-7;
 use constant FPMIN => 1e-30;
 use constant ITMAX => 100;
 
-my $tolerance = 1;
+my ($tolerance, @gammlnCoefficients, @gamnlnLg, @gamnlnCoefficients, %logfactCache);
+$tolerance = 1;
 $tolerance /= 2 while ((1 + $tolerance / 2) > 1);
+@gammlnCoefficients = (0.99999999999999709182, 57.156235665862923517, -59.597960355475491248,
+                       14.136097974741747174, -0.49191381609762019978, 0.33994649984811888699e-4,
+                       0.46523628927048575665e-4, -0.98374475304879564677e-4, 0.15808870322491248884e-3,
+                       -0.21026444172410488319e-3, 0.21743961811521264320e-3, -.16431810653676389022e-3,
+                       0.84418223983852743293e-4, -0.26190838401581408670e-4, 0.36899182659531622704e-5);
+@gamnlnLg = (0.5723649429247001, 0, -0.1207822376352452, 0, 0.2846828704729192, 0.6931471805599453, 1.200973602347074,
+             1.791759469228055, 2.453736570842442, 3.178053830347946, 3.957813967618717, 4.787491742782046, 5.662562059857142,
+             6.579251212010101, 7.534364236758733, 8.525161361065415, 9.549267257300997, 10.60460290274525, 11.68933342079727,
+             12.80182748008147, 13.94062521940376, 15.10441257307552, 16.29200047656724, 17.50230784587389, 18.73434751193645,
+             19.98721449566188, 21.2600761562447, 22.55216385312342, 23.86276584168909, 25.19122118273868, 26.53691449111561,
+             27.89927138384089, 29.27775451504082, 30.67186010608068, 32.08111489594736, 33.50507345013689, 34.94331577687682,
+             36.39544520803305, 37.86108650896109, 39.3398841871995, 40.8315009745308, 42.33561646075349, 43.85192586067515,
+             45.3801388984769, 46.91997879580877, 48.47118135183522, 50.03349410501914, 51.60667556776437, 53.19049452616927,
+             54.78472939811231, 56.38916764371993, 58.00360522298051, 59.62784609588432, 61.26170176100199, 62.9049908288765,
+             64.55753862700632, 66.21917683354901, 67.88974313718154, 69.56908092082364, 71.257038967168, 72.9534711841694,
+             74.65823634883016, 76.37119786778275, 78.09222355331531, 79.82118541361436, 81.55795945611503, 83.30242550295004,
+             85.05446701758153, 86.81397094178108, 88.58082754219767, 90.35493026581838, 92.13617560368709, 93.92446296229978,
+             95.71969454214322, 97.52177522288821, 99.33061245478741, 101.1461161558646, 102.9681986145138, 104.7967743971583,
+             106.6317602606435, 108.4730750690654, 110.3206397147574, 112.1743770431779, 114.0342117814617, 115.9000704704145,
+             117.7718813997451, 119.6495745463449, 121.5330815154387, 123.4223354844396, 125.3172711493569, 127.2178246736118,
+             129.1239336391272, 131.0355369995686, 132.9525750356163, 134.8749893121619, 136.8027226373264, 138.7357190232026,
+             140.6739236482343, 142.617282821146, 144.5657439463449, 146.5192554907206, 148.477766951773, 150.4412288270019,
+             152.4095925844974, 154.3828106346716, 156.3608363030788, 158.3436238042692, 160.3311282166309, 162.3233054581712,
+             164.3201122631952, 166.3215061598404, 168.3274454484277, 170.3378891805928, 172.3527971391628, 174.3721298187452,
+             176.3958484069973, 178.4239147665485, 180.4562914175438, 182.4929415207863, 184.5338288614495, 186.5789178333379,
+             188.6281734236716, 190.6815611983747, 192.7390472878449, 194.8005983731871, 196.86618167289, 198.9357649299295,
+             201.0093163992815, 203.0868048358281, 205.1681994826412, 207.2534700596299, 209.3425867525368, 211.435520202271,
+             213.5322414945632, 215.6327221499328, 217.7369341139542, 219.8448497478113, 221.9564418191303, 224.0716834930795,
+             226.1905483237276, 228.3130102456502, 230.4390435657769, 232.5686229554685, 234.7017234428182, 236.8383204051684,
+             238.9783895618343, 241.1219069670290, 243.2688490029827, 245.4191923732478, 247.5729140961868, 249.7299914986334,
+             251.8904022097232, 254.0541241548883, 256.2211355500095, 258.3914148957209, 260.5649409718632, 262.7416928320802,
+             264.9216497985528, 267.1047914568685, 269.2910976510198, 271.4805484785288, 273.6731242856937, 275.8688056629533,
+             278.0675734403662, 280.2694086832001, 282.4742926876305, 284.6822069765408, 286.893133295427, 289.1070536083976,
+             291.3239500942703, 293.5438051427607, 295.7666013507606, 297.9923215187034, 300.2209486470141, 302.4524659326413,
+             304.6868567656687, 306.9241047260048, 309.1641935801469, 311.4071072780187, 313.652829949879, 315.9013459032995,
+             318.1526396202093, 320.4066957540055, 322.6634991267262, 324.9230347262869, 327.1852877037753, 329.4502433708053,
+             331.7178871969285, 333.9882048070999, 336.2611819791985, 338.5368046415996, 340.815058870799, 343.0959308890863,
+             345.3794070622669, 347.6654738974312, 349.9541180407703, 352.2453262754350, 354.5390855194408, 356.835382823613,
+             359.1342053695754);
+@gamnlnCoefficients = (76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 1.208650973866179e-3, -5.395239384953e-6);    
 
 sub calcPearsonPartials {
 
@@ -242,7 +269,7 @@ sub _pcorr {
 
 }
 
-sub phyper {   # phyper returns the probability of having $i OR MORE successes
+sub phyper { # phyper returns the probability of having MORE THAN $i successes, i.e. P(X > $i)
 
     # Implemented from Welinder and Smith
     # https://stat.ethz.ch/pipermail/r-devel/2004-April/029408.html
@@ -294,7 +321,7 @@ sub phyper {   # phyper returns the probability of having $i OR MORE successes
 
 }
 
-sub dhyper {   # Hypergeometicd returns the probability of having EXACTLY $i successes
+sub dhyper { # Hypergeometicd returns the probability of having EXACTLY $i successes
 
     # $n = Successes in population
     # $m = Population size - $n
@@ -302,6 +329,13 @@ sub dhyper {   # Hypergeometicd returns the probability of having EXACTLY $i suc
     # $i = Successes in sample
 
     my ($n, $m, $N, $i) = @_;
+
+    # The number of successes in the sample is bounded by max(0, N - m) <= i <= min(n, N).
+    # Outside that range the probability is exactly 0; without this guard the
+    # logfact() terms below receive negative arguments, which sends gammln() into
+    # its reflection branch and dies with "Can't take log of ..." or a division by
+    # zero rather than returning 0.
+    return(0) if ($N > $n + $m || $i < 0 || $i > $n || $i > $N || $N - $i > $m);
 
     my $loghyp1 = logfact($m) + logfact($n) + logfact($N) + logfact($m + $n - $N);
     my $loghyp2 = logfact($i) + logfact($n - $i) + logfact($m + $i - $N) + logfact($N - $i) + logfact($m + $n);
@@ -444,26 +478,74 @@ sub _fisher {
 
 }
 
-sub logfact { return(gammln($_[0] + 1)); }
+# Natural log of the one-sided Fisher exact p-value for enrichment.
+# fisher() returns a probability, which underflows to 0 for the strongly
+# enriched motifs this search is looking for: every good candidate then scores
+# identically and the beam cannot be ordered. Summing the hypergeometric tail in
+# log space keeps them distinguishable.
+sub logFisher {
+
+    my ($n11, $n12, $n21, $n22) = @_;
+
+    my ($row1, $row2, $col1, $total, $constant,
+        $max, $logSum, @terms);
+    $row1 = $n11 + $n12;
+    $row2 = $n21 + $n22;
+    $col1 = $n11 + $n21;
+    $total = $row1 + $row2;
+
+    return(0) if (!$row1 || !$col1 || $row1 == $total || $col1 == $total);
+
+    $constant = logfact($row1) + logfact($row2) + logfact($col1) + logfact($total - $col1) - logfact($total);
+
+    my $upper = $row1 < $col1 ? $row1 : $col1;
+
+    for my $i ($n11 .. $upper) {
+
+        my $rest = $col1 - $i;
+
+        next if ($rest > $row2);
+
+        push(@terms, $constant - logfact($i) - logfact($row1 - $i) - logfact($rest) - logfact($row2 - $rest));
+
+    }
+
+    return(0) if (!@terms);
+
+    $max = $terms[0];
+
+    foreach my $term (@terms) { $max = $term if ($term > $max); }
+
+    $logSum = 0;
+    $logSum += exp($_ - $max) for (@terms);
+
+    return($max + log($logSum));
+
+}
+
+sub logfact {
+
+    return(gammln($_[0] + 1)) if ($_[0] > 1e5);   # beyond the cache's useful range
+
+    %logfactCache = () if (keys %logfactCache > 1e6);
+
+    return($logfactCache{$_[0]} //= gammln($_[0] + 1));
+
+}
 
 sub gammln {
 
     my $x = shift;
 
-    my ($g, $base, @coefficients);
+    my ($g, $base);
     $g = 4.7421875;
-    @coefficients = (0.99999999999999709182, 57.156235665862923517, -59.597960355475491248,
-                     14.136097974741747174, -0.49191381609762019978, 0.33994649984811888699e-4,
-                     0.46523628927048575665e-4, -0.98374475304879564677e-4, 0.15808870322491248884e-3,
-                     -0.21026444172410488319e-3, 0.21743961811521264320e-3, -.16431810653676389022e-3,
-                     0.84418223983852743293e-4, -0.26190838401581408670e-4, 0.36899182659531622704e-5);
 
-    if ($x < 0.5) { return(log(Core::Mathematics::pi / (sin(Core::Mathematics::pi * $x)) - gammln(1 - $x))); }
+    if ($x < 0.5) { return(log(Core::Mathematics::pi / sin(Core::Mathematics::pi * $x)) - gammln(1 - $x)); }
     else {
 
-        my $tmp = $coefficients[0];
+        my $tmp = $gammlnCoefficients[0];
         $x -= 1;
-        $tmp += $coefficients[$_] / ($x + $_) for (1 .. 14);
+        $tmp += $gammlnCoefficients[$_] / ($x + $_) for (1 .. 14);
         $base = $x + $g + 0.5;
 
         return(((0.91893853320467274178 + log($tmp)) - $base) + log($base) * ($x + 0.5));
@@ -476,46 +558,9 @@ sub gamnln {
 
     my $x = shift;
 
-    my ($stp, $y, $t, $ser,
-        @lg, @coeff);
-    @lg = (0.5723649429247001, 0, -0.1207822376352452, 0, 0.2846828704729192, 0.6931471805599453, 1.200973602347074,
-           1.791759469228055, 2.453736570842442, 3.178053830347946, 3.957813967618717, 4.787491742782046, 5.662562059857142,
-           6.579251212010101, 7.534364236758733, 8.525161361065415, 9.549267257300997, 10.60460290274525, 11.68933342079727,
-           12.80182748008147, 13.94062521940376, 15.10441257307552, 16.29200047656724, 17.50230784587389, 18.73434751193645,
-           19.98721449566188, 21.2600761562447, 22.55216385312342, 23.86276584168909, 25.19122118273868, 26.53691449111561,
-           27.89927138384089, 29.27775451504082, 30.67186010608068, 32.08111489594736, 33.50507345013689, 34.94331577687682,
-           36.39544520803305, 37.86108650896109, 39.3398841871995, 40.8315009745308, 42.33561646075349, 43.85192586067515,
-           45.3801388984769, 46.91997879580877, 48.47118135183522, 50.03349410501914, 51.60667556776437, 53.19049452616927,
-           54.78472939811231, 56.38916764371993, 58.00360522298051, 59.62784609588432, 61.26170176100199, 62.9049908288765,
-           64.55753862700632, 66.21917683354901, 67.88974313718154, 69.56908092082364, 71.257038967168, 72.9534711841694,
-           74.65823634883016, 76.37119786778275, 78.09222355331531, 79.82118541361436, 81.55795945611503, 83.30242550295004,
-           85.05446701758153, 86.81397094178108, 88.58082754219767, 90.35493026581838, 92.13617560368709, 93.92446296229978,
-           95.71969454214322, 97.52177522288821, 99.33061245478741, 101.1461161558646, 102.9681986145138, 104.7967743971583,
-           106.6317602606435, 108.4730750690654, 110.3206397147574, 112.1743770431779, 114.0342117814617, 115.9000704704145,
-           117.7718813997451, 119.6495745463449, 121.5330815154387, 123.4223354844396, 125.3172711493569, 127.2178246736118,
-           129.1239336391272, 131.0355369995686, 132.9525750356163, 134.8749893121619, 136.8027226373264, 138.7357190232026,
-           140.6739236482343, 142.617282821146, 144.5657439463449, 146.5192554907206, 148.477766951773, 150.4412288270019,
-           152.4095925844974, 154.3828106346716, 156.3608363030788, 158.3436238042692, 160.3311282166309, 162.3233054581712,
-           164.3201122631952, 166.3215061598404, 168.3274454484277, 170.3378891805928, 172.3527971391628, 174.3721298187452,
-           176.3958484069973, 178.4239147665485, 180.4562914175438, 182.4929415207863, 184.5338288614495, 186.5789178333379,
-           188.6281734236716, 190.6815611983747, 192.7390472878449, 194.8005983731871, 196.86618167289, 198.9357649299295,
-           201.0093163992815, 203.0868048358281, 205.1681994826412, 207.2534700596299, 209.3425867525368, 211.435520202271,
-           213.5322414945632, 215.6327221499328, 217.7369341139542, 219.8448497478113, 221.9564418191303, 224.0716834930795,
-           226.1905483237276, 228.3130102456502, 230.4390435657769, 232.5686229554685, 234.7017234428182, 236.8383204051684,
-           238.9783895618343, 241.1219069670290, 243.2688490029827, 245.4191923732478, 247.5729140961868, 249.7299914986334,
-           251.8904022097232, 254.0541241548883, 256.2211355500095, 258.3914148957209, 260.5649409718632, 262.7416928320802,
-           264.9216497985528, 267.1047914568685, 269.2910976510198, 271.4805484785288, 273.6731242856937, 275.8688056629533,
-           278.0675734403662, 280.2694086832001, 282.4742926876305, 284.6822069765408, 286.893133295427, 289.1070536083976,
-           291.3239500942703, 293.5438051427607, 295.7666013507606, 297.9923215187034, 300.2209486470141, 302.4524659326413,
-           304.6868567656687, 306.9241047260048, 309.1641935801469, 311.4071072780187, 313.652829949879, 315.9013459032995,
-           318.1526396202093, 320.4066957540055, 322.6634991267262, 324.9230347262869, 327.1852877037753, 329.4502433708053,
-           331.7178871969285, 333.9882048070999, 336.2611819791985, 338.5368046415996, 340.815058870799, 343.0959308890863,
-           345.3794070622669, 347.6654738974312, 349.9541180407703, 352.2453262754350, 354.5390855194408, 356.835382823613,
-           359.1342053695754);
+    return($gamnlnLg[$x - 1]) if ($x < 201);
 
-    return($lg[$x - 1]) if ($x < 201);
-
-    @coeff = (76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 1.208650973866179e-3, -5.395239384953e-6);
+    my ($stp, $y, $t, $ser);
     $stp = 2.5066282746310005;
     $x /= 2;
     $y = $x;
@@ -526,7 +571,7 @@ sub gamnln {
     for (my $i = 0; $i < 6; $i++) {
 
         $y++;
-        $ser += $coeff[$i] / $y;
+        $ser += $gamnlnCoefficients[$i] / $y;
 
     }
 
@@ -620,14 +665,12 @@ sub quantile {
 
     $quantile //= 0;
 
-    Core::Utils::throw("Quantile value must be comprised between 0 and 4") if ($quantile < 0 ||
-                                                                               $quantile > 4);
+    Core::Utils::throw("Quantile value must be comprised between 0 and 4") if ($quantile < 0 || $quantile > 4);
     Core::Utils::throw("Values must be provided as an ARRAY reference") if (ref($values) ne "ARRAY");
     Core::Utils::throw("Values array is empty") if (!@{$values});
     Core::Utils::throw("Values must be numeric") if (!isnumeric(@{$values}));
 
-    my ($total, $k, $f, $ak,
-        @data);
+    my ($total, $k, $f, $ak, @data);
     $total = @{$values};
     @data = $sorted ? @{$values} : sort {$a <=> $b} @{$values};
 
@@ -829,7 +872,7 @@ sub gcf {
 
     for ($i = 1; $i <= ITMAX; $i++) {
 
-        my $an = $i * ($i - $a);
+        my $an = -$i * ($i - $a);
         $b += 2.0;
         $d = $an * $d + $b;
 
@@ -1306,65 +1349,64 @@ sub _binomial {
 
     my ($k, $n, $p) = @_;
 
-    if (!$p) {
+    return(0) if ($k < 0 || $k > $n);
+    return($k ? 0 : 1) if (!$p);
+    return($k == $n ? 1 : 0) if ($p == 1);
 
-        if ($k) { return(0); }
-        else { return(1); }
+    my ($j, $logProb);
+    $j = $k < $n - $k ? $k : $n - $k;    # C(n, k) == C(n, n - k): take the shorter product
+    $logProb = $k * log($p) + ($n - $k) * log(1 - $p);
+    $logProb += log($n - $j + $_) - log($_) for (1 .. $j);
+
+    return(exp($logProb));
+
+}
+
+# The whole distribution, P(X = 0) .. P(X = n), in a single pass. Each term
+# follows from the last by P(k + 1) = P(k) * (n - k) / (k + 1) * p / (1 - p),
+# accumulated in log space so that large n cannot underflow.
+sub _binomialPmf {
+
+    my ($n, $p) = @_;
+
+    return(1, (0) x $n) if (!$p);        # all the mass at 0
+    return((0) x $n, 1) if ($p == 1);    # all the mass at n
+
+    my ($logProb, $logRatio, @pmf);
+    $logProb = $n * log(1 - $p);          # log P(X = 0)
+    $logRatio = log($p) - log(1 - $p);
+    $pmf[0] = exp($logProb);
+
+    for my $k (0 .. $n - 1) {
+
+        $logProb += log($n - $k) - log($k + 1) + $logRatio;
+        $pmf[$k + 1] = exp($logProb);
 
     }
 
-    my $prob = 0;
-
-    if ($n > 100) {
-
-        my ($sigma, $mu, $const, $exponent);
-        $mu = $n * $p;
-        $sigma = sqrt($mu * (1 - $p));
-        $const = 1 / ($sigma * sqrt(2 * Core::Mathematics::pi));
-        $exponent = -0.5 * (($k - $mu) / $sigma)**2;
-        $prob = $const * exp($exponent);
-
-    }
-    else { $prob = ($p ** $k) * ((1 - $p) ** ($n - $k)) * choose($n, $k); }
-
-    return($prob);
+    return(@pmf);
 
 }
 
 sub binomialTest {
 
-	my ($k, $n, $p, $mode) = @_;
+    my ($k, $n, $p, $mode) = @_;
+
+    Core::Utils::throw("Number of successes must be comprised between 0 and the number of trials") if (!isint($k) || $k < 0 || $k > $n);
 
     my ($pvalue);
 
     if (!$mode || $mode eq "two.sided") {
 
-        my ($ref, %seen);
-        $ref = _binomial($k, $n, $p);
-
-        for (0 .. $n) {
-
-            my $p = _binomial($_, $n, $p);
-
-            last if (exists $seen{$_});
-            last if ($p > $ref);
-
-            $seen{$_} = 1;
-            $pvalue += $p;
-
-        }
-
-        for (-$n .. 0) {
-
-            my $p = _binomial(-$_, $n, $p);
-
-            last if (exists $seen{-$_});
-            last if ($p > $ref);
-
-            $seen{-$_} = 1;
-            $pvalue += $p;
-
-        }
+        # Every outcome no more likely than the one observed. The relative
+        # tolerance is the one R's binom.test uses, so that outcomes exactly as
+        # likely as the observed one are not lost to floating-point noise.
+        my ($ref, @pmf);
+        @pmf = _binomialPmf($n, $p);
+        $ref = ($pmf[$k] // 0) * (1 + 1e-7);
+        $pvalue = 0;
+        $pvalue += $_ for (grep { $_ <= $ref } @pmf);
+        $pvalue = 1 if ($pvalue > 1);    # sums can land at 1.0000000001
 
     }
     else {
@@ -1380,12 +1422,17 @@ sub binomialTest {
 
         return(1) if (!$k);
 
+        # P(X <= n) is 1 by definition. Without this, "less" with k == n asks
+        # betai for a zero second parameter, after the increment above, and
+        # divides by zero
+        return(1) if ($k > $n);
+
         $pvalue = betai($k, $n - $k + 1, $p);
         $pvalue = 1 - $pvalue if ($mode eq "less");
 
     }
 
-    return($pvalue)
+    return($pvalue);
 
 }
 

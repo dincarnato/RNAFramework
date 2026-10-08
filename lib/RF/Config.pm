@@ -1,7 +1,7 @@
 package RF::Config;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 use Data::Sequence::Utils;
 use Term::Table;
@@ -83,7 +83,7 @@ sub _validate {
     $self->{windowoffset} = $self->{normwindow} if ($self->{windowoffset} > $self->{normwindow});
 
     $self->throw("Invalid scoreMethod value") if ($self->{scoremethod} !~ m/^Ding|Rouskin|Siegfried|Zubradt|[1234]$/i);
-    $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsorising|Box-?plot|Mitchell|[1234])$/i);
+    $self->throw("Invalid normMethod value") if ($self->{normmethod} !~ m/^(2-8\%|90\% Winsori[zs]ing|Box-?plot|Mitchell|[1234])$/i);
     $self->throw("Normalization method \"" . $self->{normmethod} . "\" cannot be used with Rouskin scoring") if ($self->{scoremethod} =~ m/^(Rouskin|2)$/i && $self->{normmethod} =~ m/^(2-8\%|Box-?plot|Mitchell|[134])$/i);
     $self->throw("Normalization method \"" . $self->{normmethod} . "\" cannot be used with Ding scoring") if ($self->{scoremethod} =~ m/^(Ding|1)$/i && $self->{normmethod} =~ m/^(Mitchell|4)$/i);
     $self->throw("Invalid normWindow value") if (!isint($self->{normwindow}));
@@ -115,7 +115,7 @@ sub _fixproperties {
     elsif ($self->{scoremethod} =~ m/^Siegfried|3$/i) { $self->{scoremethod} = 3; }
     elsif ($self->{scoremethod} =~ m/^Zubradt|4$/i) { $self->{scoremethod} = 4; }
 
-    $self->{normmethod} = $self->{normmethod} =~ m/^2-8\%|1$/ ? 1 : ($self->{normmethod} =~ m/^(90\% Winsorising|2)$/i ? 2 : ($self->{normmethod} =~ m/^(Box-?plot|3)$/i ? 3 : 4));
+    $self->{normmethod} = $self->{normmethod} =~ m/^2-8\%|1$/ ? 1 : ($self->{normmethod} =~ m/^(90\% Winsori[zs]ing|2)$/i ? 2 : ($self->{normmethod} =~ m/^(Box-?plot|3)$/i ? 3 : 4));
     $self->{reactivebases} = $self->{reactivebases} =~ m/^all$/i ? "ACGT" : join("", sort(uniq(split("", join("", iupac2nt(rna2dna(uc($self->{reactivebases}))))))));
     $self->{normindependent} = $self->{normindependent} =~ m/^TRUE|yes|1$/i ? 1 : 0;
     $self->{remapreactivities} = $self->{remapreactivities} =~ m/^TRUE|yes|1$/i ? 1 : 0;

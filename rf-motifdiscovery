@@ -5,7 +5,7 @@
 # RNA Framework [http://www.rnaframework.com]
 #
 # Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
-# Summary: Performs discovery of significantly enriched sequence motifs in RIP peaks
+# Summary: Performs discovery of significantly enriched sequence motifs in RNA regions
 #
 # This program is free software, and can be redistribute  and/or modified
 # under the terms of the GNU General Public License as published by
@@ -20,16 +20,18 @@ use Config;
 use File::Basename;
 use FindBin qw($Bin);
 use Getopt::Long qw(:config no_ignore_case);
+use Time::HiRes;
 use threads;
 use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO::Sequence;
 use Data::Sequence::Utils;
+use Graphics::SeqLogo;
 use Term::Constants qw(:screen);
 use Term::Table;
 
@@ -39,36 +41,44 @@ die "\n  [!] Error: This program requires ithreads." .
     "\n             Please recompile Perl with ithreads support and try again\n\n" unless(defined $Config{useithreads});
 
 my ($help, $output, $overwrite, $kmer,
-    $maxk, $negSamplings, $fasta, $peaks,
+    $negSamplings, $fasta, $peaks,
     $io, $window, $negPeaks, $oneperseq,
-    $pcutoff, $nmotifs, $doShuffle, $surround,
-    $consTollerance, $nucShuffle, $threads, $gapLen,
-    $saveKmerTable, @discovered, @peaks,
-    @negPeaks, @realPeaks, @combinations, %peaks,
-    %negPeaks, %transcripts, %rows, %rowIndex);
+    $countOccurrences, $noGeneralize,
+    $minKmer, $maxKmer, $ngen, $nref, $maxWidth,
+    $ecutoff, $nmotifs, $doShuffle,
+    $consTolerance, $nucShuffle, $threads,
+    $saveKmerTable, @discovered, @peaks, @iupacMerge,
+    @negPeaks, @realPeaks, @searchPeaks, @widths, 
+    %peaks, %negPeaks, %transcripts, %rows, %rowIndex,
+    %iupac, %iupacSet);
 
 do {
 
     local $SIG{__WARN__} = sub { };
 
-    GetOptions( "h|help"              => \$help,
-                "o|output=s"          => \$output,
-                "ow|overwrite"        => \$overwrite,
-                "sk|save-kmer-table"  => \$saveKmerTable,
-                "k|kmer=i"            => \$kmer,
-                "s|shuffle"           => \$doShuffle,
-                "np|neg-samplings=i"  => \$negSamplings,
-                "f|fasta=s"           => \$fasta,
-                "b|peaks=s"           => \$peaks,
-                "nb|negative-peaks=s" => \$negPeaks,
-                "w|window=i"          => \$window,
-                "v|pvalue=s"          => \$pcutoff,
-                "nm|n-motifs=i"       => \$nmotifs,
-                "ops|one-per-seq"     => \$oneperseq,
-                "c|consTollerance=s"  => \$consTollerance,
-                "ns|nucl-shuffling"   => \$nucShuffle,
-                #"e|extend=i"          => \$surround, # Disabled for now
-                "p|processors=i"      => \$threads ) or help(1);
+    GetOptions( "h|help"                => \$help,
+                "o|output=s"            => \$output,
+                "ow|overwrite"          => \$overwrite,
+                "sk|save-kmer-table"    => \$saveKmerTable,
+                "k|kmer=i"              => \$kmer,
+                "s|shuffle"             => \$doShuffle,
+                "np|neg-samplings=i"    => \$negSamplings,
+                "f|fasta=s"             => \$fasta,
+                "r|regions=s"           => \$peaks,
+                "nr|negative-regions=s" => \$negPeaks,
+                "w|window=i"            => \$window,
+                "e|evalue=s"            => \$ecutoff,
+                "nm|n-motifs=i"         => \$nmotifs,
+                "co|count-occurrences"  => \$countOccurrences,
+                "ng|n-generalize=i"     => \$ngen,
+                "nf|n-refine=i"         => \$nref,
+                "mw|max-width=i"        => \$maxWidth,
+                "mk|min-kmer=i"         => \$minKmer,
+                "xk|max-kmer=i"         => \$maxKmer,
+                "nog|no-generalize"     => \$noGeneralize,
+                "ct|consTolerance=s"    => \$consTolerance,
+                "ns|nuc-shuffling"      => \$nucShuffle,
+                "p|processors=i"        => \$threads ) or help(1);
 
 };
 
@@ -76,13 +86,35 @@ help() if ($help);
 
 # Default
 $threads ||= 1;
-$negSamplings ||= 20;
-$kmer ||= 4;
-$surround //= 0;
+$negSamplings ||= 3;
 $window ||= 50;
-$consTollerance //= 0.2;
-$pcutoff //= 1e-3;
+$consTolerance //= 0.2;
+$ecutoff //= 1e-3;
 $nmotifs ||= 3;
+$ngen ||= 100;
+$nref ||= 4;
+
+%iupac = ( A => "A", C => "C", G => "G", U => "U",
+           AC => "M", AG => "R", AU => "W", CG => "S", CU => "Y", GU => "K",
+           ACG => "V", ACU => "H", AGU => "D", CGU => "B", ACGU => "N" );
+%iupacSet = reverse %iupac;
+@iupacMerge = ( [ "M", "A", "C" ], [ "R", "A", "G" ], [ "W", "A", "U" ], [ "S", "C", "G" ],
+                [ "Y", "C", "U" ], [ "K", "G", "U" ], [ "V", "M", "G" ], [ "H", "M", "U" ],
+                [ "D", "R", "U" ], [ "B", "S", "U" ], [ "N", "V", "U" ] );
+
+# A width range is searched unless an explicit -k was given
+if (defined $kmer) { @widths = ($kmer); }
+else {
+
+    $minKmer ||= 4;
+    $maxKmer ||= 8;
+    @widths = ($minKmer .. $maxKmer);
+    $kmer = $minKmer;
+
+}
+
+$maxWidth ||= $widths[-1] + $widths[0];
+$oneperseq = 1 if (!$countOccurrences);
 $output ||= "rf_motifdiscovery/";
 $output =~ s/\/?$/\//;
 %rows = ( A => 0,
@@ -93,19 +125,18 @@ $output =~ s/\/?$/\//;
 
 die "\n  [!] Error: No input FASTA file provided\n\n" if (!defined $fasta);
 die "\n  [!] Error: Provided FASTA file doesn't exist\n\n" if (!-e $fasta);
-die "\n  [!] Error: No input peaks BED file provided\n\n" if (!defined $peaks);
-die "\n  [!] Error: Provided peaks BED file doesn't exist\n\n" if (!-e $peaks);
-die "\n  [!] Error: Provided negative peaks BED file doesn't exist\n\n" if (defined $negPeaks && !-e $negPeaks);
+die "\n  [!] Error: No input regions BED file provided\n\n" if (!defined $peaks);
+die "\n  [!] Error: Provided regions BED file doesn't exist\n\n" if (!-e $peaks);
+die "\n  [!] Error: Provided negative regions BED file doesn't exist\n\n" if (defined $negPeaks && !-e $negPeaks);
 die "\n  [!] Error: Number of shufflings must be greater than 0\n\n" if ($negSamplings < 1);
 die "\n  [!] Error: Number of motifs must be greater than 0\n\n" if ($nmotifs < 1);
+die "\n  [!] Error: Maximum k-mer size must be >= minimum\n\n" if ($widths[-1] < $widths[0]);
+die "\n  [!] Error: Minimum k-mer size must be >= 4\n\n" if (!@widths || $widths[0] < 4);
 die "\n  [!] Error: Window size must be greater than 3\n\n" if ($window < 3);
 die "\n  [!] Error: k-mer size must be >= 4\n\n" if ($kmer < 4);
-die "\n  [!] Error: Consensus tollerance must be comprised between 0 and 1\n\n" if (!isnumeric($consTollerance) || !inrange($consTollerance, [0, 1]));
-die "\n  [!] Error: p-value must be comprised between 0 and 1\n\n" if (!isnumeric($pcutoff) || !inrange($pcutoff, [0, 1]));
+die "\n  [!] Error: Consensus tolerance must be comprised between 0 and 1\n\n" if (!isnumeric($consTolerance) || !inrange($consTolerance, [0, 1]));
+die "\n  [!] Error: E-value must be >= 0\n\n" if (!ispositive($ecutoff));
 die "\n  [!] Error: No output folder specified\n\n" if (!defined $output);
-
-$gapLen = $kmer - round($kmer * 0.75);
-@combinations = calcCombinations([qw(A C G U)], $surround);
 
 print "\n[+] Making output directory...";
 
@@ -123,13 +154,13 @@ if (-e $output) {
 
 }
 
-if (my $error = mktree($output, "755")) { die "\n  [!] Error: Unable to create output directory ($error)\n\n"; }
+for (qw(logos matrices)) { if (my $error = mktree("${output}/$_", "755")) { die "\n  [!] Error: Unable to create output directory ($error)\n\n"; } }
 
 print "\n[+] Loading reference...";
 
 $io = Data::IO::Sequence->new(file => $fasta);
 
-print "\n[+] Importing peaks...";
+print "\n[+] Importing regions...";
 %peaks = importPeakCenters($peaks);
 %negPeaks = importPeakCenters($negPeaks) if (defined $negPeaks);
 
@@ -151,11 +182,11 @@ while(my $entry = $io->read()) {
 @realPeaks = @peaks;
 print " " . scalar(@peaks) . " positive" . (defined $negPeaks ? ", " . scalar(@negPeaks) . " negative " : " ") . "imported.";
 
-die "\n\n [!] Error: No peak imported. Please check your FASTA and BED input files and try again\n\n" if (!@peaks);
+die "\n\n [!] Error: No region imported. Please check your FASTA and BED input files and try again\n\n" if (!@peaks);
 
 if ($negPeaks && !@negPeaks) {
 
-    warn "\n\n [!] Warning: No negative peak imported. Falling back to random sampling...\n";
+    warn "\n\n [!] Warning: No negative region imported. Falling back to random sampling...\n";
     undef($negPeaks);
 
 }
@@ -194,187 +225,172 @@ undef(%negPeaks);
 
 while(@discovered < $nmotifs) {
 
-    my ($match, $matchData, $consensus, $regex,
-        $consLen, $pvalue, $toErase, $fullMotif,
-        $coreMotif, $extCoreMotif, $upMotif, $downMotif,
-        $iter, @significant, @aligned, %aligned,
-        %matches, %totseqs, %surround);
+    my ($matchData, $consensus, $regex, $pvalue, 
+        $evalue, $fullMotif, $coreMotif, $extCoreMotif, 
+        $bestMotif, $iter, $minw, $maxw, @significant, 
+        @aligned, %aligned, %wordPos, %wordNeg,
+        %matches, %totseqs, %rePvalues, %level);
 
     $iter = scalar(@discovered) + 1;
+    ($minw, $maxw) = ($widths[0], $widths[-1]);
 
-    print CLRRET . "[+] Enumerating motifs in positive set [Iteration #" . $iter . "]";
+    print CLRRET . "[+] Counting words [Iteration #" . $iter . "]";
 
-    foreach my $sequence (@peaks) {
+    foreach my $set ([\@peaks, \%wordPos], [\@negPeaks, \%wordNeg]) {
 
-        my ($length, %inseq);
-        $length = length($sequence);
+        my ($sequences, $counts) = @{$set};
+        my $seqNo = 0;
 
-        if (!$oneperseq) { $totseqs{pos} += ($length - $kmer + 1); }
-        else { $totseqs{pos} = scalar(@peaks); }
+        foreach my $sequence (@{$sequences}) {
 
-        for(my $i = 0; $i < $length - $kmer; $i++) {
+            $seqNo++;
 
-            my $motif = substr($sequence, $i, $kmer);
+            foreach my $run (split(/[^ACGU]+/, $sequence)) {
 
-            if ($surround) {
+                my $length = length($run);
 
-                if ($i - $surround >= 0) {
+                next if ($length < $minw);
 
-                    my $up = substr($sequence, $i - $surround, $surround);
-                    $surround{$motif}->{pos}->{up} = { map { $_ => 0 } @combinations } if (!exists $surround{$motif}->{pos}->{up});
-                    $surround{$motif}->{pos}->{up}->{$up}++;
+                for (my $i = 0; $i <= $length - $minw; $i++) {
 
-                }
+                    my $last = $length - $i;
+                    $last = $maxw if ($last > $maxw);
 
-                if ($i + $kmer + $surround < $length) {
+                    for (my $w = $minw; $w <= $last; $w++) {
 
-                    my $down = substr($sequence, $i + $kmer, $surround);
-                    $surround{$motif}->{pos}->{down} = { map { $_ => 0 } @combinations } if (!exists $surround{$motif}->{pos}->{down});
-                    $surround{$motif}->{pos}->{down}->{$down}++;
+                        my $word = substr($run, $i, $w);
+                        my $entry = $counts->{$word};
 
-                }
+                        if (!defined $entry) { $counts->{$word} = [1, $seqNo]; }
+                        elsif ($entry->[1] != $seqNo) { $entry->[0]++; $entry->[1] = $seqNo; }
 
-            }
-
-            if ($motif =~ m/^[ACGU]+$/) { $inseq{$motif}++; }
-            else { $totseqs{pos}-- if (!$oneperseq); }
-
-        }
-
-        for (keys %inseq) {
-
-            if (!$oneperseq) { $matches{$_}->{pos} += $inseq{$_}; }
-            else { $matches{$_}->{pos}++; }
-
-        }
-
-    }
-
-    print CLRRET . "[+] Enumerating motifs in negative set [Iteration #" . $iter . "]";
-
-    foreach my $sequence (@negPeaks) {
-
-        my ($length, %inseq);
-        $length = length($sequence);
-
-        if (!$oneperseq) { $totseqs{neg} += ($length - $kmer + 1); }
-        else { $totseqs{neg} = scalar(@negPeaks); }
-
-        for(my $i = 0; $i < $length - $kmer; $i++) {
-
-            my $motif = substr($sequence, $i, $kmer);
-
-            if ($surround) {
-
-                if ($i - $surround >= 0) {
-
-                    my $up = substr($sequence, $i - $surround, $surround);
-                    $surround{$motif}->{neg}->{up} = { map { $_ => 0 } @combinations } if (!exists $surround{$motif}->{neg}->{up});
-                    $surround{$motif}->{neg}->{up}->{$up}++;
-
-                }
-
-                if ($i + $kmer + $surround < $length) {
-
-                    my $down = substr($sequence, $i + $kmer, $surround);
-                    $surround{$motif}->{neg}->{down} = { map { $_ => 0 } @combinations } if (!exists $surround{$motif}->{neg}->{down});
-                    $surround{$motif}->{neg}->{down}->{$down}++;
+                    }
 
                 }
 
             }
 
-            if ($motif =~ m/^[ACGU]+$/) { $inseq{$motif}++; }
-            else { $totseqs{neg}-- if (!$oneperseq); }
-
-        }
-
-        for (keys %inseq) {
-
-            if (!$oneperseq) { $matches{$_}->{neg} += $inseq{$_}; }
-            else { $matches{$_}->{neg}++; }
-
         }
 
     }
 
-    print CLRRET . "[+] Calculating significant enrichments [Iteration #$iter]";
+    foreach my $word (keys %wordPos) {
 
-    $matches{$_}->{pvalue} = fisher($matches{$_}->{pos} || 0, $matches{$_}->{neg} || 0,
-                                    $totseqs{pos} - $matches{$_}->{pos}, $totseqs{neg} - $matches{$_}->{neg}) for (keys %matches);
+        my ($pos, $neg) = ($wordPos{$word}->[0], exists $wordNeg{$word} ? $wordNeg{$word}->[0] : 0);
 
-    @significant = grep { isnumeric($matches{$_}->{pvalue}) &&
-                          $matches{$_}->{pvalue} < $pcutoff } (sort {$matches{$a}->{pvalue} <=> $matches{$b}->{pvalue}} keys %matches);
+        $matches{$word} = { pos => $pos, neg => $neg };
 
-    if (!@discovered && $saveKmerTable) {
+        next if ($pos * scalar(@negPeaks) <= $neg * scalar(@peaks));
 
-        open(my $kh, ">", $output . "kmers.txt") or die "\n\n  [!] Error: Unable to write kmer table (" . $! . ")\n\n";
-        select((select($kh), $|=1)[0]);
+        $rePvalues{$word} = [ $pos, $neg, logFisher($pos, $neg, scalar(@peaks) - $pos,
+                                                    scalar(@negPeaks) - $neg) ];
+
+    }
+
+        if (!@discovered && $saveKmerTable) {
+
+        print CLRRET . "[+] Saving k-mer table [Iteration #$iter]";
+
+        open(my $kh, ">", "${output}kmers.txt") or die "\n\n  [!] Error: Unable to write kmer table ($!)\n\n";
         print $kh join("\t", qw(kmer p-value posMatches totPositive negMatches totNegative)) . "\n";
-        print $kh join("\t", $_, sprintf("%.2e", $matches{$_}->{pvalue}), $matches{$_}->{pos} || 0, $totseqs{pos},
-                             $matches{$_}->{neg} || 0, $totseqs{neg}) . "\n" for (sort {$matches{$a}->{pvalue} <=> $matches{$b}->{pvalue}} keys %matches);
+
+        foreach my $word (sort { ($rePvalues{$a} ? $rePvalues{$a}->[2] : 0) <=>
+                                 ($rePvalues{$b} ? $rePvalues{$b}->[2] : 0) } keys %matches) {
+
+            my ($logp, $pvalue);
+            $logp = exists $rePvalues{$word} ? $rePvalues{$word}->[2] : undef;
+            # exp() underflows below ~-745, so anything past -690 is reported as <1e-300
+            $pvalue = !defined $logp ? undef : ($logp < -690 ? 0 : exp($logp));
+
+            print $kh join("\t", $word, !defined $pvalue ? "NA" : ($pvalue > 0 ? sprintf("%.2e", $pvalue) : "<1e-300"),
+                                 $matches{$word}->{pos}, scalar(@peaks),
+                                 $matches{$word}->{neg}, scalar(@negPeaks)) . "\n";
+
+        }
+
         close($kh);
 
     }
 
-    last if (!@significant);
+    last if (!keys %rePvalues);
 
-    print CLRRET . "[+] Clustering similar motifs [Iteration #$iter]";
+    %level = %rePvalues;
 
-    foreach my $motif1 (@significant) {
+    foreach my $nAmbig (1 .. $widths[-1]) {
 
-        my (@neighbors);
+        my (%next, @top);
 
-        foreach my $motif2 (@significant) {
+        last if (!keys %level);
 
-            next if ($motif1 eq $motif2);
-            next if (hamming($motif1, $motif2) > 1);
+        print CLRRET . "[+] Generalizing to $nAmbig ambiguous position(s) [Iteration #" . $iter . "]";
 
-            push(@neighbors, $motif2);
+        @top = (sort { $level{$a}->[2] <=> $level{$b}->[2] } keys %level);
+        @top = @top[0 .. ($#top < $ngen - 1 ? $#top : $ngen - 1)];
+
+        generalizeREs(\@top, \%level, \%next, scalar(@peaks), scalar(@negPeaks));
+
+        $rePvalues{$_} = $next{$_} for (keys %next);
+        %level = %next;
+
+    }
+
+    print CLRRET . "[+] Scoring best candidates [Iteration #$iter]";
+
+    my @finalists = (sort { $rePvalues{$a}->[2] <=> $rePvalues{$b}->[2] } keys %rePvalues);
+    @finalists = @finalists[0 .. ($#finalists < $ngen - 1 ? $#finalists : $ngen - 1)];
+
+
+    foreach my $re (@finalists) {
+
+        my ($regex, $pos, $neg);
+        $regex = iupac2regex($re);
+        $pos = countMatching($regex, \@peaks);
+        $neg = countMatching($regex, \@negPeaks);
+
+        $rePvalues{$re} = [ $pos, $neg, logFisher($pos, $neg, scalar(@peaks) - $pos, scalar(@negPeaks) - $neg) ];
+        $bestMotif = { pattern => $re, pos => $pos, neg => $neg, logp => $rePvalues{$re}->[2] } if (!defined $bestMotif || $rePvalues{$re}->[2] < $bestMotif->{logp});
+
+    }
+
+    last if (!defined $bestMotif);
+
+    if (!$noGeneralize) {
+
+        print CLRRET . "[+] Extending best motif [Iteration #" . $iter . "]";
+
+        my $extended = extendCore($bestMotif->{pattern}, $widths[0], $widths[-1], $maxWidth, $ngen, \@peaks, \@negPeaks);
+
+        if ($extended ne $bestMotif->{pattern}) {
+
+            my ($regex, $pos, $neg);
+            $regex = iupac2regex($extended);
+            $pos = countMatching($regex, \@peaks);
+            $neg = countMatching($regex, \@negPeaks);
+            $rePvalues{$extended} = [ $pos, $neg, $pos * scalar(@negPeaks) > $neg * scalar(@peaks) ? logFisher($pos, $neg, scalar(@peaks) - $pos, scalar(@negPeaks) - $neg) : 0 ];
+
+            $bestMotif = { pattern => $extended, pos => $pos, neg => $neg,
+                           logp    => $rePvalues{$extended}->[2] } if ($rePvalues{$extended}->[2] < $bestMotif->{logp});
 
         }
 
-        $matches{$motif1}->{neighbors} = \@neighbors;
+        print CLRRET . "[+] Refining best motif [Iteration #$iter]";
+
+        my ($refined, $record) = refineREs($bestMotif->{pattern}, $rePvalues{$bestMotif->{pattern}}, $nref, \@peaks, \@negPeaks, \%rePvalues);
+
+        $bestMotif = { pattern => $refined, pos => $record->[0],
+                       neg => $record->[1], logp => $record->[2] } if (defined $refined && $record->[2] < $bestMotif->{logp});
 
     }
 
-    for (keys %matches) { delete($matches{$_}) if (!exists $matches{$_}->{neighbors}); }
+    $kmer = length($bestMotif->{pattern});
+    $coreMotif = $bestMotif->{pattern};
+    $totseqs{pos} = scalar(@peaks);
+    $totseqs{neg} = scalar(@negPeaks);
 
-    foreach my $seq (keys %matches) {
-
-        my @neighbors = @{$matches{$seq}->{neighbors}};
-        $matches{$seq}->{clusterPvalue} = pcombine([map { $matches{$_}->{pvalue} } ($seq, @neighbors)], "S");
-        $matches{$seq}->{meanEnrichment} = mean( map { $matches{$_}->{pos} / $totseqs{pos} } ($seq, @neighbors));
-
-    }
-
-    print CLRRET . "[+] Building motif for best cluster [Iteration #$iter]";
-
-    $match = (sort {$matches{$a}->{clusterPvalue} <=> $matches{$b}->{clusterPvalue} ||
-                    $matches{$b}->{meanEnrichment} <=> $matches{$a}->{meanEnrichment}} keys %matches)[0];
-    @aligned = ($match, @{$matches{$match}->{neighbors}});
+    @aligned = grep { exists $matches{$_} } @{expandIupac($coreMotif, 256) || []};
+    @aligned = ($coreMotif) if (!@aligned);
     %aligned = map { $_ => 1 } @aligned;
-    $coreMotif = matrix2consensus(seqs2matrix(\@aligned, \%matches));
-
-    $downMotif = iupac2regex(substr($coreMotif, 0, round($kmer * 0.75)));
-    $upMotif = iupac2regex(substr($coreMotif, $gapLen, round($kmer * 0.75)));
-
-    if (my @sel = grep { $_ =~ m/^$upMotif/ && !exists $aligned{$_} } keys %matches) {
-
-        $aligned{$_} = 1 for (@sel);
-        @sel = map { ("-" x $gapLen) . $_ } @sel;
-        @aligned = map { $_ . ("-" x $gapLen) } @aligned;
-        push(@aligned, @sel);
-
-    }
-
-    if (my @sel = grep { $_ =~ m/$downMotif$/ && !exists $aligned{$_} } keys %matches) {
-
-        @sel = map { $_ . ("-" x (length($aligned[0]) - $kmer + 1)) } @sel;
-        @aligned = map { ("-" x $gapLen) . $_ } @aligned;
-        push(@aligned, @sel);
-
-    }
+    $extCoreMotif = $coreMotif;
 
     print CLRRET . "[+] Calculating final p-value [Iteration #$iter]";
 
@@ -384,22 +400,22 @@ while(@discovered < $nmotifs) {
                    totalNegPeaks  => scalar(@negPeaks),
                    pos            => 0,
                    neg            => 0,
-                   negErased      => 0,
                    posPeaks       => 0,
                    negPeaks       => 0,
-                   negErasedPeaks => 0,
                    matrix         => [] };
+
+    @searchPeaks = @peaks;
 
     $matchData->{matrix} = seqs2matrix(\@aligned, \%matches);
     $extCoreMotif = matrix2consensus($matchData->{matrix});
     $regex = join("|", map { my $k = $_; $k =~ s/-//g; $k } @aligned);
 
     # Mask motifs in peaks
-    for (@peaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
+    for (@peaks) { $_ =~ s/($regex)/"X" x length($1)/ge; }
 
     $regex = iupac2regex($coreMotif);
 
-    foreach my $sequence (@realPeaks) {
+    foreach my $sequence (@searchPeaks) {
 
         $matchData->{totalPos} += length($sequence) - $kmer + 1 if (!$oneperseq);
         my @matches = $sequence =~ m/(?:$regex)/g;
@@ -410,97 +426,33 @@ while(@discovered < $nmotifs) {
 
     foreach my $sequence (@negPeaks) {
 
-        my $matches = 0;
-        $matchData->{totalNeg} += length($sequence) - $kmer + 1 if (!$oneperseq);
         my $matches = () = $sequence =~ m/(?:$regex)/g;
+        $matchData->{totalNeg} += length($sequence) - $kmer + 1 if (!$oneperseq);
         $matchData->{neg} += $matches;
         $matchData->{negPeaks} += min(1, $matches || 0);
 
     }
 
-    # Uncomment his part to have erased p-value calculation only for shuffling mode
-    if ($doShuffle) {
+    $pvalue = $oneperseq ? fisher($matchData->{posPeaks} || 0, $matchData->{negPeaks} || 0,
+                                  $matchData->{totalPosPeaks} - $matchData->{posPeaks},
+                                  $matchData->{totalNegPeaks} - $matchData->{negPeaks})
+                         : fisher($matchData->{pos} || 0, $matchData->{neg} || 0,
+                                  $matchData->{totalPos} - $matchData->{pos},
+                                  $matchData->{totalNeg} - $matchData->{neg});
 
-        my (@erasedRealPeaks, @erasedNegPeaks);
-        @erasedRealPeaks = @realPeaks;
+    $evalue = $pvalue * scalar(keys %matches);
 
-        for (@erasedRealPeaks) { $_ =~ s/($regex)/"N" x length($1)/ge; }
-
-        print CLRRET . "[+] Calculating erased p-value [Iteration #$iter]";
-
-        @erasedNegPeaks = shufflePeaks(@erasedRealPeaks);
-
-        foreach my $sequence (@erasedNegPeaks) {
-
-            my $matches = () = $sequence =~ m/(?:$regex)/g;
-            $matchData->{negErased} += $matches;
-            $matchData->{negErasedPeaks} += min(1, $matches || 0);
-
-        }
-
-        $pvalue = $oneperseq ? fisher($matchData->{posPeaks}, $matchData->{negErasedPeaks}, $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negErasedPeaks}) :
-                               fisher($matchData->{pos}, $matchData->{negErased}, $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{negErased});
-
-    }
-    else {
-
-        $pvalue = $oneperseq ? fisher($matchData->{posPeaks} || 0, $matchData->{negPeaks} || 0,
-                                      $matchData->{totalPosPeaks} - $matchData->{posPeaks}, $matchData->{totalNegPeaks} - $matchData->{negPeaks}) :
-                               fisher($matchData->{pos} || 0, $matchData->{neg} || 0,
-                                      $matchData->{totalPos} - $matchData->{pos}, $matchData->{totalNeg} - $matchData->{neg});
-
-    }
-
-    last if ($pvalue >= $pcutoff);
-
-    # if ($surround) {
-    #
-    #     print CLRRET . "[+] Extending motif [Iteration #" . $iter . "]";
-    #
-    #     foreach my $direction (qw(up down)) {
-    #
-    #         my ($totPos, $totNeg, @significant, %pos,
-    #             %neg);
-    #         @significant = map { [ (0) x 4 ] } 1 .. $surround;
-    #
-    #         foreach my $seq (@aligned) {
-    #
-    #             next if (($direction eq "up" && $seq =~ m/^-/) ||
-    #                      ($direction eq "down" && $seq =~ m/-$/));
-    #
-    #             my $tmpSeq = $seq;
-    #             $tmpSeq =~ s/-//g;
-    #             $totPos += sum(map { $surround{$tmpSeq}->{pos}->{$direction}->{$_} } @combinations);
-    #             $totNeg += sum(map { $surround{$tmpSeq}->{neg}->{$direction}->{$_} } @combinations);
-    #             $pos{$_} += $surround{$tmpSeq}->{pos}->{$direction}->{$_} for (@combinations);
-    #             $neg{$_} += $surround{$tmpSeq}->{neg}->{$direction}->{$_} for (@combinations);
-    #
-    #         }
-    #
-    #         foreach my $seq (@combinations) {
-    #
-    #             if (fisher($pos{$seq}, $neg{$seq}, $totPos - $pos{$seq}, $totNeg - $neg{$seq}) < 0.05) {
-    #
-    #                 $significant[$_]->[$rows{substr($seq, $_, 1)}] = $pos{$seq} for (0 .. $surround - 1);
-    #
-    #             }
-    #
-    #         }
-    #
-    #         next if (!sum(map { @$_ } @significant));
-    #
-    #         if ($direction eq "up") { $matchData->{matrix} = [ @significant, @{$matchData->{matrix}} ]; }
-    #         else { $matchData->{matrix} = [ @{$matchData->{matrix}}, @significant ]; }
-    #
-    #     }
-    #
-    # }
+    last if ($evalue >= $ecutoff);
 
     $fullMotif = matrix2consensus($matchData->{matrix});
-    matrix2transfac($matchData->{matrix}, $coreMotif, $fullMotif);
+    outputMotif($matchData->{matrix}, $coreMotif, $fullMotif);
 
-    #push(@discovered, [$extCoreMotif . " [" . $coreMotif . "]", $fullMotif, sprintf("%.2e", $pvalue), $matchData]);
-    push(@discovered, [ $coreMotif, $extCoreMotif, sprintf("%.2e", $pvalue), $matchData]);
+    # fisher() underflows to 0 for strongly enriched motifs, which would print as
+    # 0.00e+00 and make the strongest hits look like the weakest
+    push(@discovered, [ $coreMotif, $extCoreMotif,
+                        $pvalue > 0 ? sprintf("%.2e", $pvalue) : "<1e-300",
+                        $matchData,
+                        $evalue > 0 ? sprintf("%.2e", $evalue) : "<1e-300" ]);
 
 }
 
@@ -510,10 +462,10 @@ else {
     print CLRRET . "[+] " . scalar(@discovered) . " significantly enriched motif(s):\n\n";
 
     my $table = Term::Table->new(indent => 2);
-    $table->head("Core motif", "Extended motif", "\% positive", "\% negative", "\% neg. erased", "p-value");
+    $table->head("Motif", "Consensus", "\% positive", "\% negative", "p-value", "E-value");
     $table->row($_->[0], $_->[1], sprintf("%.2f", $_->[3]->{posPeaks} / $_->[3]->{totalPosPeaks} * 100),
                 sprintf("%.2f", $_->[3]->{negPeaks} / $_->[3]->{totalNegPeaks} * 100),
-                $doShuffle ? sprintf("%.2f", $_->[3]->{negErasedPeaks} / $_->[3]->{totalNegPeaks} * 100) : "-", $_->[2]) for (sort {$a->[2] <=> $b->[2]} @discovered);
+                $_->[2], $_->[4]) for (@discovered);
 
     $table->print();
 
@@ -558,27 +510,6 @@ sub shufflePeaks {
 
 }
 
-sub calcCombinations {
-
-  my ($data, $k) = @_;
-
-  return if ($k < 1);
-
-  my $results = $data;
-
-  while (--$k) {
-
-      my (@new);
-
-      for my $letter (@$data) { push(@new, map { $letter . $_ } @$results); } # end for $letter in @$data
-
-      $results = \@new;
-
-  }
-
-  return(@$results);
-
-}
 
 sub seqs2matrix {
 
@@ -614,11 +545,11 @@ sub matrix2consensus {
 
     for my $i (0 .. $#matrix) {
 
-        my ($maxValue, $tollerance, @indexes, @column);
+        my ($maxValue, $tolerance, @indexes, @column);
         @column = map { $matrix[$i]->[$_] } 0 .. 3;
         $maxValue = max(@column);
-        $tollerance = $maxValue * $consTollerance;
-        @indexes = grep { inrange($column[$_], [$maxValue - $tollerance, $maxValue + $tollerance]) } 0 .. 3;
+        $tolerance = $maxValue * $consTolerance;
+        @indexes = grep { inrange($column[$_], [$maxValue - $tolerance, $maxValue + $tolerance]) } 0 .. 3;
         push(@consensus, @indexes > 1 ? join("", map { $rowIndex{$_} } @indexes) : $rowIndex{$indexes[0]});
 
     }
@@ -627,14 +558,15 @@ sub matrix2consensus {
 
 }
 
-sub matrix2transfac {
+sub outputMotif {
 
     my @matrix = @{$_[0]};
     my ($coreMotif, $consensus) = @_[1..2];
 
-    my $transfac = "ID Motif_" . $coreMotif . "\n" .
-                   "BF RF_MotifDiscovery\n" .
-                   "P0 A C G U\n";
+    my ($transfac, $logo);
+    $transfac = "ID Motif_" . $coreMotif . "\n" .
+                "BF RF_MotifDiscovery\n" .
+                "P0 A C G U\n";
 
     for my $i (0 .. $#matrix) {
 
@@ -648,60 +580,16 @@ sub matrix2transfac {
 
     $transfac .= "XX\n\/\/\n";
 
-    open(my $fh, ">", $output . "motif_" . $coreMotif . ".mat") or die "\n\n  [!] Error: Unable to write matrix file for motif " . $coreMotif . " (" . $! . ")\n\n";
+    open(my $fh, ">", "${output}matrices/motif_${coreMotif}.mat") or die "\n\n  [!] Error: Unable to write matrix file for motif $coreMotif (" . $! . ")\n\n";
     print $fh $transfac;
     close($fh);
 
-}
+    $logo = Graphics::SeqLogo->new( file   => "${output}logos/motif_${coreMotif}.svg",
+                                    matrix => "${output}matrices/motif_${coreMotif}.mat",
+                                    scale  => 3 );
+    $logo->plot();
 
-# sub longestCommonSubstr {
-#
-#     my ($string1, $string2) = @_;
-#
-#     my ($len1, $len2, $bestScore, $besti,
-#         $longest, @indexes, @lcmatrix);
-#     ($len1, $len2) = (length($string1), length($string2));
-#     $bestScore = 0;
-#     $besti = 0;
-#     @lcmatrix = map { [ (0) x ($len1 + 1) ] } 0 .. $len2;
-#
-#     for (my $i=0; $i <= $len1; $i++) {
-#
-#         for (my $j=0; $j <= $len2; $j++) {
-#
-#             if (!$i || !$j) { $lcmatrix[$i]->[$j] = 0; }
-#             elsif (substr($string1, $i - 1, 1) eq substr($string2, $j - 1, 1)) {
-#
-#                 $lcmatrix[$i]->[$j] = $lcmatrix[$i - 1]->[$j - 1] + 1;
-#                 my $maxScore = max($bestScore, $lcmatrix[$i]->[$j]);
-#
-#                 if ($maxScore > $bestScore) {
-#
-#                     $bestScore = $maxScore;
-#                     $besti = $i;
-#
-#                 }
-#
-#             }
-#             else { $lcmatrix[$i]->[$j] = 0; }
-#
-#         }
-#
-#     }
-#
-#     while($bestScore) {
-#
-#         $longest = substr($string1, $besti - 1, 1) . $longest;
-#         $bestScore--;
-#         $besti--;
-#
-#     }
-#
-#     @indexes = (index($string1, $longest, 0), index($string2, $longest, 0));
-#
-#     return(wantarray() ? ($longest, @indexes) : $longest);
-#
-# }
+}
 
 sub importPeakCenters {
 
@@ -751,6 +639,333 @@ sub peakCenters2Seq {
 
 }
 
+
+
+sub iupacSet { my $code = shift; return(exists $iupacSet{$code} ? $iupacSet{$code} : $code); }
+
+sub setToIupac {
+
+    my $set = join("", sort split(//, shift));
+
+    return(exists $iupac{$set} ? $iupac{$set} : undef);
+
+}
+
+# Words of length k matched by an IUPAC pattern
+sub expandIupac {
+
+    my ($pattern, $limit) = @_;
+
+    my @words = ("");
+
+    foreach my $code (split(//, $pattern)) {
+
+        my (@next);
+
+        foreach my $prefix (@words) { push(@next, map { $prefix . $_ } split(//, iupacSet($code))); }
+
+        return if (defined $limit && @next > $limit);
+
+        @words = @next;
+
+    }
+
+    return(\@words);
+
+}
+
+sub alignmentFromRE {
+
+    my ($re, $sequences) = @_;
+
+    my ($regex, @alignment);
+    $regex = iupac2regex($re);
+
+    foreach my $sequence (@{$sequences}) { push(@alignment, $sequence =~ m/($regex)/g); }
+
+    return(\@alignment);
+
+}
+
+sub bestOffset {
+
+    my ($re, $flanks) = @_;
+
+    my ($regex, $best, @counts);
+    $regex = iupac2regex($re);
+
+    foreach my $flank (@{$flanks}) { $counts[$-[0]]++ while ($flank =~ m/$regex/g); }
+
+    $best = 0;
+
+    for my $i (0 .. $#counts) { $best = $i if (defined $counts[$i] && (!defined $counts[$best] || $counts[$i] > $counts[$best])); }
+
+    return($best);
+
+}
+
+sub findCoreIn {
+
+    my ($posFlanks, $negFlanks, $minw, $maxw, $ngen) = @_;
+
+    my (%wordPos, %wordNeg, %rePvalues, %level, $nPos, $nNeg);
+    $nPos = scalar(@{$posFlanks});
+    $nNeg = scalar(@{$negFlanks});
+
+    return if (!$nPos || !$nNeg);
+
+    foreach my $set ([$posFlanks, \%wordPos], [$negFlanks, \%wordNeg]) {
+
+        my ($sequences, $counts) = @{$set};
+        my $seqNo = 0;
+
+        foreach my $sequence (@{$sequences}) {
+
+            $seqNo++;
+
+            foreach my $run (split(/[^ACGU]+/, $sequence)) {
+
+                my $length = length($run);
+
+                next if ($length < $minw);
+
+                for (my $i = 0; $i <= $length - $minw; $i++) {
+
+                    my $last = $length - $i;
+                    $last = $maxw if ($last > $maxw);
+
+                    for (my $w = $minw; $w <= $last; $w++) {
+
+                        my $word = substr($run, $i, $w);
+                        my $entry = $counts->{$word};
+
+                        if (!defined $entry) { $counts->{$word} = [1, $seqNo]; }
+                        elsif ($entry->[1] != $seqNo) { $entry->[0]++; $entry->[1] = $seqNo; }
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
+    foreach my $word (keys %wordPos) {
+
+        my ($pos, $neg) = ($wordPos{$word}->[0], exists $wordNeg{$word} ? $wordNeg{$word}->[0] : 0);
+
+        next if ($pos * $nNeg <= $neg * $nPos);
+
+        $rePvalues{$word} = [ $pos, $neg, logFisher($pos, $neg, $nPos - $pos, $nNeg - $neg) ];
+
+    }
+
+    return if (!keys %rePvalues);
+
+    %level = %rePvalues;
+
+    foreach my $nAmbig (1 .. $maxw) {
+
+        my (%next, @top);
+
+        last if (!keys %level);
+
+        @top = (sort { $level{$a}->[2] <=> $level{$b}->[2] } keys %level);
+        @top = @top[0 .. ($#top < $ngen - 1 ? $#top : $ngen - 1)];
+
+        generalizeREs(\@top, \%level, \%next, $nPos, $nNeg);
+
+        $rePvalues{$_} = $next{$_} for (keys %next);
+        %level = %next;
+
+    }
+
+    my ($best) = sort { $rePvalues{$a}->[2] <=> $rePvalues{$b}->[2] } keys %rePvalues;
+
+    return($best, $rePvalues{$best});
+
+}
+
+sub extendCore {
+
+    my ($primary, $minw, $maxw, $maxWidth, $ngen, $peaks, $negPeaks) = @_;
+
+    my ($width, $pad, $padded, $posAln, $negAln,
+        @posLeft, @posRight, @negLeft, @negRight);
+    $width = length($primary);
+    $pad = $maxWidth - $width;
+
+    return($primary) if ($pad < $minw);
+
+    $padded = ("N" x $pad) . $primary . ("N" x $pad);
+    $posAln = alignmentFromRE($padded, $peaks);
+    $negAln = alignmentFromRE($padded, $negPeaks);
+
+    return($primary) if (!@{$posAln} || !@{$negAln});
+
+    @posLeft = map { substr($_, 0, $pad) } @{$posAln};
+    @posRight = map { substr($_, $width + $pad) } @{$posAln};
+    @negLeft = map { substr($_, 0, $pad) } @{$negAln};
+    @negRight = map { substr($_, $width + $pad) } @{$negAln};
+
+    my ($leftRE, $leftRec) = findCoreIn(\@posLeft, \@negLeft, $minw, $maxw, $ngen);
+    my ($rightRE, $rightRec) = findCoreIn(\@posRight, \@negRight, $minw, $maxw, $ngen);
+
+    return($primary) if (!defined $leftRE && !defined $rightRE);
+
+    if (defined $rightRE && (!defined $leftRE || $rightRec->[2] < $leftRec->[2])) {
+
+        my $spacer = bestOffset($rightRE, \@posRight);
+
+        return($primary . ("N" x $spacer) . $rightRE);
+
+    }
+
+    my $spacer = $pad - length($leftRE) - bestOffset($leftRE, \@posLeft);
+    $spacer = 0 if ($spacer < 0);
+
+    return($leftRE . ("N" x $spacer) . $primary);
+
+}
+
+sub refineREs {
+
+    my ($seed, $seedRecord, $nref, $peaks, $negPeaks, $scored) = @_;
+
+    my (%candidates, %best, %done, $nPos, $nNeg);
+    $nPos = scalar(@{$peaks});
+    $nNeg = scalar(@{$negPeaks});
+    %candidates = ($seed => $seedRecord);
+    %best = %candidates;
+
+    while (1) {
+
+        my (%improved, @top);
+
+        @top = (sort { $candidates{$a}->[2] <=> $candidates{$b}->[2] } keys %candidates);
+        @top = @top[0 .. ($#top < $nref - 1 ? $#top : $nref - 1)];
+
+        foreach my $re (@top) {
+
+            next if (exists $done{$re});
+
+            $done{$re} = 1;
+
+            for my $i (0 .. length($re) - 1) {
+
+                foreach my $symbol (qw(A C G U M R W S Y K V H D B N)) {
+
+                    next if ($symbol eq substr($re, $i, 1));
+
+                    my $candidate = $re;
+                    substr($candidate, $i, 1) = $symbol;
+
+                    # N is not allowed at either end
+                    next if (substr($candidate, 0, 1) eq "N" ||
+                             substr($candidate, -1) eq "N");
+
+                    next if (exists $scored->{$candidate});
+
+                    my ($regex, $pos, $neg, $logp);
+                    $regex = iupac2regex($candidate);
+                    $pos = countMatching($regex, $peaks);
+                    $neg = countMatching($regex, $negPeaks);
+                    $logp = $pos * $nNeg > $neg * $nPos ? logFisher($pos, $neg, $nPos - $pos, $nNeg - $neg) : 0;
+                    $scored->{$candidate} = [ $pos, $neg, $logp ];
+
+                    # only replacements that beat their parent are carried on
+                    $improved{$candidate} = $scored->{$candidate} if ($logp < $candidates{$re}->[2]);
+
+                }
+
+            }
+
+        }
+
+        last if (!keys %improved);
+
+        $best{$_} = $improved{$_} for (keys %improved);
+        %candidates = %improved;
+
+    }
+
+    my ($winner) = sort { $best{$a}->[2] <=> $best{$b}->[2] } keys %best;
+
+    return($winner, $best{$winner});
+
+}
+
+sub generalizeREs {
+
+    my ($top, $level, $next, $nPos, $nNeg) = @_;
+
+    foreach my $re (@{$top}) {
+
+        my @code = split(//, $re);
+
+        for my $i (0 .. $#code) {
+
+            next if (length(iupacSet($code[$i])) > 1);
+
+            my (%counts);
+
+            foreach my $base (qw(A C G U)) {
+
+                my $candidate = $re;
+                substr($candidate, $i, 1) = $base;
+
+                $counts{$base} = $level->{$candidate} if (exists $level->{$candidate});
+
+            }
+
+            foreach my $merge (@iupacMerge) {
+
+                my ($code, $left, $right) = @{$merge};
+
+                next if (!exists $counts{$left} || !exists $counts{$right});
+
+                my ($p1, $n1, $p2, $n2, 
+                    $pos, $neg, $candidate);
+                ($p1, $n1) = @{$counts{$left}}[0, 1];
+                ($p2, $n2) = @{$counts{$right}}[0, 1];
+
+                $pos = sprintf("%.0f", ($p1 + $p2) - ($p1 * $p2 / $nPos));
+                $neg = sprintf("%.0f", ($n1 + $n2) - ($n1 * $n2 / $nNeg));
+
+                $counts{$code} = [ $pos, $neg, undef ];
+
+                $candidate = $re;
+                substr($candidate, $i, 1) = $code;
+
+                next if (substr($candidate, 0, 1) eq "N" || substr($candidate, -1) eq "N");
+
+                next if (exists $next->{$candidate});
+
+                $next->{$candidate} = [ $pos, $neg, $pos * $nNeg > $neg * $nPos ? logFisher($pos, $neg, $nPos - $pos, $nNeg - $neg) : 0 ];
+
+            }
+
+        }
+
+    }
+
+}
+
+sub countMatching {
+
+    my ($re, $sequences) = @_;
+
+    my $n = 0;
+
+    foreach my $sequence (@{$sequences}) { $n++ if ($sequence =~ $re); }
+
+    return($n);
+
+}
+
+
 sub help {
 
     print "\n  [!] Error: Invalid option. Please check the help\n" if ($_[0]);
@@ -761,35 +976,44 @@ sub help {
  RNA Framework [http://www.rnaframework.com]
 
  Author:  Danny Incarnato (dincarnato[at]rnaframework.com)
- Summary: Performs discovery of significantly enriched sequence motifs in RIP peaks
+ Summary: Performs discovery of significantly enriched sequence motifs in a set of RNA regions
 
  Usage:   rf-motifdiscovery [Options]
 
  Options                                     Description
  -p   or --processors        <int>           Number of processors (threads) to use for shuffling (Default: 1)
                                              Note: this parameter has no effect when specified without -s (or --shuffle)
- -b   or --peaks             <string>        Peaks BED file (mandatory)
- -nb  or --negative-peaks    <string>        A BED file containing negative peak sequences (optional)
-                                             Note: when no negative peaks file is specified, a set of negative sequences
+ -r   or --regions           <string>        Regions BED file (mandatory)
+ -nr  or --negative-regions  <string>        A BED file containing negative regions (optional)
+                                             Note: when no negative regions file is specified, a set of negative sequences
                                                    will be generated by -ns (or --neg-samplings) rounds of random sampling
                                                    from reference transcripts, or random shuffling if -s (or --shuffle) has
                                                    been specified
  -f   or --fasta             <string>        A FASTA file containing the reference transcript sequences (mandatory)
  -o   or --output            <string>        Output folder (Default: rf_motifdiscovery/)
  -ow  or --overwrite                         Overwrites output folder (if the specified folder already exists)
- -w   or --window            <int>           Size of the window, centered on the center of each peak, in which motif
+ -w   or --window            <int>           Size of the window, centered on the center of each region, in which motif
                                              discovery should be performed (>=3, Default: 50)
- -np  or --neg-samplings     <int>           Number of negative sequences to generate/sample for each peak (Default: 20)
- -s   or --shuffle                           Negative sequences will be generated by random shuffling peak sequences
+ -np  or --neg-samplings     <int>           Number of negative sequences to generate/sample for each region (Default: 3)
+ -s   or --shuffle                           Negative sequences will be generated by random shuffling region sequences
                                              Note: default is to sample -ns (or --neg-samplings) random windows from the
-                                                   reference transcripts, for each peak in the dataset
+                                                   reference transcripts, for each region in the dataset
  -ns  or --nuc-shuffling                     Performs random shuffling of nucleotides without preserving dinucleotide frequencies
- -k   or --kmer              <int>           K-mer size (>=4, Default: 4)
- -v   or --pvalue            <float>         P-value threshold to consider an enrichment significant (0-1, Default: 1e-3)
+ -k   or --kmer              <int>           Fixed k-mer size (>=4). When omitted, every width between -mk and -xk is searched and 
+                                             the best-scoring width is reported
+ -mk  or --min-kmer          <int>           Smallest k-mer width to search (>=4, Default: 4)
+ -xk  or --max-kmer          <int>           Largest k-mer width to search (Default: 8)
+ -mw  or --max-width         <int>           Width a motif may be extended to when a secondary RE is found in
+                                             its flanks (Default: -mk + -xk)
+ -e   or --evalue            <float>         E-value threshold to consider a motif significant (>=0, Default: 1e-3)
  -nm  or --n-motifs          <int>           Maximum number of motifs to report (>=1, Default: 3)
- -ops or --one-per-seq                       K-mers are counted only once per peak
- -t   or --tollerance        <float>         Fractional tollerance to consider a position degenerate (0-1, Default: 0.2)
+ -ct  or --consTolerance     <float>         Fractional tolerance to consider a position degenerate (0-1, Default: 0.2)
  -sk  or --save-kmer-table                   Saves the list of k-mers, and their associated p-values
+ -nog or --no-generalize                     Reports the best k-mer as-is, without generalizing or refining it
+ -ng  or --n-generalize      <int>           REs carried to the next generalization level (>=1, Default: 100)
+ -nf  or --n-refine          <int>           REs kept at each greedy refinement step (>=1, Default: 4)
+ -co  or --count-occurrences                 Counts every occurrence of a k-mer, rather than the number of
+                                             sequences containing it
 
 HELP
 

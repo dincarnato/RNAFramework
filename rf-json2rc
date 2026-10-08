@@ -26,7 +26,7 @@ use threads::shared;
 
 use lib $Bin . "/lib";
 
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Statistics;
 use Core::Utils;
 use Data::IO::Sequence;
@@ -116,9 +116,9 @@ $maxConf ||= 1e9;
 $ignoreTerm //= 0.05;
 $medianPreCov //= 2000;
 $medianCov //= 0;
-$minOverlapReps ||= 0.75;
+$minOverlapReps ||= 0.5;
 $minCorrMatch //= 0.7;
-$minOverlapMerge ||= 0.75;
+$minOverlapMerge ||= 0.5;
 $minCorrMerge //= 0.7;
 $extend //= 0;
 $capMutFreqs ||= 1;
@@ -211,7 +211,7 @@ for my $jsonIdx (0 .. $#jsonin) {
     # It might happen that two JSON files have the same exact filenames in the filenames/mm
     # arrays, which would cause a collision.
     # To prevent this, we now concatenate the JSON and MM filenames 
-    push(@filenames, $legacy ? "$jsonFile:$filenames" : map { "$jsonFile:$_" } @$filenames);
+    push(@filenames, $legacy ? "${jsonFile}_$filenames" : map { "${jsonFile}_$_" } @$filenames);
     $nFiles = $legacy ? 1 : scalar(@$filenames);
 
     die "\n\n  [!] Error: Fewer RC files than processed MM files provided (provided: " . scalar(@rcin) . 
@@ -220,7 +220,7 @@ for my $jsonIdx (0 .. $#jsonin) {
     foreach my $fileIdx (0 .. $nFiles - 1) {
 
         # Concatenated JSON and MM filenames
-        $fileId = "$jsonFile:" . ($legacy ? $filenames : $filenames->[$fileIdx]);
+        $fileId = "${jsonFile}_" . ($legacy ? $filenames : $filenames->[$fileIdx]);
         push(@jsonData, {}); # Initializing storage of JSON data
 
         foreach my $transcript (@{$data->{transcripts}}) {

@@ -1,7 +1,7 @@
 package Graphics::Chart::Heatmap;
 
 use strict;
-use Core::Mathematics qw(:all);
+use Core::Mathematics;
 use Core::Utils;
 
 use base qw(Graphics::Chart);

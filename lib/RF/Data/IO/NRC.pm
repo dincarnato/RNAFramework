@@ -4,6 +4,7 @@ use strict;
 use Core::Mathematics;
 use Core::Utils;
 use Fcntl qw(SEEK_SET SEEK_END);
+use POSIX ();
 use RF::Data::NRC;
 
 use base qw(Data::IO);
@@ -23,7 +24,8 @@ sub new {
                    blockSize   => 10000,
                    _offsets    => {},
                    _lengths    => {},
-                   _lastSeq    => {},
+                   _lastSeq    => { id       => undef,
+                                    sequence => undef },
                    _lastOffset => 0 }, \%parameters);
 
     $self->{binmode} = ":raw";
@@ -45,10 +47,12 @@ sub _validate {
 
     $self->SUPER::_validate();
 
+    $self->throw("File \"" . $self->{file} . "\" is not an NRC file") if (lc(substr($self->{file}, -4)) ne ".nrc");
+
     if ($self->mode() eq "r") {
 
-        seek($fh, -8, SEEK_END);
-        read($fh, $eof, 8);
+        CORE::seek($fh, -8, SEEK_END);
+        CORE::read($fh, $eof, 8);
 
         $self->throw("Invalid NRC file (EOF marker is absent)") unless ($eof eq EOF);
 
@@ -77,25 +81,25 @@ sub _loadIndex {
         open(my $ih, "<:raw", $self->{index}) or $self->throw("Unable to read from RCI index file (" . $! . ")");
         while(!eof($ih)) {
 
-            read($ih, $data, 4);
+            CORE::read($ih, $data, 4);
             $idlen = unpack("L<", $data);
 
-            read($ih, $data, $idlen);
+            CORE::read($ih, $data, $idlen);
             $id = substr($data, 0, -1); # Removes the "\x00" string terminator
 
-            read($ih, $data, 8);
+            CORE::read($ih, $data, 8);
             $offset = unpack("Q<", $data);
             $self->{_offsets}->{$id} = $offset; # Stores the offset for ID
 
             # Validates offset
-            seek($fh, $offset + 4, SEEK_SET);
-            read($fh, $data, $idlen);
+            CORE::seek($fh, $offset + 4, SEEK_SET);
+            CORE::read($fh, $data, $idlen);
 
             $self->throw("Invalid offset in RCI index file for transcript \"" . $id . "\"") if (substr($data, 0, -1) ne $id);
 
             if ($self->mode() eq "w+") {
 
-                read($fh, $data, 4);
+                CORE::read($fh, $data, 4);
                 $self->{_lengths}->{$id} = unpack("L<", $data);
 
             }
@@ -110,15 +114,15 @@ sub _loadIndex {
             $length);
         $offset = 0;
 
-        while($offset < (-s $self->{file}) - 18) { # While the 8 + 2 + 7 bytes of total mapped reads + RC version + EOF Marker are reached
+        while($offset < (-s $self->{file}) - 18) { # While the 8 + 2 + 8 bytes of total mapped reads + RC version + EOF Marker are reached
 
-            read($fh, $data, 4);
+            CORE::read($fh, $data, 4);
             $idlen = unpack("L<", $data);
 
-            read($fh, $data, $idlen);
+            CORE::read($fh, $data, $idlen);
             $id = substr($data, 0, -1); # Removes the "\x00" string terminator
 
-            read($fh, $data, 4);
+            CORE::read($fh, $data, 4);
             $length = unpack("L<", $data);
 
             $self->{_offsets}->{$id} = $offset;
@@ -126,7 +130,7 @@ sub _loadIndex {
 
             $offset += 8 * ($length + 1) + length($id) + 1 + ($length + ($length % 2)) / 2;
 
-            seek($fh, $offset, SEEK_SET);
+            CORE::seek($fh, $offset, SEEK_SET);
 
         }
 
@@ -150,8 +154,8 @@ sub _loadIndex {
 
     }
 
-    seek($fh, -18, SEEK_END);
-    read($fh, $n, 8);
+    CORE::seek($fh, -18, SEEK_END);
+    CORE::read($fh, $n, 8);
 
     # Unpack the 64bit int
     $self->dbSize(unpack("Q<", $n));
@@ -177,11 +181,13 @@ sub read {
 
         if (exists $self->{_offsets}->{$seqid}) {
 
-            seek($fh, $self->{_offsets}->{$seqid}, SEEK_SET);
+            CORE::seek($fh, $self->{_offsets}->{$seqid}, SEEK_SET);
 
-            # Re-build the prev array to allow ->back() call after seeking to a specific sequence
-            my @prev = grep {$_ <= $self->{_offsets}->{$seqid}} sort {$a <=> $b} values %{$self->{_offsets}};
-            $self->{_prev} = \@prev;
+            # The prev array is only needed if ->back() is called after seeking to
+            # a specific sequence, so the offset is recorded here and the array is
+            # materialized on demand, instead of re-sorting every offset on every seek
+            $self->{_prevFrom} = $self->{_offsets}->{$seqid};
+            $self->{_prev} = [];
 
         }
         else { return; }
@@ -189,8 +195,8 @@ sub read {
     }
 
     # Checks whether RTCEOF marker has been reached
-    read($fh, $eightbytes, 18);
-    seek($fh, tell($fh) - 18, SEEK_SET);
+    CORE::read($fh, $eightbytes, 18);
+    CORE::seek($fh, tell($fh) - 18, SEEK_SET);
 
     # The first 4 bytes are the total size in nt of the db
     if (substr($eightbytes, -8) eq EOF) {
@@ -203,21 +209,21 @@ sub read {
 
     push(@{$self->{_prev}}, tell($fh)) if (!defined $seqid);
 
-    read($fh, $data, 4); #read id length
+    CORE::read($fh, $data, 4); #read id length
     $idlen = unpack("L<", $data);
 
-    read($fh, $data, $idlen);
+    CORE::read($fh, $data, $idlen);
     $id = substr($data, 0, -1);
 
-    read($fh, $data, 4);
+    CORE::read($fh, $data, 4);
     $length = unpack("L<", $data);
 
-    read($fh, $data, ($length + ($length % 2)) / 2);
+    CORE::read($fh, $data, ($length + ($length % 2)) / 2);
     $data = unpack("H*", $data);
     $data =~ tr/43210/NTGCA/;
     $sequence = substr($data, 0, $length);
 
-    read($fh, $data, 8 * $length);
+    CORE::read($fh, $data, 8 * $length);
     @reactivity = unpack("d*", $data);
     @reactivity = map { isnegative($_) ? "NaN" : $_ } @reactivity;
 
@@ -247,8 +253,8 @@ sub readBytewise {
     # calls have to be made to readBytewise(), so we save it
     if ($id ne $self->{_lastSeq}->{id}) {
 
-        seek($fh, $self->{_offsets}->{$id} + 4 + length($id) + 1 + 4, SEEK_SET); # sets the fh to the position of sequence
-        read($fh, $data, ($length + ($length % 2)) / 2);
+        CORE::seek($fh, $self->{_offsets}->{$id} + 4 + length($id) + 1 + 4, SEEK_SET); # sets the fh to the position of sequence
+        CORE::read($fh, $data, ($length + ($length % 2)) / 2);
         $data = unpack("H*", $data);
         $data =~ tr/43210/NTGCA/;
 
@@ -266,8 +272,8 @@ sub readBytewise {
 
         my $rangeLen = $range->[1] - $range->[0] + 1;
         $sequence .= substr($self->{_lastSeq}->{sequence}, $range->[0], $rangeLen);
-        seek($fh, $beginArray + 8 * $range->[0], SEEK_SET);
-        read($fh, $data, 8 * $rangeLen);
+        CORE::seek($fh, $beginArray + 8 * $range->[0], SEEK_SET);
+        CORE::read($fh, $data, 8 * $rangeLen);
         push(@reactivity, unpack("d*", $data));
 
     }
@@ -294,7 +300,7 @@ sub writeBytewise {
 
     # An undefined issue exists with Perl's threads, that sometimes causes
     # failure in index loading, thus we make a check and reload the index (just in case)
-    if (!keys %{$self->{_offsets}}) { $self->_loadindex(); }
+    if (!keys %{$self->{_offsets}}) { $self->_loadIndex(); }
 
     $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!$length);
     $self->throw("Position exceeds sequence's length (" . $pos . " >= " . $self->{_lengths}->{$id} . ")") if ($pos >= $length);
@@ -305,7 +311,7 @@ sub writeBytewise {
     @{$counts}[@undef] = (-999) x scalar(@undef) if (@undef);
 
     $beginArray = $self->{_offsets}->{$id} + 8 + length($id) + 1 + ($length + ($length % 2)) / 2;
-    seek($fh, $beginArray + 8 * $pos, SEEK_SET);
+    CORE::seek($fh, $beginArray + 8 * $pos, SEEK_SET);
     print $fh pack("d*", @{$counts});
 
 }
@@ -355,7 +361,7 @@ sub write {
             $self->throw("Sequence ID \"" . $id . "\" is absent in file \"" . $self->{file} . "\"") if (!exists $self->{_lengths}->{$id});
             $self->throw("Sequence \"" . $id . "\" length differs from sequence in file \"" . $self->{file} . "\"") if ($length != $self->{_lengths}->{$id});
 
-            seek($fh, $self->{_offsets}->{$id}, SEEK_SET);
+            CORE::seek($fh, $self->{_offsets}->{$id}, SEEK_SET);
 
         }
 
@@ -426,7 +432,7 @@ sub close {
 
         my $fh = $self->{_fh};
 
-        seek($fh, -18, SEEK_END) if ($self->mode() eq "w+");
+        CORE::seek($fh, -18, SEEK_END) if ($self->mode() eq "w+");
 
         print $fh pack("Q<", $self->{dbSize}) .  # Total mapped reads (64bit int)
                   pack("S<", VERSION) .
