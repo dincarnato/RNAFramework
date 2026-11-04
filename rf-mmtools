@@ -399,7 +399,7 @@ elsif ($command eq "extract") {
                 next if (@muts < $minMutPerRead);
                 next if (defined $maxMutPerRead && @muts > $maxMutPerRead);
                 next if ($read[1] < $region->[2]);
-                last if ($read[0] >= $region->[3]);
+                next if ($read[0] >= $region->[3]);
 
                 $readStart = max($read[0], $region->[2]) - $region->[2];
                 $readEnd = min($read[1], $region->[3] - 1) - $region->[2];
