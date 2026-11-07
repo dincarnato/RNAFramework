@@ -120,7 +120,7 @@ print "\n[+] Importing input directories\/files...";
 
 foreach my $sample (@input) {
 
-    $sample = [ split ":", $sample ];
+    $sample = -e $sample ? [ $sample ] : [ split(":", $sample, 2) ];
 
     if (@$sample == 1) {
 

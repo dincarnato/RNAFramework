@@ -180,7 +180,8 @@ print "\n[+] Importing JSON file(s) [0 imported]";
 for my $jsonIdx (0 .. $#jsonin) {
 
     my ($data, $jsonFile, $fixed, $lastid, 
-        $nFiles, $legacy, $filenames, $fileId);
+        $nFiles, $legacy, $filenames, $fileId,
+        $rcOffset);
     $jsonFile = $jsonin[$jsonIdx];
     ($data, $fixed) = fixJson($jsonFile);
     $data = decode_json($data);
@@ -217,6 +218,8 @@ for my $jsonIdx (0 .. $#jsonin) {
     die "\n\n  [!] Error: Fewer RC files than processed MM files provided (provided: " . scalar(@rcin) . 
         ", expected so far: " . scalar(@filenames) . ")\n\n" if ($needRC && @rcin < @filenames);
 
+    $rcOffset = @filenames - $nFiles;
+
     foreach my $fileIdx (0 .. $nFiles - 1) {
 
         # Concatenated JSON and MM filenames
@@ -230,7 +233,7 @@ for my $jsonIdx (0 .. $#jsonin) {
             $sequence = $transcript->{sequence};
             $nReads = $legacy ? $transcript->{nReads} : $transcript->{nReads}->[$fileIdx];
 
-            if ($needRC && !$rcin[$jsonIdx + $fileIdx]->read($id)) {
+            if ($needRC && !$rcin[$rcOffset + $fileIdx]->read($id)) {
 
                 print CLRRET . "[!] Warning: transcript \"$id\" is missing in RC file \"" . $rcin[$jsonIdx + $fileIdx]->file() . "\", and it will be skipped...\n";
 
@@ -444,6 +447,16 @@ if (!$noMergeOverlapping) {
     }
 
     print "\n";
+
+}
+else{
+
+    foreach my $file (keys %allWins) {
+
+        @{$allWins{$file}->{$_}} = sort { $a->[2] <=> $b->[2] ||
+                                          $a->[0] <=> $b->[0] } @{$allWins{$file}->{$_}} for (keys %{$allWins{$file}});
+
+    }
 
 }
 
